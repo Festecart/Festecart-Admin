@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSiteConfig, useUpdateSiteConfig } from '@/hooks/useSiteConfig'
 import { Plus, Trash2, ChevronUp, ChevronDown, Loader2, Check, Save } from 'lucide-react'
 
@@ -43,25 +43,49 @@ export default function SiteNavbar() {
   const [annError, setAnnError] = useState<string | null>(null)
   const [navError, setNavError] = useState<string | null>(null)
 
-  useEffect(() => { if (announcementRaw) setAnn(announcementRaw as AnnouncementBar) }, [announcementRaw])
-  useEffect(() => { if (navRaw) setLinks((navRaw as NavLink[]).slice().sort((a, b) => a.order - b.order)) }, [navRaw])
+  // Only initialise from DB once — prevent background refetch from wiping edits
+  const annInit = useRef(false)
+  const navInit = useRef(false)
+  useEffect(() => {
+    if (announcementRaw && !annInit.current) {
+      setAnn(announcementRaw as AnnouncementBar)
+      annInit.current = true
+    }
+  }, [announcementRaw])
+  useEffect(() => {
+    if (navRaw && !navInit.current) {
+      setLinks((navRaw as NavLink[]).slice().sort((a, b) => a.order - b.order))
+      navInit.current = true
+    }
+  }, [navRaw])
 
   const saveAnn = async () => {
     setAnnError(null)
+    console.log('[SiteNavbar] Saving announcement_bar:', ann)
     try {
       await update.mutateAsync({ key: 'announcement_bar', value: ann })
+      console.log('[SiteNavbar] announcement_bar saved successfully')
       setAnnSaved(true); setTimeout(() => setAnnSaved(false), 2000)
-    } catch (e) { setAnnError(e instanceof Error ? e.message : 'Save failed') }
+    } catch (e) {
+      console.error('[SiteNavbar] announcement_bar save error:', e)
+      setAnnError(e instanceof Error ? e.message : 'Save failed')
+    }
   }
 
   const saveNav = async () => {
     setNavError(null)
     const reordered = links.map((l, i) => ({ ...l, order: i + 1 }))
+    console.log('[SiteNavbar] Saving nav_links:', reordered)
     try {
       await update.mutateAsync({ key: 'nav_links', value: reordered })
+      console.log('[SiteNavbar] nav_links saved successfully')
       setLinks(reordered)
+      navInit.current = false
       setNavSaved(true); setTimeout(() => setNavSaved(false), 2000)
-    } catch (e) { setNavError(e instanceof Error ? e.message : 'Save failed') }
+    } catch (e) {
+      console.error('[SiteNavbar] nav_links save error:', e)
+      setNavError(e instanceof Error ? e.message : 'Save failed')
+    }
   }
 
   const moveLink = (idx: number, dir: -1 | 1) => {

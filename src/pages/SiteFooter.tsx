@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSiteConfig, useUpdateSiteConfig } from '@/hooks/useSiteConfig'
 import { Plus, Trash2, Check, Save, Loader2 } from 'lucide-react'
 
@@ -42,16 +42,25 @@ export default function SiteFooter() {
   const [saved, setSaved] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string | null>>({})
 
-  useEffect(() => { if (contactRaw) setContact(contactRaw as FooterContact) }, [contactRaw])
-  useEffect(() => { if (socialRaw) setSocial(socialRaw as FooterSocial) }, [socialRaw])
-  useEffect(() => { if (linksRaw) setLinks(linksRaw as FooterLink[]) }, [linksRaw])
-  useEffect(() => { if (bottomRaw) setBottom(bottomRaw as FooterBottom) }, [bottomRaw])
-  useEffect(() => { if (brandRaw) setBrand(brandRaw as FooterBrand) }, [brandRaw])
+  // Only init from DB once — prevent background refetch wiping unsaved edits
+  const inits = useRef<Record<string, boolean>>({})
+
+  useEffect(() => { if (contactRaw && !inits.current.contact) { setContact(contactRaw as FooterContact); inits.current.contact = true } }, [contactRaw])
+  useEffect(() => { if (socialRaw && !inits.current.social) { setSocial(socialRaw as FooterSocial); inits.current.social = true } }, [socialRaw])
+  useEffect(() => { if (linksRaw && !inits.current.links) { setLinks(linksRaw as FooterLink[]); inits.current.links = true } }, [linksRaw])
+  useEffect(() => { if (bottomRaw && !inits.current.bottom) { setBottom(bottomRaw as FooterBottom); inits.current.bottom = true } }, [bottomRaw])
+  useEffect(() => { if (brandRaw && !inits.current.brand) { setBrand(brandRaw as FooterBrand); inits.current.brand = true } }, [brandRaw])
 
   const save = async (key: string, value: unknown) => {
     setErrors(e => ({ ...e, [key]: null }))
     try {
       await update.mutateAsync({ key, value })
+      // reset init flag so next visit re-loads fresh data
+      const fieldMap: Record<string, string> = {
+        footer_contact: 'contact', footer_social: 'social',
+        footer_links: 'links', footer_bottom: 'bottom', footer_brand: 'brand',
+      }
+      if (fieldMap[key]) inits.current[fieldMap[key]] = false
       setSaved(s => ({ ...s, [key]: true }))
       setTimeout(() => setSaved(s => ({ ...s, [key]: false })), 2000)
     } catch (e) {

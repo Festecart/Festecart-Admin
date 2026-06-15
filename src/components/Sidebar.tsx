@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { ShoppingBag, Truck, MapPin, LogOut, ChevronUp, ChevronDown, Package, Globe } from 'lucide-react'
+import { ShoppingBag, Truck, MapPin, LogOut, ChevronUp, ChevronDown, Package, Globe, ClipboardList } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -103,6 +103,17 @@ export function Sidebar({ onLogout }: SidebarProps) {
           }
         >
           <MapPin size={18} />Delivery Zones
+        </NavLink>
+
+        {/* Store Checklist */}
+        <NavLink
+          to="/connect-checklist"
+          className={({ isActive }) =>
+            cn('flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+              isActive ? 'bg-red-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white')
+          }
+        >
+          <ClipboardList size={18} />Store Checklist
         </NavLink>
 
       </nav>
