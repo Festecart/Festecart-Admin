@@ -13,7 +13,6 @@ import ContactEnquiries from '@/pages/ContactEnquiries'
 import Categories from '@/pages/Categories'
 import SiteNavbar from '@/pages/SiteNavbar'
 import SiteFooter from '@/pages/SiteFooter'
-import ConnectChecklist from '@/pages/ConnectChecklist'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -52,7 +51,6 @@ export default function App() {
             <Route path="catalog/categories" element={<Categories />} />
             <Route path="site/navbar" element={<SiteNavbar />} />
             <Route path="site/footer" element={<SiteFooter />} />
-            <Route path="connect-checklist" element={<ConnectChecklist />} />
           </Route>
 
           {/* Fallback */}
