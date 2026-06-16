@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSiteConfig, useUpdateSiteConfig } from '@/hooks/useSiteConfig'
-import { Plus, Trash2, Check, Save, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Check, Save, Loader2, GripVertical } from 'lucide-react'
 
 interface FooterContact { address: string; phone: string; email: string }
 interface FooterSocial { facebook: string; instagram: string; twitter: string; whatsapp: string }
 interface FooterLink { label: string; href: string; enabled: boolean }
 interface FooterBottom { copyright_text: string; privacy_policy_url: string; terms_url: string }
 interface FooterBrand { tagline: string }
+interface FooterEarn { heading: string; links: FooterLink[] }
+interface FooterColumn { heading: string; links: FooterLink[] }
 
-// ── Same page type presets as navbar ─────────────────────────────
 const PAGE_TYPES: { label: string; href: string }[] = [
   { label: 'Home Page',        href: '/' },
   { label: 'Products',         href: '/products' },
@@ -52,39 +53,125 @@ const Field = ({ label, value, onChange, placeholder }: {
   </div>
 )
 
+// ── Reusable link list editor ─────────────────────────────────────
+function LinkEditor({
+  links,
+  onChange,
+}: {
+  links: FooterLink[]
+  onChange: (links: FooterLink[]) => void
+}) {
+  const addLink = () => onChange([...links, { label: 'New Link', href: '/', enabled: true }])
+  const removeLink = (i: number) => onChange(links.filter((_, idx) => idx !== i))
+
+  const handleTypeChange = (i: number, typeLabel: string) => {
+    const preset = PAGE_TYPES.find(p => p.label === typeLabel)
+    onChange(links.map((l, idx) => idx === i
+      ? { ...l, href: (preset && preset.href !== '') ? preset.href : '' }
+      : l
+    ))
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-12 gap-2 px-1 text-xs font-medium text-gray-400 uppercase tracking-wide">
+        <div className="col-span-3">Label</div>
+        <div className="col-span-4">Type</div>
+        <div className="col-span-3">URL</div>
+        <div className="col-span-1">On</div>
+        <div className="col-span-1" />
+      </div>
+
+      {links.map((link, i) => {
+        const currentType = getType(link.href)
+        const isCustom = currentType === 'Custom URL'
+        return (
+          <div key={i} className={`grid grid-cols-12 gap-2 items-center p-3 rounded-lg border ${link.enabled ? 'border-gray-200' : 'border-gray-100 bg-gray-50'}`}>
+            <div className="col-span-3">
+              <input type="text" value={link.label}
+                onChange={e => onChange(links.map((l, idx) => idx === i ? { ...l, label: e.target.value } : l))}
+                placeholder="Link label"
+                className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900" />
+            </div>
+            <div className="col-span-4">
+              <select value={currentType} onChange={e => handleTypeChange(i, e.target.value)}
+                className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-gray-900">
+                {PAGE_TYPES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+              </select>
+            </div>
+            <div className="col-span-3">
+              {isCustom ? (
+                <input type="text" value={link.href}
+                  onChange={e => onChange(links.map((l, idx) => idx === i ? { ...l, href: e.target.value } : l))}
+                  placeholder="/custom-path"
+                  className="w-full px-2 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              ) : (
+                <span className="block px-2 py-1.5 text-xs font-mono text-gray-400 bg-gray-50 border border-gray-100 rounded-lg truncate">{link.href}</span>
+              )}
+            </div>
+            <div className="col-span-1 flex justify-center">
+              <button onClick={() => onChange(links.map((l, idx) => idx === i ? { ...l, enabled: !l.enabled } : l))}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${link.enabled ? 'bg-gray-900' : 'bg-gray-300'}`}>
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${link.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+              </button>
+            </div>
+            <div className="col-span-1 flex justify-end">
+              <button onClick={() => removeLink(i)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">
+                <Trash2 size={13} />
+              </button>
+            </div>
+          </div>
+        )
+      })}
+
+      {links.length === 0 && (
+        <p className="text-sm text-gray-400 text-center py-3">No links yet</p>
+      )}
+
+      <button onClick={addLink}
+        className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50">
+        <Plus size={13} /> Add Link
+      </button>
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────
 export default function SiteFooter() {
   const update = useUpdateSiteConfig()
 
-  const { data: contactRaw } = useSiteConfig('footer_contact')
-  const { data: socialRaw }  = useSiteConfig('footer_social')
-  const { data: linksRaw }   = useSiteConfig('footer_links')
-  const { data: bottomRaw }  = useSiteConfig('footer_bottom')
-  const { data: brandRaw }   = useSiteConfig('footer_brand')
+  const { data: contactRaw }  = useSiteConfig('footer_contact')
+  const { data: socialRaw }   = useSiteConfig('footer_social')
+  const { data: linksRaw }    = useSiteConfig('footer_links')
+  const { data: bottomRaw }   = useSiteConfig('footer_bottom')
+  const { data: brandRaw }    = useSiteConfig('footer_brand')
+  const { data: earnRaw }     = useSiteConfig('footer_earn')
+  const { data: columnsRaw }  = useSiteConfig('footer_columns')
 
-  const [contact, setContact] = useState<FooterContact>({ address: '', phone: '', email: '' })
-  const [social,  setSocial]  = useState<FooterSocial>({ facebook: '', instagram: '', twitter: '', whatsapp: '' })
-  const [links,   setLinks]   = useState<FooterLink[]>([])
-  const [bottom,  setBottom]  = useState<FooterBottom>({ copyright_text: '', privacy_policy_url: '', terms_url: '' })
-  const [brand,   setBrand]   = useState<FooterBrand>({ tagline: '' })
-  const [saved,   setSaved]   = useState<Record<string, boolean>>({})
-  const [errors,  setErrors]  = useState<Record<string, string | null>>({})
+  const [contact,  setContact]  = useState<FooterContact>({ address: '', phone: '', email: '' })
+  const [social,   setSocial]   = useState<FooterSocial>({ facebook: '', instagram: '', twitter: '', whatsapp: '' })
+  const [links,    setLinks]    = useState<FooterLink[]>([])
+  const [bottom,   setBottom]   = useState<FooterBottom>({ copyright_text: '', privacy_policy_url: '/privacy', terms_url: '/terms' })
+  const [brand,    setBrand]    = useState<FooterBrand>({ tagline: '' })
+  const [earn,     setEarn]     = useState<FooterEarn>({ heading: 'Earn with Festecart', links: [] })
+  const [columns,  setColumns]  = useState<FooterColumn[]>([])
+  const [saved,    setSaved]    = useState<Record<string, boolean>>({})
+  const [errors,   setErrors]   = useState<Record<string, string | null>>({})
 
   const inits = useRef<Record<string, boolean>>({})
-  useEffect(() => { if (contactRaw && !inits.current.contact) { setContact(contactRaw as FooterContact); inits.current.contact = true } }, [contactRaw])
-  useEffect(() => { if (socialRaw  && !inits.current.social)  { setSocial(socialRaw   as FooterSocial);  inits.current.social  = true } }, [socialRaw])
-  useEffect(() => { if (linksRaw   && !inits.current.links)   { setLinks(linksRaw     as FooterLink[]);  inits.current.links   = true } }, [linksRaw])
-  useEffect(() => { if (bottomRaw  && !inits.current.bottom)  { setBottom(bottomRaw   as FooterBottom);  inits.current.bottom  = true } }, [bottomRaw])
-  useEffect(() => { if (brandRaw   && !inits.current.brand)   { setBrand(brandRaw     as FooterBrand);   inits.current.brand   = true } }, [brandRaw])
+  useEffect(() => { if (contactRaw && !inits.current.contact)  { setContact(contactRaw  as FooterContact);  inits.current.contact  = true } }, [contactRaw])
+  useEffect(() => { if (socialRaw  && !inits.current.social)   { setSocial(socialRaw    as FooterSocial);   inits.current.social   = true } }, [socialRaw])
+  useEffect(() => { if (linksRaw   && !inits.current.links)    { setLinks(linksRaw      as FooterLink[]);   inits.current.links    = true } }, [linksRaw])
+  useEffect(() => { if (bottomRaw  && !inits.current.bottom)   { setBottom(bottomRaw    as FooterBottom);   inits.current.bottom   = true } }, [bottomRaw])
+  useEffect(() => { if (brandRaw   && !inits.current.brand)    { setBrand(brandRaw      as FooterBrand);    inits.current.brand    = true } }, [brandRaw])
+  useEffect(() => { if (earnRaw    && !inits.current.earn)     { setEarn(earnRaw        as FooterEarn);     inits.current.earn     = true } }, [earnRaw])
+  useEffect(() => { if (columnsRaw && !inits.current.columns)  { setColumns(columnsRaw  as FooterColumn[]); inits.current.columns  = true } }, [columnsRaw])
 
   const save = async (key: string, value: unknown) => {
     setErrors(e => ({ ...e, [key]: null }))
     try {
       await update.mutateAsync({ key, value })
-      const fieldMap: Record<string, string> = {
-        footer_contact: 'contact', footer_social: 'social',
-        footer_links: 'links', footer_bottom: 'bottom', footer_brand: 'brand',
-      }
-      if (fieldMap[key]) inits.current[fieldMap[key]] = false
+      inits.current[key.replace('footer_', '')] = false
       setSaved(s => ({ ...s, [key]: true }))
       setTimeout(() => setSaved(s => ({ ...s, [key]: false })), 2000)
     } catch (e) {
@@ -92,17 +179,12 @@ export default function SiteFooter() {
     }
   }
 
-  const addLink = () => setLinks(ls => [...ls, { label: 'New Link', href: '/', enabled: true }])
-  const removeLink = (i: number) => setLinks(ls => ls.filter((_, idx) => idx !== i))
-
-  const handleTypeChange = (i: number, typLabel: string) => {
-    const preset = PAGE_TYPES.find(p => p.label === typLabel)
-    if (preset && preset.href !== '') {
-      setLinks(ls => ls.map((l, idx) => idx === i ? { ...l, href: preset.href } : l))
-    } else {
-      setLinks(ls => ls.map((l, idx) => idx === i ? { ...l, href: '' } : l))
-    }
-  }
+  const addColumn = () => setColumns(cols => [...cols, { heading: 'New Column', links: [] }])
+  const removeColumn = (i: number) => setColumns(cols => cols.filter((_, idx) => idx !== i))
+  const updateColumnHeading = (i: number, heading: string) =>
+    setColumns(cols => cols.map((c, idx) => idx === i ? { ...c, heading } : c))
+  const updateColumnLinks = (i: number, links: FooterLink[]) =>
+    setColumns(cols => cols.map((c, idx) => idx === i ? { ...c, links } : c))
 
   return (
     <div className="p-6 space-y-6">
@@ -113,13 +195,9 @@ export default function SiteFooter() {
         <h2 className="font-semibold text-gray-900">Brand Tagline</h2>
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Tagline (shown under logo)</label>
-          <textarea
-            value={brand.tagline}
-            onChange={e => setBrand({ tagline: e.target.value })}
-            rows={3}
-            placeholder="Empowering artisans and small businesses…"
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none"
-          />
+          <textarea value={brand.tagline} onChange={e => setBrand({ tagline: e.target.value })}
+            rows={3} placeholder="Empowering artisans and small businesses…"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none" />
         </div>
         <SaveBtn onClick={() => save('footer_brand', brand)} saving={update.isPending} saved={!!saved.footer_brand} error={errors.footer_brand ?? null} />
       </div>
@@ -147,100 +225,71 @@ export default function SiteFooter() {
         <SaveBtn onClick={() => save('footer_social', social)} saving={update.isPending} saved={!!saved.footer_social} error={errors.footer_social ?? null} />
       </div>
 
-      {/* Quick Links — with type dropdown */}
+      {/* Quick Links column */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-gray-900">Quick Links</h2>
-          <button onClick={addLink}
-            className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50">
-            <Plus size={13} /> Add Link
-          </button>
-        </div>
-
-        {/* Column labels */}
-        <div className="grid grid-cols-12 gap-2 px-1 text-xs font-medium text-gray-400 uppercase tracking-wide">
-          <div className="col-span-3">Label</div>
-          <div className="col-span-4">Type</div>
-          <div className="col-span-3">URL</div>
-          <div className="col-span-1">Status</div>
-          <div className="col-span-1" />
-        </div>
-
-        <div className="space-y-2">
-          {links.map((link, i) => {
-            const currentType = getType(link.href)
-            const isCustom = currentType === 'Custom URL'
-            return (
-              <div key={i} className={`grid grid-cols-12 gap-2 items-center p-3 rounded-lg border ${link.enabled ? 'border-gray-200' : 'border-gray-100 bg-gray-50'}`}>
-                {/* Label */}
-                <div className="col-span-3">
-                  <input
-                    type="text"
-                    value={link.label}
-                    onChange={e => setLinks(ls => ls.map((l, idx) => idx === i ? { ...l, label: e.target.value } : l))}
-                    placeholder="Link label"
-                    className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900"
-                  />
-                </div>
-
-                {/* Type dropdown */}
-                <div className="col-span-4">
-                  <select
-                    value={currentType}
-                    onChange={e => handleTypeChange(i, e.target.value)}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-gray-900"
-                  >
-                    {PAGE_TYPES.map(p => (
-                      <option key={p.label} value={p.label}>{p.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* URL — readonly for presets, editable for custom */}
-                <div className="col-span-3">
-                  {isCustom ? (
-                    <input
-                      type="text"
-                      value={link.href}
-                      onChange={e => setLinks(ls => ls.map((l, idx) => idx === i ? { ...l, href: e.target.value } : l))}
-                      placeholder="/custom-path"
-                      className="w-full px-2 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900"
-                    />
-                  ) : (
-                    <span className="block px-2 py-1.5 text-xs font-mono text-gray-500 bg-gray-50 border border-gray-100 rounded-lg truncate">
-                      {link.href}
-                    </span>
-                  )}
-                </div>
-
-                {/* Toggle */}
-                <div className="col-span-1 flex justify-center">
-                  <button
-                    onClick={() => setLinks(ls => ls.map((l, idx) => idx === i ? { ...l, enabled: !l.enabled } : l))}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${link.enabled ? 'bg-gray-900' : 'bg-gray-300'}`}
-                  >
-                    <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${link.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
-                  </button>
-                </div>
-
-                {/* Delete */}
-                <div className="col-span-1 flex justify-end">
-                  <button onClick={() => removeLink(i)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-          {links.length === 0 && (
-            <p className="text-sm text-gray-400 text-center py-4">No links yet — click Add Link</p>
-          )}
-        </div>
-
+        <h2 className="font-semibold text-gray-900">Quick Links <span className="text-xs text-gray-400 font-normal ml-1">(footer column)</span></h2>
+        <LinkEditor links={links} onChange={setLinks} />
         <SaveBtn onClick={() => save('footer_links', links)} saving={update.isPending} saved={!!saved.footer_links} error={errors.footer_links ?? null} />
       </div>
 
-      {/* Copyright / Legal — with type dropdowns for URLs */}
+      {/* Earn with Festecart column */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+        <h2 className="font-semibold text-gray-900">
+          "Earn with Festecart" Column
+          <span className="text-xs text-gray-400 font-normal ml-1">(footer column)</span>
+        </h2>
+        <Field label="Column Heading" value={earn.heading}
+          onChange={v => setEarn(e => ({ ...e, heading: v }))}
+          placeholder="Earn with Festecart" />
+        <LinkEditor links={earn.links} onChange={ls => setEarn(e => ({ ...e, links: ls }))} />
+        <SaveBtn onClick={() => save('footer_earn', earn)} saving={update.isPending} saved={!!saved.footer_earn} error={errors.footer_earn ?? null} />
+      </div>
+
+      {/* Custom Extra Columns */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold text-gray-900">Extra Footer Columns</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Add unlimited custom columns to the footer (e.g. "Support", "Legal", etc.)</p>
+          </div>
+          <button onClick={addColumn}
+            className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50">
+            <Plus size={13} /> Add Column
+          </button>
+        </div>
+
+        {columns.length === 0 && (
+          <p className="text-sm text-gray-400 text-center py-4 border border-dashed border-gray-200 rounded-lg">
+            No extra columns — click Add Column to create one
+          </p>
+        )}
+
+        <div className="space-y-5">
+          {columns.map((col, i) => (
+            <div key={i} className="border border-gray-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 flex-1">
+                  <GripVertical size={14} className="text-gray-300" />
+                  <input type="text" value={col.heading}
+                    onChange={e => updateColumnHeading(i, e.target.value)}
+                    placeholder="Column heading (e.g. Support)"
+                    className="flex-1 px-3 py-2 text-sm font-semibold border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                </div>
+                <button onClick={() => removeColumn(i)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded shrink-0">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              <LinkEditor links={col.links} onChange={ls => updateColumnLinks(i, ls)} />
+            </div>
+          ))}
+        </div>
+
+        {columns.length > 0 && (
+          <SaveBtn onClick={() => save('footer_columns', columns)} saving={update.isPending} saved={!!saved.footer_columns} error={errors.footer_columns ?? null} />
+        )}
+      </div>
+
+      {/* Copyright / Legal */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
         <h2 className="font-semibold text-gray-900">Copyright & Legal</h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -249,26 +298,20 @@ export default function SiteFooter() {
             placeholder="© 2024 Festecart. All rights reserved." />
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Privacy Policy Page</label>
-            <select
-              value={bottom.privacy_policy_url}
+            <select value={bottom.privacy_policy_url}
               onChange={e => setBottom(b => ({ ...b, privacy_policy_url: e.target.value }))}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
-            >
-              <option value="/privacy">Privacy Policy (/privacy)</option>
-              <option value="/privacy-policy">Privacy Policy (/privacy-policy)</option>
-              <option value="">Custom…</option>
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+              <option value="/privacy">/privacy</option>
+              <option value="/privacy-policy">/privacy-policy</option>
             </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Terms of Service Page</label>
-            <select
-              value={bottom.terms_url}
+            <select value={bottom.terms_url}
               onChange={e => setBottom(b => ({ ...b, terms_url: e.target.value }))}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
-            >
-              <option value="/terms">Terms of Service (/terms)</option>
-              <option value="/terms-of-service">Terms of Service (/terms-of-service)</option>
-              <option value="">Custom…</option>
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+              <option value="/terms">/terms</option>
+              <option value="/terms-of-service">/terms-of-service</option>
             </select>
           </div>
         </div>
