@@ -10,23 +10,42 @@ interface FooterBrand { tagline: string }
 interface FooterEarn { heading: string; links: FooterLink[] }
 interface FooterColumn { heading: string; links: FooterLink[] }
 
-const PAGE_TYPES: { label: string; href: string }[] = [
-  { label: 'Home Page',        href: '/' },
-  { label: 'Products',         href: '/products' },
-  { label: 'Categories',       href: '/categories' },
-  { label: 'Vendors',          href: '/vendors' },
-  { label: 'About',            href: '/about' },
-  { label: 'Contact',          href: '/contact' },
-  { label: 'Become a Vendor',  href: '/vendor/register' },
-  { label: 'Privacy Policy',   href: '/privacy' },
-  { label: 'Terms of Service', href: '/terms' },
-  { label: 'Custom URL',       href: '' },
+// ── All pages with correct routes ─────────────────────────────
+const PAGE_TYPES: { label: string; href: string; group: string }[] = [
+  { label: 'Home Page',           href: '/',                    group: 'Main' },
+  { label: 'Products',            href: '/products',            group: 'Main' },
+  { label: 'Categories',          href: '/categories',          group: 'Main' },
+  { label: 'Vendors',             href: '/vendors',             group: 'Main' },
+  { label: 'About',               href: '/about',               group: 'Main' },
+  { label: 'Contact',             href: '/contact',             group: 'Main' },
+  { label: 'Login / Register',    href: '/auth',                group: 'Auth' },
+  { label: 'User Login',          href: '/auth?tab=login',      group: 'Auth' },
+  { label: 'User Register',       href: '/auth?tab=register',   group: 'Auth' },
+  { label: 'Vendor Login',        href: '/vendor-login',        group: 'Auth' },
+  { label: 'Vendor Register',     href: '/vendor/register',     group: 'Auth' },
+  { label: 'My Dashboard',        href: '/user/dashboard',      group: 'User' },
+  { label: 'My Orders',           href: '/user/orders',         group: 'User' },
+  { label: 'My Profile',          href: '/user/profile',        group: 'User' },
+  { label: 'Vendor Dashboard',    href: '/vendor/dashboard',    group: 'Vendor' },
+  { label: 'Become a Vendor',     href: '/vendor/register',     group: 'Vendor' },
+  { label: 'Cart',                href: '/cart',                group: 'Shopping' },
+  { label: 'Checkout',            href: '/checkout',            group: 'Shopping' },
+  { label: 'Order Success',       href: '/order-success',       group: 'Shopping' },
+  { label: 'Privacy Policy',      href: '/privacy',             group: 'Legal' },
+  { label: 'Terms of Service',    href: '/terms',               group: 'Legal' },
+  { label: 'Custom URL',          href: '',                     group: 'Custom' },
 ]
 
 function getType(href: string): string {
   const match = PAGE_TYPES.find(p => p.href === href && p.href !== '')
   return match ? match.label : 'Custom URL'
 }
+
+const PAGE_TYPE_GROUPS = PAGE_TYPES.reduce<Record<string, typeof PAGE_TYPES>>((acc, p) => {
+  if (!acc[p.group]) acc[p.group] = []
+  acc[p.group].push(p)
+  return acc
+}, {})
 
 function SaveBtn({ onClick, saving, saved, error }: {
   onClick: () => void; saving: boolean; saved: boolean; error: string | null
@@ -96,7 +115,11 @@ function LinkEditor({
             <div className="col-span-4">
               <select value={currentType} onChange={e => handleTypeChange(i, e.target.value)}
                 className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-gray-900">
-                {PAGE_TYPES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                {Object.entries(PAGE_TYPE_GROUPS).map(([group, pages]) => (
+                  <optgroup key={group} label={group}>
+                    {pages.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                  </optgroup>
+                ))}
               </select>
             </div>
             <div className="col-span-3">

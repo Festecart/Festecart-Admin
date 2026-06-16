@@ -15,21 +15,50 @@ interface AnnouncementBar {
   right_text: string
 }
 
-// ── Predefined page types — no code knowledge needed ──────────────
-const PAGE_TYPES: { label: string; href: string }[] = [
-  { label: 'Home Page',   href: '/' },
-  { label: 'Products',    href: '/products' },
-  { label: 'Categories',  href: '/categories' },
-  { label: 'Vendors',     href: '/vendors' },
-  { label: 'About',       href: '/about' },
-  { label: 'Contact',     href: '/contact' },
-  { label: 'Custom URL',  href: '' },
+// ── All pages with correct routes ─────────────────────────────
+const PAGE_TYPES: { label: string; href: string; group: string }[] = [
+  // Main pages
+  { label: 'Home Page',           href: '/',                    group: 'Main' },
+  { label: 'Products',            href: '/products',            group: 'Main' },
+  { label: 'Categories',          href: '/categories',          group: 'Main' },
+  { label: 'Vendors',             href: '/vendors',             group: 'Main' },
+  { label: 'About',               href: '/about',               group: 'Main' },
+  { label: 'Contact',             href: '/contact',             group: 'Main' },
+  // Auth
+  { label: 'Login / Register',    href: '/auth',                group: 'Auth' },
+  { label: 'User Login',          href: '/auth?tab=login',      group: 'Auth' },
+  { label: 'User Register',       href: '/auth?tab=register',   group: 'Auth' },
+  { label: 'Vendor Login',        href: '/vendor-login',        group: 'Auth' },
+  { label: 'Vendor Register',     href: '/vendor/register',     group: 'Auth' },
+  // User
+  { label: 'My Dashboard',        href: '/user/dashboard',      group: 'User' },
+  { label: 'My Orders',           href: '/user/orders',         group: 'User' },
+  { label: 'My Profile',          href: '/user/profile',        group: 'User' },
+  // Vendor
+  { label: 'Vendor Dashboard',    href: '/vendor/dashboard',    group: 'Vendor' },
+  { label: 'Become a Vendor',     href: '/vendor/register',     group: 'Vendor' },
+  // Shopping
+  { label: 'Cart',                href: '/cart',                group: 'Shopping' },
+  { label: 'Checkout',            href: '/checkout',            group: 'Shopping' },
+  { label: 'Order Success',       href: '/order-success',       group: 'Shopping' },
+  // Legal
+  { label: 'Privacy Policy',      href: '/privacy',             group: 'Legal' },
+  { label: 'Terms of Service',    href: '/terms',               group: 'Legal' },
+  // Custom
+  { label: 'Custom URL',          href: '',                     group: 'Custom' },
 ]
 
 function getType(href: string): string {
   const match = PAGE_TYPES.find(p => p.href === href && p.href !== '')
   return match ? match.label : 'Custom URL'
 }
+
+// Group PAGE_TYPES for <optgroup> rendering
+const PAGE_TYPE_GROUPS = PAGE_TYPES.reduce<Record<string, typeof PAGE_TYPES>>((acc, p) => {
+  if (!acc[p.group]) acc[p.group] = []
+  acc[p.group].push(p)
+  return acc
+}, {})
 
 export default function SiteNavbar() {
   const { data: announcementRaw, isLoading: loadingAnn } = useSiteConfig('announcement_bar')
@@ -208,15 +237,19 @@ export default function SiteNavbar() {
                   />
                 </div>
 
-                {/* Type dropdown */}
+                  {/* Type dropdown */}
                 <div className="col-span-3">
                   <select
                     value={currentType}
                     onChange={e => handleTypeChange(idx, e.target.value)}
                     className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white"
                   >
-                    {PAGE_TYPES.map(p => (
-                      <option key={p.label} value={p.label}>{p.label}</option>
+                    {Object.entries(PAGE_TYPE_GROUPS).map(([group, pages]) => (
+                      <optgroup key={group} label={group}>
+                        {pages.map(p => (
+                          <option key={p.label} value={p.label}>{p.label}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>
