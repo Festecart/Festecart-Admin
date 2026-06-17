@@ -80,7 +80,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
         {/* Website group */}
         <NavGroup icon={Globe} label="Website" basePath="/site">
           <Sub to="/site/navbar" label="Navigation" />
-          <Sub to="/site/footer" label="Footer" />
+         
         </NavGroup>
 
         {/* Shipments */}

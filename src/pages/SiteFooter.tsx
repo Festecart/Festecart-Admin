@@ -307,9 +307,7 @@ export default function SiteFooter() {
           ))}
         </div>
 
-        {columns.length > 0 && (
-          <SaveBtn onClick={() => save('footer_columns', columns)} saving={update.isPending} saved={!!saved.footer_columns} error={errors.footer_columns ?? null} />
-        )}
+        <SaveBtn onClick={() => save('footer_columns', columns)} saving={update.isPending} saved={!!saved.footer_columns} error={errors.footer_columns ?? null} />
       </div>
 
       {/* Copyright / Legal */}

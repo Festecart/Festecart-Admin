@@ -11,7 +11,7 @@ import AbandonedCart from '@/pages/AbandonedCart'
 import AbandonedCartDetail from '@/pages/AbandonedCartDetail'
 import ContactEnquiries from '@/pages/ContactEnquiries'
 import Categories from '@/pages/Categories'
-import SiteNavbar from '@/pages/SiteNavbar'
+import SiteNavigation from '@/pages/SiteNavigation'
 import SiteFooter from '@/pages/SiteFooter'
 
 const queryClient = new QueryClient({
@@ -49,7 +49,7 @@ export default function App() {
             <Route path="abandoned-cart/:id" element={<AbandonedCartDetail />} />
             <Route path="contact-enquiries" element={<ContactEnquiries />} />
             <Route path="catalog/categories" element={<Categories />} />
-            <Route path="site/navbar" element={<SiteNavbar />} />
+            <Route path="site/navbar" element={<SiteNavigation />} />
             <Route path="site/footer" element={<SiteFooter />} />
           </Route>
 
