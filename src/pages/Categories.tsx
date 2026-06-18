@@ -264,10 +264,25 @@ export default function Categories() {
     return [id, ...children.flatMap(c => getDescendantIds(c.id))]
   }
 
-  const parentOptions = flat.filter(c => {
+  const allowedParents = flat.filter(c => {
     if (!editId) return true
     return !getDescendantIds(editId).includes(c.id)
   })
+
+  // Recursive flat list with depth-based indentation
+  const buildParentOptions = (
+    cats: typeof flat,
+    parentId: string | null = null,
+    depth = 0
+  ): { id: string; label: string }[] => {
+    return cats
+      .filter(c => (c.parent_id ?? null) === parentId && allowedParents.some(a => a.id === c.id))
+      .flatMap(c => [
+        { id: c.id, label: `${'  '.repeat(depth)}${depth > 0 ? '↳ ' : ''}${c.name}` },
+        ...buildParentOptions(cats, c.id, depth + 1),
+      ])
+  }
+  const parentOptions = buildParentOptions(flat)
 
   return (
     <div className="p-6 space-y-5">
@@ -317,10 +332,8 @@ export default function Categories() {
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
               >
                 <option value="">— None (top level) —</option>
-                {parentOptions.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {flat.find(p => p.id === c.parent_id) ? `  ↳ ${c.name}` : c.name}
-                  </option>
+                {parentOptions.map(opt => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
                 ))}
               </select>
             </div>

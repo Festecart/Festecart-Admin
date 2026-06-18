@@ -74,6 +74,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
 
         {/* Catalog group */}
         <NavGroup icon={Package} label="Catalog" basePath="/catalog">
+          <Sub to="/catalog/products" label="Products" />
           <Sub to="/catalog/categories" label="Categories" />
         </NavGroup>
 

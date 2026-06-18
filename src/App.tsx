@@ -11,6 +11,8 @@ import AbandonedCart from '@/pages/AbandonedCart'
 import AbandonedCartDetail from '@/pages/AbandonedCartDetail'
 import ContactEnquiries from '@/pages/ContactEnquiries'
 import Categories from '@/pages/Categories'
+import Products from '@/pages/Products'
+import ProductForm from '@/pages/ProductForm'
 import SiteNavigation from '@/pages/SiteNavigation'
 import SiteFooter from '@/pages/SiteFooter'
 
@@ -49,6 +51,9 @@ export default function App() {
             <Route path="abandoned-cart/:id" element={<AbandonedCartDetail />} />
             <Route path="contact-enquiries" element={<ContactEnquiries />} />
             <Route path="catalog/categories" element={<Categories />} />
+            <Route path="catalog/products" element={<Products />} />
+            <Route path="catalog/products/add" element={<ProductForm />} />
+            <Route path="catalog/products/:id/edit" element={<ProductForm />} />
             <Route path="site/navbar" element={<SiteNavigation />} />
             <Route path="site/footer" element={<SiteFooter />} />
           </Route>
