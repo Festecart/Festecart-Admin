@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { Plus, Pencil, Trash2, Check, X, Loader2, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, Pencil, Trash2, Check, X, Loader2, ChevronRight, ChevronDown, Upload, ImageIcon } from 'lucide-react'
 
 interface Category {
   id: string
@@ -58,9 +58,10 @@ interface FormState {
   icon: string
   is_active: boolean
   parent_id: string
+  image_url: string
 }
 
-const EMPTY: FormState = { name: '', slug: '', description: '', icon: '', is_active: true, parent_id: '' }
+const EMPTY: FormState = { name: '', slug: '', description: '', icon: '', is_active: true, parent_id: '', image_url: '' }
 
 // ── Tree row component ─────────────────────────────────────────────
 function CategoryRow({
@@ -195,6 +196,21 @@ export default function Categories() {
   const [form, setForm] = useState<FormState>(EMPTY)
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [bannerUploading, setBannerUploading] = useState(false)
+
+  const uploadBanner = async (file: File) => {
+    setBannerUploading(true)
+    const ext = file.name.split('.').pop()
+    const path = `categories/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const { error } = await supabase.storage.from('product-images').upload(path, file, { upsert: true })
+    if (!error) {
+      const { data } = supabase.storage.from('product-images').getPublicUrl(path)
+      setForm(f => ({ ...f, image_url: data.publicUrl }))
+    } else {
+      setFormError(`Banner upload failed: ${error.message}`)
+    }
+    setBannerUploading(false)
+  }
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -205,6 +221,7 @@ export default function Categories() {
         icon: form.icon.trim() || null,
         is_active: form.is_active,
         parent_id: form.parent_id || null,
+        image_url: form.image_url.trim() || null,
       }
       if (editId) {
         const { error } = await supabase.from('categories').update(payload).eq('id', editId)
@@ -252,6 +269,7 @@ export default function Categories() {
       icon: cat.icon ?? '',
       is_active: cat.is_active,
       parent_id: cat.parent_id ?? '',
+      image_url: cat.image_url ?? '',
     })
     setFormError(null)
     setEditId(cat.id)
@@ -370,6 +388,48 @@ export default function Categories() {
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
               </select>
+            </div>
+          </div>
+
+          {/* Banner Image */}
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-gray-700">Category Banner Image</label>
+            <div className="flex items-start gap-4">
+              {/* Preview */}
+              {form.image_url ? (
+                <div className="relative group shrink-0">
+                  <img src={form.image_url} alt="banner" className="w-32 h-20 rounded-lg object-cover border border-gray-200" />
+                  <button
+                    onClick={() => setForm(f => ({ ...f, image_url: '' }))}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ) : (
+                <div className="w-32 h-20 rounded-lg border-2 border-dashed border-gray-200 flex flex-col items-center justify-center bg-gray-50 shrink-0">
+                  <ImageIcon size={18} className="text-gray-300" />
+                  <span className="text-xs text-gray-400 mt-1">No banner</span>
+                </div>
+              )}
+              {/* Upload */}
+              <div className="flex-1">
+                <label className={`flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer w-fit ${bannerUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {bannerUploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {bannerUploading ? 'Uploading…' : 'Upload Banner'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={bannerUploading}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadBanner(f) }}
+                  />
+                </label>
+                <p className="text-xs text-gray-400 mt-1.5">Recommended: 1200×400px. Shown on category page header.</p>
+                {form.image_url && (
+                  <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-xs">{form.image_url}</p>
+                )}
+              </div>
             </div>
           </div>
 
