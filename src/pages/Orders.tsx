@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Search, X } from 'lucide-react'
+import { Search, X, Plus } from 'lucide-react'
 import { useOrders, isOrderPaid } from '@/hooks/useOrders'
 import { StatusBadge } from '@/components/StatusBadge'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
@@ -58,6 +58,12 @@ export default function Orders() {
             {isLoading ? 'Loading…' : `${orders?.length ?? 0} orders`}
           </p>
         </div>
+        <Link
+          to="/orders/add"
+          className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg"
+        >
+          <Plus size={15} /> Add Order
+        </Link>
       </div>
 
       {/* Filters */}

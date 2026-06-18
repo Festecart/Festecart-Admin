@@ -14,6 +14,7 @@ import Categories from '@/pages/Categories'
 import Products from '@/pages/Products'
 import ProductForm from '@/pages/ProductForm'
 import SiteNavigation from '@/pages/SiteNavigation'
+import AddOrder from '@/pages/AddOrder'
 import SiteFooter from '@/pages/SiteFooter'
 
 const queryClient = new QueryClient({
@@ -45,6 +46,7 @@ export default function App() {
             <Route index element={<Navigate to="/orders" replace />} />
             <Route path="orders" element={<Orders />} />
             <Route path="orders/:id" element={<OrderDetail />} />
+            <Route path="orders/add" element={<AddOrder />} />
             <Route path="shipments" element={<Shipments />} />
             <Route path="delivery-zones" element={<DeliveryZones />} />
             <Route path="abandoned-cart" element={<AbandonedCart />} />
