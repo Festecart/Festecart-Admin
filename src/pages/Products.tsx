@@ -16,6 +16,7 @@ interface Product {
   images: string[]
   status: string
   is_featured: boolean
+  display_order: number
   category_id: string | null
   vendor_id: string | null
   created_at: string
@@ -27,11 +28,17 @@ function useProducts(search: string, status: string) {
   return useQuery({
     queryKey: ['admin-products', search, status],
     queryFn: async () => {
-      let q = supabase.from('products').select('*').order('created_at', { ascending: false })
+      let q = supabase.from('products').select('*').order('display_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false })
       if (status && status !== 'all') q = q.eq('status', status)
       const { data, error } = await q
       if (error) throw error
       let products = (data ?? []) as Product[]
+
+      // Sort: non-zero display_order first (ascending), then zero/unset by created_at desc
+      products = [
+        ...products.filter(p => p.display_order > 0).sort((a, b) => a.display_order - b.display_order),
+        ...products.filter(p => !p.display_order),
+      ]
       if (search) {
         const s = search.toLowerCase()
         products = products.filter(p =>
@@ -159,6 +166,7 @@ export default function Products() {
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Category</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
                 </tr>
               </thead>
@@ -186,6 +194,11 @@ export default function Products() {
                       <span className={`flex items-center gap-1 text-xs font-medium ${STATUS_BADGE[product.status] ?? 'text-gray-500'}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${product.status === 'published' ? 'bg-green-500' : product.status === 'rejected' ? 'bg-red-500' : 'bg-gray-400'}`} />
                         {product.status.charAt(0).toUpperCase() + product.status.slice(1)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-xs font-mono px-2 py-0.5 rounded ${product.display_order > 0 ? 'bg-gray-900 text-white' : 'text-gray-400'}`}>
+                        {product.display_order > 0 ? `#${product.display_order}` : '—'}
                       </span>
                     </td>
                     <td className="px-4 py-3">

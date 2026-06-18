@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
@@ -22,6 +22,7 @@ interface FormState {
   vendor_id: string
   status: string
   is_featured: boolean
+  display_order: string
   images: string[]
 }
 
@@ -29,7 +30,7 @@ const EMPTY: FormState = {
   name: '', slug: '', description: '', short_description: '',
   price: '', compare_at_price: '', inventory_count: '',
   sku: '', category_id: '', vendor_id: '',
-  status: 'published', is_featured: false, images: [],
+  status: 'published', is_featured: false, display_order: '0', images: [],
 }
 
 function slugify(s: string) {
@@ -86,29 +87,32 @@ export default function ProductForm() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const formInit = useRef(false)
 
   const { data: existing } = useProduct(id ?? '')
   const { data: categories = [] } = useCategories()
   const { data: vendors = [] } = useVendors()
 
-  // Populate form on edit
+  // Populate form on edit — only once, prevent background refetch wiping edits
   useEffect(() => {
-    if (existing) {
+    if (existing && !formInit.current) {
       setForm({
         name:              existing.name ?? '',
         slug:              existing.slug ?? '',
         description:       existing.description ?? '',
         short_description: existing.short_description ?? '',
         price:             String(existing.price ?? ''),
-        compare_at_price:  String(existing.compare_at_price ?? ''),
-        inventory_count:   String(existing.inventory_count ?? ''),
+        compare_at_price:  existing.compare_at_price ? String(existing.compare_at_price) : '',
+        inventory_count:   existing.inventory_count ? String(existing.inventory_count) : '',
         sku:               existing.sku ?? '',
         category_id:       existing.category_id ?? '',
         vendor_id:         existing.vendor_id ?? '',
         status:            existing.status ?? 'published',
         is_featured:       existing.is_featured ?? false,
+        display_order:     String(existing.display_order ?? 0),
         images:            existing.images ?? [],
       })
+      formInit.current = true
     }
   }, [existing])
 
@@ -166,6 +170,7 @@ export default function ProductForm() {
         vendor_id:         form.vendor_id || null,
         status:            form.status,
         is_featured:       form.is_featured,
+        display_order:     parseInt(form.display_order) || 0,
         images:            form.images,
         published_at:      form.status === 'published' ? new Date().toISOString() : null,
       }
@@ -410,6 +415,23 @@ export default function ProductForm() {
                   <Star size={11} /> This product will appear in featured sections
                 </p>
               )}
+
+              <div className="border-t border-gray-100 pt-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Display Order / Priority
+                </label>
+                <input
+                  type="number"
+                  value={form.display_order}
+                  onChange={e => set('display_order', e.target.value)}
+                  min="0"
+                  placeholder="0"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Lower number = shown first. 0 = default order (by date).
+                </p>
+              </div>
             </div>
 
             {/* Category */}
