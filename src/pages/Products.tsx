@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { formatCurrency } from '@/lib/utils'
-import { Search, Plus, MoreVertical, Pencil, Trash2, Eye } from 'lucide-react'
+import { Search, Plus, MoreVertical, Pencil, Trash2} from 'lucide-react'
 
 interface Product {
   id: string
