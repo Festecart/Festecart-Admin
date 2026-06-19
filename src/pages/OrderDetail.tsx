@@ -283,10 +283,6 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
   return (
     <Modal title="Add Tracking Information" onClose={onClose}>
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <input type="checkbox" id="prepaid" checked={form.is_prepaid} onChange={e => f('is_prepaid', e.target.checked)} />
-          <label htmlFor="prepaid" className="text-sm text-gray-700">Prepaid Fulfillment</label>
-        </div>
         {[
           { label: 'Courier *', field: 'courier', placeholder: 'e.g. Delhivery, Self-delivery' },
           { label: 'Tracking Number *', field: 'tracking_number', placeholder: 'AWB / Tracking No' },
