@@ -17,10 +17,14 @@ export interface ShippingAddress {
 
 export type OrderStatus =
   | 'confirmed'
+  | 'processing'
+  | 'partially_fulfilled'
+  | 'fulfilled'
   | 'shipped'
   | 'out_for_delivery'
   | 'delivered'
   | 'cancelled'
+  | 'completed'
 
 export interface Order {
   id: string
@@ -32,6 +36,9 @@ export interface Order {
   status: OrderStatus
   payment_method: string
   payment_status: string | null
+  acceptance_status: string | null
+  fulfillment_status: string | null
+  paid_at: string | null
   subtotal: number
   shipping_charge: number
   total: number
@@ -48,6 +55,43 @@ export interface Order {
   cancelled_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface InvoiceItem {
+  id: string
+  invoice_id: string
+  product_id: string
+  product_name: string
+  ordered_qty: number
+  fulfilled_qty: number
+  price: number
+}
+
+export interface Invoice {
+  id: string
+  order_id: string
+  invoice_number: string
+  invoice_date: string
+  notes: string | null
+  status: string
+  courier: string | null
+  tracking_number: string | null
+  sent_at: string | null
+  estimated_delivery: string | null
+  delivered_at: string | null
+  is_prepaid: boolean
+  created_at: string
+  invoice_items?: InvoiceItem[]
+}
+
+export interface OrderStatusHistory {
+  id: string
+  order_id: string
+  action: string
+  old_status: string | null
+  new_status: string | null
+  remarks: string | null
+  created_at: string
 }
 
 export interface DeliveryPincode {
