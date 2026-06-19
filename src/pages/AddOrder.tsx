@@ -166,7 +166,7 @@ export default function AddOrder() {
         product_id: i.product_id, name: i.name,
         price: i.price, quantity: i.quantity, image: i.image,
       }))
-      const { error } = await supabase.from('orders').insert({
+      const { data: newOrder, error } = await supabase.from('orders').insert({
         user_id: userId,
         guest_name: guestName, guest_email: guestEmail, guest_phone: guestPhone,
         status: 'confirmed', payment_method: paymentMethod,
@@ -174,8 +174,19 @@ export default function AddOrder() {
         note: notes.trim() || null,
         shipping_address: shippingAddress,
         items: orderItems,
-      })
+      }).select('*').single()
       if (error) throw new Error(error.message)
+
+      // Send order placed / confirmed email
+      if (newOrder && (newOrder.guest_email || newOrder.customer_email)) {
+        try {
+          await supabase.functions.invoke('send-order-email', {
+            body: { order: newOrder, new_status: 'confirmed', invoice: null },
+          })
+        } catch (emailErr) {
+          console.error('[AddOrder] Failed to send confirmation email:', emailErr)
+        }
+      }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['orders'] }); navigate('/orders') },
     onError: (e) => setError(e instanceof Error ? e.message : 'Failed to create order'),

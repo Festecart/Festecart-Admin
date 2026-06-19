@@ -39,6 +39,7 @@ export interface Order {
   acceptance_status: string | null
   fulfillment_status: string | null
   paid_at: string | null
+  customer_email: string | null
   subtotal: number
   shipping_charge: number
   total: number

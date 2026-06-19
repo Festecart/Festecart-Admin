@@ -4,10 +4,16 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!
 const FROM_EMAIL = Deno.env.get('FROM_EMAIL') ?? 'Festecart <orders@festecart.org>'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-// Custom secret name (SUPABASE_ prefix not allowed for custom secrets)
 const SUPABASE_SERVICE_KEY = Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
 const STATUS_SUBJECT: Record<string, string> = {
+  placed:              '🎉 Order Placed Successfully — Festecart',
   confirmed:           '✅ Order Confirmed — Festecart',
   processing:          '🔄 Your Order is Being Processed — Festecart',
   partially_fulfilled: '📦 Your Order is Partially Shipped — Festecart',
@@ -131,13 +137,22 @@ function buildEmailBody(
     </div>
 
     <h2 style="color:#1a1a1a;margin:0 0 8px;">Hi ${customerName},</h2>
-    <p style="color:#444;margin:0 0 20px;">Your order <strong>${orderNum}</strong> has been updated.</p>
+    <p style="color:#444;margin:0 0 20px;">${newStatus === 'confirmed' ? `We've received your order <strong>${orderNum}</strong>. Here's a summary:` : `Your order <strong>${orderNum}</strong> has been updated.`}</p>
 
     <!-- Status badge -->
     <div style="background:#f5f5f5;padding:20px;border-radius:12px;margin:0 0 20px;text-align:center;border-left:4px solid #b91c1c;">
       <p style="margin:0;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Order Status</p>
       <p style="margin:4px 0 0;font-size:22px;font-weight:bold;color:#1a1a1a;">${statusLabel}</p>
     </div>`
+
+  // ── Order placed / confirmed ──
+  if (newStatus === 'confirmed') {
+    body += `
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:20px;border-radius:12px;margin:0 0 20px;">
+      <p style="margin:0;color:#166534;font-size:16px;font-weight:600;">🎉 Thank you for your order!</p>
+      <p style="margin:8px 0 0;color:#166534;">We've received your order and will start processing it shortly. You'll receive updates as your order progresses.</p>
+    </div>`
+  }
 
   // ── Tracking info for shipped ──
   if (invoice && newStatus === 'shipped') {
@@ -220,32 +235,32 @@ function buildEmailBody(
 }
 
 // ── Main handler ───────────────────────────────────────────────
-serve(async (req) => {
+serve(async (req: Request) => {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   const { order, new_status, invoice } = await req.json()
   const orderData = order as Record<string, unknown>
 
-  // Get customer email — guest_email for guests, Auth email for registered users
-  let email = orderData.guest_email as string | null
+  // Get customer email — prefer dedicated customer_email field, fall back to guest_email
+  let email = (orderData.customer_email as string | null) ?? (orderData.guest_email as string | null)
   let customerName = (orderData.guest_name as string) ?? ''
 
   if (!email && orderData.user_id) {
-    // Registered user — look up email from user_profiles table first
+    // Still no email — try user_profiles as last resort
     try {
-      const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-      // Try user_profiles first (has email column)
-      const { data: profile } = await adminClient
-        .from('user_profiles')
-        .select('name, email')
-        .eq('user_id', orderData.user_id as string)
-        .single()
-      if (profile?.email) email = profile.email
-      if (!customerName && profile?.name) customerName = profile.name
-
-      // Fallback: auth user lookup
-      if (!email) {
-        const { data: userData } = await adminClient.auth.admin.getUserById(orderData.user_id as string)
-        if (userData?.user?.email) email = userData.user.email
-        if (!customerName) customerName = userData?.user?.user_metadata?.full_name ?? ''
+      const serviceKey = Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      if (serviceKey) {
+        const adminClient = createClient(SUPABASE_URL, serviceKey)
+        const { data: profile } = await adminClient
+          .from('user_profiles')
+          .select('name, email')
+          .eq('user_id', orderData.user_id as string)
+          .single()
+        if (profile?.email) email = profile.email
+        if (!customerName && profile?.name) customerName = profile.name
       }
     } catch (e) {
       console.error('Failed to look up user email:', e)
@@ -253,7 +268,9 @@ serve(async (req) => {
   }
 
   if (!email) {
-    return new Response(JSON.stringify({ ok: false, reason: 'No email found for this order' }), { status: 200 })
+    return new Response(JSON.stringify({ ok: false, reason: 'No email found for this order' }), {
+      status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    })
   }
 
   // Fallback name from shipping address
@@ -281,6 +298,6 @@ serve(async (req) => {
   console.log(`Email sent to ${email} for status ${new_status}:`, result)
   return new Response(JSON.stringify({ ok: res.ok, result, email_used: email }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 })

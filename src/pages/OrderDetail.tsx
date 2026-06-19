@@ -9,11 +9,13 @@ import {
   Package, AlertTriangle, Loader2, IndianRupee, FileText,
   Truck, CheckCircle2, X, Clock, History
 } from 'lucide-react'
+import jsPDF from 'jspdf'
+import html2canvas from 'html2canvas'
 
 // ── helpers ───────────────────────────────────────────────────
 function customerName(o: Order) { return o.guest_name?.trim() || o.shipping_address?.name?.trim() || '—' }
 function customerPhone(o: Order) { return o.guest_phone?.trim() || o.shipping_address?.phone?.trim() || '—' }
-function customerEmail(o: Order) { return o.guest_email?.trim() || '—' }
+function customerEmail(o: Order) { return o.customer_email?.trim() || o.guest_email?.trim() || '—' }
 function isOrderPaid(o: Order) { return o.payment_method !== 'cod' || o.payment_status === 'paid' }
 
 const STATUS_DOT: Record<string, string> = {
@@ -109,12 +111,13 @@ async function logHistory(orderId: string, action: string, oldStatus: string | n
 
 async function sendStatusEmail(order: Order, newStatus: string, invoice?: Invoice) {
   try {
-    await supabase.functions.invoke('send-order-email', {
+    console.log('[sendStatusEmail] Invoking for:', order.order_number, '→', newStatus, 'email:', (order as unknown as Record<string,unknown>).customer_email || order.guest_email)
+    const result = await supabase.functions.invoke('send-order-email', {
       body: { order, new_status: newStatus, invoice: invoice ?? null },
     })
+    console.log('[sendStatusEmail] Result:', JSON.stringify(result.data))
   } catch (e) {
     console.error('[Email] Failed to send status email:', e)
-    // Non-blocking — never fail the order update because of email
   }
 }
 
@@ -320,12 +323,13 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
 }
 
 // ── Mark Delivered Modal ──────────────────────────────────────
-function MarkDeliveredModal({ invoice, onClose, onSuccess }: {
-  invoice: Invoice; onClose: () => void; onSuccess: () => void
+function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
+  invoice: Invoice; order: Order; onClose: () => void; onSuccess: () => void
 }) {
   const qc = useQueryClient()
   const [loading, setLoading] = useState(false)
   const [checked, setChecked] = useState(false)
+  const paid = isOrderPaid(order)
 
   const confirm = async () => {
     if (!checked) return
@@ -346,19 +350,25 @@ function MarkDeliveredModal({ invoice, onClose, onSuccess }: {
 
   return (
     <Modal title="Mark as Delivered" onClose={onClose}>
+      {!paid && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+          <AlertTriangle size={14} className="text-red-600 shrink-0" />
+          <p className="text-sm text-red-700 font-medium">Payment not received. Mark as Paid before delivering.</p>
+        </div>
+      )}
       <div className="space-y-3 text-sm text-gray-700">
         {invoice.tracking_number && <p><span className="text-gray-400">Tracking No:</span> <strong>{invoice.tracking_number}</strong></p>}
         {invoice.courier && <p><span className="text-gray-400">Courier:</span> <strong>{invoice.courier}</strong></p>}
         {invoice.sent_at && <p><span className="text-gray-400">Sent Date:</span> {formatDate(invoice.sent_at)}</p>}
         {invoice.estimated_delivery && <p><span className="text-gray-400">Estimated Date:</span> {formatDate(invoice.estimated_delivery)}</p>}
         <div className="flex items-center gap-2 mt-3 p-3 bg-gray-50 rounded-lg">
-          <input type="checkbox" id="markdel" checked={checked} onChange={e => setChecked(e.target.checked)} />
-          <label htmlFor="markdel" className="text-sm font-medium text-gray-800">Mark As Delivered</label>
+          <input type="checkbox" id="markdel" checked={checked} onChange={e => setChecked(e.target.checked)} disabled={!paid} />
+          <label htmlFor="markdel" className={`text-sm font-medium ${paid ? 'text-gray-800' : 'text-gray-400'}`}>Mark As Delivered</label>
         </div>
       </div>
       <div className="flex gap-3 justify-end mt-4">
         <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm">Close</button>
-        <button onClick={confirm} disabled={!checked || loading}
+        <button onClick={confirm} disabled={!checked || loading || !paid}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:bg-gray-400">
           {loading && <Loader2 size={13} className="animate-spin" />} Confirm
         </button>
@@ -367,8 +377,8 @@ function MarkDeliveredModal({ invoice, onClose, onSuccess }: {
   )
 }
 
-// ── Invoice print/download ────────────────────────────────────
-function printInvoice(invoice: Invoice, order: Order) {
+// ── Generate Invoice PDF ──────────────────────────────────────
+async function downloadInvoicePdf(invoice: Invoice, order: Order) {
   const items = invoice.invoice_items ?? []
   const total = items.reduce((s, i) => s + i.price * i.fulfilled_qty, 0)
   const addr = order.shipping_address
@@ -389,100 +399,89 @@ function printInvoice(invoice: Invoice, order: Order) {
   const invoiceDate = new Date(invoice.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const orderDate = new Date(order.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const custName = order.guest_name || addr?.name || '—'
-  const custEmail = order.guest_email || '—'
+  const custEmail = order.customer_email || order.guest_email || '—'
+  const payMode = order.payment_method === 'cod' ? 'Cash on Delivery' : order.payment_method.toUpperCase()
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-  <title>Invoice ${invoice.invoice_number}</title>
-  <style>
-    body{font-family:Arial,sans-serif;font-size:13px;color:#222;margin:0;padding:32px;}
-    h1{text-align:center;font-size:18px;font-weight:bold;margin-bottom:24px;letter-spacing:2px;}
-    .header{display:flex;justify-content:space-between;margin-bottom:24px;}
-    .logo{font-size:28px;font-weight:900;color:#b91c1c;line-height:1;}
-    .logo span{color:#1d6b2e;}
-    .invoice-info{text-align:right;font-size:12px;}
-    .invoice-info strong{display:block;}
-    .company{margin-bottom:20px;font-size:12px;line-height:1.6;}
-    .company strong{font-size:14px;}
-    .addresses{display:flex;gap:32px;margin-bottom:20px;}
-    .addresses .col{flex:1;}
-    .addresses .col h4{font-size:11px;font-weight:bold;margin:0 0 6px;}
-    .order-meta{text-align:right;font-size:12px;line-height:1.8;}
-    table{width:100%;border-collapse:collapse;margin:16px 0;}
-    th{background:#f5f5f5;border:1px solid #ddd;padding:8px 10px;text-align:left;font-size:12px;}
-    td{border:1px solid #ddd;padding:8px 10px;font-size:12px;}
-    .totals{width:40%;margin-left:auto;font-size:13px;}
-    .totals td{border:none;padding:3px 6px;}
-    .totals .grand{font-weight:bold;font-size:14px;}
-    .words{font-size:12px;color:#444;margin:4px 0;}
-    .payment{font-size:12px;margin-top:16px;}
-    .divider{border:none;border-top:1px solid #ddd;margin:16px 0;}
-    @media print{body{padding:16px;}}
-  </style></head><body>
-  <h1>INVOICE</h1>
-  <div class="header">
-    <div>
-      <div class="logo">fest<span>ecart</span></div>
-    </div>
-    <div class="invoice-info">
-      <strong>Invoice Date:</strong> ${invoiceDate}<br/>
-      <strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-', '')}<br/>
-      <strong>GSTIN:</strong> 29AFFFS9227M1Z7
-    </div>
-  </div>
-  <div class="company">
-    <strong>festecart ,</strong><br/>
-    No 861, 2nd floor, 5th Main, Near Hopcoms, BEML Layout, 3rd Stage, Rajarajeshwari Nagar, Bengaluru South, , RR Nagar, BBMP West<br/>
-    Bengaluru, Karnataka, India - 560098
-  </div>
-  <hr class="divider"/>
-  <div style="display:flex;justify-content:space-between;">
-    <div class="addresses" style="flex:1;">
-      <div class="col">
-        <h4>Shipping Address</h4>
-        ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state}, India - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
-      </div>
-      <div class="col">
-        <h4>Billing Address</h4>
-        ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state}, India - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
+  // Build a hidden div, render it, capture to canvas, save as PDF
+  const container = document.createElement('div')
+  container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;'
+  container.innerHTML = `
+  <div style="font-family:Arial,sans-serif;font-size:13px;color:#222;padding:40px;width:714px;">
+    <h1 style="text-align:center;font-size:18px;font-weight:bold;margin:0 0 24px;letter-spacing:2px;">INVOICE</h1>
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;align-items:flex-start;">
+      <div style="font-size:28px;font-weight:900;color:#b91c1c;line-height:1;">fest<span style="color:#1d6b2e;">ecart</span></div>
+      <div style="text-align:right;font-size:12px;line-height:1.8;">
+        <strong>Invoice Date:</strong> ${invoiceDate}<br/>
+        <strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-', '')}<br/>
+        <strong>GSTIN:</strong> 29AFFFS9227M1Z7
       </div>
     </div>
-    <div class="order-meta">
-      <strong>Order Date:</strong> ${orderDate}<br/>
-      <strong>Order No.</strong> ${order.order_number?.replace('#', '')}<br/>
-      <strong>Email:</strong> ${custEmail}
+    <div style="font-size:12px;line-height:1.6;margin-bottom:16px;">
+      <strong>festecart,</strong><br/>
+      No 861, 2nd floor, 5th Main, Near Hopcoms, BEML Layout, 3rd Stage,<br/>
+      Rajarajeshwari Nagar, Bengaluru South, RR Nagar, BBMP West,<br/>
+      Bengaluru, Karnataka, India - 560098
     </div>
-  </div>
-  <hr class="divider"/>
-  <table>
-    <thead><tr>
-      <th>Item</th><th>Quantity</th><th>Original Price</th><th>Selling Price</th><th>Total</th>
-    </tr></thead>
-    <tbody>
-      ${items.map(i => `<tr>
-        <td><strong>${i.product_name}</strong></td>
-        <td style="text-align:center;">${i.fulfilled_qty}</td>
-        <td style="text-align:right;">${i.price.toFixed(2)}</td>
-        <td style="text-align:right;">${i.price.toFixed(2)}</td>
-        <td style="text-align:right;">${(i.price * i.fulfilled_qty).toFixed(2)}</td>
-      </tr>`).join('')}
-    </tbody>
-  </table>
-  <table class="totals">
-    <tr><td>Subtotal:</td><td style="text-align:right;"><strong>${total.toFixed(2)}</strong></td></tr>
-    <tr><td colspan="2"><hr class="divider"/></td></tr>
-    <tr class="grand"><td>Total:</td><td style="text-align:right;"><strong>${total.toFixed(2)}</strong></td></tr>
-  </table>
-  <p class="words"><strong>In words:</strong> ${amountInWords}</p>
-  <p class="payment"><strong>Mode of Payment :</strong> ${order.payment_method === 'cod' ? 'Cash on Delivery' : order.payment_method.toUpperCase()}</p>
-  ${invoice.notes ? `<p style="font-size:12px;"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
-  </body></html>`
+    <hr style="border:none;border-top:1px solid #ddd;margin:12px 0;"/>
+    <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:12px;flex:1;margin-right:16px;">
+        <strong>Shipping Address</strong><br/>
+        ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state}, India - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
+      </div>
+      <div style="font-size:12px;flex:1;margin-right:16px;">
+        <strong>Billing Address</strong><br/>
+        ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state}, India - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
+      </div>
+      <div style="text-align:right;font-size:12px;line-height:1.8;">
+        <strong>Order Date:</strong> ${orderDate}<br/>
+        <strong>Order No.</strong> ${order.order_number?.replace('#', '')}<br/>
+        <strong>Email:</strong> ${custEmail}
+      </div>
+    </div>
+    <hr style="border:none;border-top:1px solid #ddd;margin:12px 0;"/>
+    <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+      <thead>
+        <tr style="background:#f5f5f5;">
+          <th style="text-align:left;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Item</th>
+          <th style="text-align:center;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Qty</th>
+          <th style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Price</th>
+          <th style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(i => `
+          <tr>
+            <td style="padding:8px 10px;font-size:12px;border:1px solid #ddd;"><strong>${i.product_name}</strong></td>
+            <td style="text-align:center;padding:8px 10px;font-size:12px;border:1px solid #ddd;">${i.fulfilled_qty}</td>
+            <td style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">₹${i.price.toFixed(2)}</td>
+            <td style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">₹${(i.price * i.fulfilled_qty).toFixed(2)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="background:#f5f5f5;">
+          <td colspan="3" style="text-align:right;padding:8px 10px;font-weight:bold;border:1px solid #ddd;">Total:</td>
+          <td style="text-align:right;padding:8px 10px;font-weight:bold;font-size:14px;border:1px solid #ddd;">₹${total.toFixed(2)}</td>
+        </tr>
+      </tfoot>
+    </table>
+    <p style="font-size:12px;color:#444;margin:8px 0;"><strong>In words:</strong> ${amountInWords}</p>
+    <p style="font-size:12px;margin:8px 0;"><strong>Mode of Payment:</strong> ${payMode}</p>
+    ${invoice.notes ? `<p style="font-size:12px;margin:8px 0;"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+  </div>`
 
-  const win = window.open('', '_blank', 'width=800,height=900')
-  if (win) {
-    win.document.write(html)
-    win.document.close()
-    win.focus()
-    setTimeout(() => { win.print() }, 500)
+  document.body.appendChild(container)
+  try {
+    const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' })
+    const imgData = canvas.toDataURL('image/png')
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: 'a4' })
+    const pageW = pdf.internal.pageSize.getWidth()
+    const pageH = pdf.internal.pageSize.getHeight()
+    const ratio = Math.min(pageW / canvas.width, pageH / canvas.height)
+    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width * ratio, canvas.height * ratio)
+    pdf.save(`${invoice.invoice_number}.pdf`)
+  } finally {
+    document.body.removeChild(container)
   }
 }
 function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
@@ -491,6 +490,7 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
   const [showDelivered, setShowDelivered] = useState(false)
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
+  const [pdfLoading, setPdfLoading] = useState(false)
 
   const cancelFulfillment = async () => {
     setCancelLoading(true)
@@ -512,11 +512,17 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => printInvoice(invoice, order)}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50"
-            title="Download / Print Invoice"
+            onClick={async () => {
+              setPdfLoading(true)
+              try { await downloadInvoicePdf(invoice, order) }
+              finally { setPdfLoading(false) }
+            }}
+            disabled={pdfLoading}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60"
+            title="Download Invoice PDF"
           >
-            <FileText size={12} /> Download Invoice
+            {pdfLoading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+            {pdfLoading ? 'Generating…' : 'Download Invoice'}
           </button>
           <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
           invoice.status === 'delivered' ? 'bg-green-100 text-green-700' :
@@ -570,7 +576,7 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
       )}
 
       {showTracking && <TrackingModal invoice={invoice} onClose={() => setShowTracking(false)} onSuccess={() => setShowTracking(false)} />}
-      {showDelivered && <MarkDeliveredModal invoice={invoice} onClose={() => setShowDelivered(false)} onSuccess={() => setShowDelivered(false)} />}
+      {showDelivered && <MarkDeliveredModal invoice={invoice} order={order} onClose={() => setShowDelivered(false)} onSuccess={() => setShowDelivered(false)} />}
       {cancelConfirm && (
         <ConfirmModal title="Cancel Fulfillment"
           message="Are you sure you want to cancel this fulfillment? Fulfilled quantities will be reversed."
@@ -602,9 +608,15 @@ export default function OrderDetail() {
     const { error } = await supabase.from('orders').update(updates).eq('id', order.id)
     if (error) { setActionError(error.message); setBusy(false); return }
     await logHistory(order.id, action, order.status, newStatus ?? null)
-    // Send email notification for status changes (non-blocking)
-    if (newStatus && newStatus !== order.status && order.guest_email) {
-      await sendStatusEmail({ ...order, ...updates } as Order, newStatus)
+    // Re-fetch the order fresh from DB to get customer_email before sending
+    const { data: freshOrder } = await supabase.from('orders').select('*').eq('id', order.id).single()
+    console.log('[Email] freshOrder:', freshOrder?.order_number, 'customer_email:', freshOrder?.customer_email, 'guest_email:', freshOrder?.guest_email)
+    if (newStatus && freshOrder && (freshOrder.customer_email || freshOrder.guest_email)) {
+      console.log('[Email] Sending to:', freshOrder.customer_email || freshOrder.guest_email)
+      await sendStatusEmail(freshOrder as Order, newStatus)
+      console.log('[Email] Sent successfully')
+    } else {
+      console.warn('[Email] SKIPPED — no email on order or no newStatus. newStatus:', newStatus, 'freshOrder:', !!freshOrder)
     }
     qc.invalidateQueries({ queryKey: ['orders', order.id] })
     qc.invalidateQueries({ queryKey: ['orders'] })
