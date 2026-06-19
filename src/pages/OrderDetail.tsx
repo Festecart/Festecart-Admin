@@ -621,7 +621,7 @@ export default function OrderDetail() {
 
   const addr = order.shipping_address
   const paid = isOrderPaid(order)
-  const canGenerateInvoice = order.status === 'processing'
+  const canGenerateInvoice = order.status === 'processing' || order.status === 'partially_fulfilled'
   const canMarkProcessing = order.status === 'confirmed'
   const canCancel = !['cancelled', 'delivered', 'completed', 'fulfilled'].includes(order.status)
 
