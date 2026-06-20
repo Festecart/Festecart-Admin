@@ -241,7 +241,6 @@ export default function AddOrder() {
       const { data } = await supabase
         .from('products')
         .select('id, name, price, compare_at_price, images, inventory_count')
-        .eq('status', 'published')
         .ilike('name', `%${productSearch}%`)
         .limit(8)
       setProductResults((data ?? []) as ProductResult[])
@@ -542,8 +541,13 @@ export default function AddOrder() {
                           ? <img src={p.images[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0" />
                           : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-gray-900 truncate">{p.name}</p>
-                          <p className="text-xs text-gray-500">{formatCurrency(p.price)}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-gray-900 truncate">{p.name}</p>
+                            {(p.inventory_count !== null && p.inventory_count <= 0) && (
+                              <span className="shrink-0 text-xs font-medium text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">Out of stock</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500">{formatCurrency(p.price)}{p.inventory_count !== null && p.inventory_count > 0 ? ` · Stock: ${p.inventory_count}` : ''}</p>
                         </div>
                       </button>
                     ))}
