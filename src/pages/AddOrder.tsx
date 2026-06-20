@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
@@ -79,9 +80,10 @@ function SaveAsOrderModal({ onClose, onConfirm, loading, error }: SaveModalProps
   const [markAsPaid, setMarkAsPaid]     = useState(false)
   const [transactionNote, setTransactionNote] = useState('')
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h3 className="font-semibold text-gray-900 text-base">Save as Order</h3>
@@ -161,7 +163,8 @@ function SaveAsOrderModal({ onClose, onConfirm, loading, error }: SaveModalProps
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -298,8 +301,7 @@ export default function AddOrder() {
   // ── Validate before showing modal ──────────────────────────────
   const handleSaveAsOrderClick = () => {
     if (items.length === 0) { setFormError('Add at least one product'); return }
-    if (mode === 'walkin' && !walkin.name.trim()) { setFormError('Customer name is required'); return }
-    if (mode === 'customer' && !selectedCustomer) { setFormError('Select a customer'); return }
+    if (mode === 'walkin' && !walkin.name.trim()) { setFormError('Customer name is required for walk-in orders'); return }
     setFormError(null)
     setModalError(null)
     setShowSaveModal(true)
