@@ -241,6 +241,7 @@ export default function AddOrder() {
       const { data } = await supabase
         .from('products')
         .select('id, name, price, compare_at_price, images, inventory_count')
+        .eq('status', 'published')
         .ilike('name', `%${productSearch}%`)
         .limit(8)
       setProductResults((data ?? []) as ProductResult[])
@@ -327,7 +328,6 @@ export default function AddOrder() {
         payment_method: opts.paymentMethod,
         payment_status: paymentStatus,
         paid_at: opts.markAsPaid ? new Date().toISOString() : null,
-        delivery_type: opts.deliveryType,
         subtotal, shipping_charge: shipping, total,
         note: [notes.trim(), opts.transactionNote.trim()].filter(Boolean).join(' | ') || null,
         shipping_address: shippingAddress,
