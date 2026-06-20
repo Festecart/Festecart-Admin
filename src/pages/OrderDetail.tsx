@@ -262,7 +262,7 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
         is_prepaid: form.is_prepaid, status: 'shipped',
       }).eq('id', invoice.id)
       if (trackErr) throw new Error(trackErr.message)
-      await supabase.from('orders').update({ fulfillment_status: 'shipped' }).eq('id', invoice.order_id)
+      await supabase.from('orders').update({ status: 'shipped', fulfillment_status: 'shipped' }).eq('id', invoice.order_id)
       // Fetch updated order for email
       const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', invoice.order_id).single()
       if (updatedOrder) {
