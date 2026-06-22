@@ -169,37 +169,82 @@ interface ShippingResult {
 }
 
 /**
- * Get the applicable shipping rate for a given pincode + order total.
+ * Check if the cart products are eligible for a given zone.
+ *
+ * - product_type = null         → all products allowed (no restriction)
+ * - product_type = 'specific'   → only the exact product IDs in selected_products
+ * - product_type = 'category'   → any product whose category_id is in selected_products
+ * - product_type = 'product_group' → any product whose product_group_id is in selected_products
+ */
+async function isProductEligibleForZone(
+  zone: {
+    product_type: string | null
+    selected_products: { id: string }[] | null
+  },
+  cartItems: { product_id: string; category_id?: string }[]
+): Promise<boolean> {
+  // No restriction → all products eligible
+  if (!zone.product_type || !zone.selected_products?.length) return true
+
+  const selectedIds = zone.selected_products.map(p => p.id)
+
+  if (zone.product_type === 'specific') {
+    // At least one cart item must be an explicitly selected product
+    return cartItems.some(item => selectedIds.includes(item.product_id))
+  }
+
+  if (zone.product_type === 'category') {
+    // Fetch products in the cart and check their category
+    const { data: products } = await supabase
+      .from('products')
+      .select('id, category_id')
+      .in('id', cartItems.map(i => i.product_id))
+
+    return (products ?? []).some(p => selectedIds.includes(p.category_id))
+  }
+
+  if (zone.product_type === 'product_group') {
+    // Fetch products in the cart and check their product_group_id
+    const { data: products } = await supabase
+      .from('products')
+      .select('id, product_group_id')
+      .in('id', cartItems.map(i => i.product_id))
+
+    return (products ?? []).some(p => selectedIds.includes(p.product_group_id))
+  }
+
+  return true
+}
+
+/**
+ * Get the applicable shipping rate for a given pincode + order total + cart items.
  * Priority: zone-based methods → delivery_pincodes fallback.
  * Returns null if pincode is not serviceable.
  */
 export async function getShippingRate(
   pincode: string,
   orderTotal: number,
-  productIds: string[] = []
+  cartItems: { product_id: string; category_id?: string }[] = []
 ): Promise<ShippingResult | null> {
 
-  // 1. Fetch all active zones with their places
+  // 1. Fetch all zones
   const { data: zones } = await supabase
     .from('shipping_zones')
     .select('id, name, places, product_type, selected_products')
 
   for (const zone of zones ?? []) {
-    // 2. Check if customer pincode matches this zone's places
+    // 2. Check pincode matches this zone
     const places: Array<{ placeType: string; values: string[] }> = zone.places ?? []
     const pincodeMatches = places.some(
       p => p.placeType === 'pincode' && p.values.includes(pincode)
     )
     if (!pincodeMatches) continue
 
-    // 3. Check product restriction (if zone has product_type set)
-    if (zone.product_type && zone.selected_products?.length > 0) {
-      const allowedIds = (zone.selected_products as { id: string }[]).map(p => p.id)
-      const hasMatch = productIds.some(id => allowedIds.includes(id))
-      if (!hasMatch) continue
-    }
+    // 3. Check product eligibility (category / product group / specific)
+    const eligible = await isProductEligibleForZone(zone, cartItems)
+    if (!eligible) continue
 
-    // 4. Find the applicable shipping method based on order total
+    // 4. Find applicable shipping method based on order total
     const { data: methods } = await supabase
       .from('shipping_methods')
       .select('*')
@@ -214,7 +259,10 @@ export async function getShippingRate(
         const min = method.price_min ?? 0
         const max = method.price_max ?? Infinity
         matches = orderTotal >= min && orderTotal <= max
-      } else if (!method.condition_type) {
+      } else if (method.condition_type === 'weight') {
+        // Weight-based: pass cartWeight from caller if available
+        matches = true // handled by caller
+      } else {
         matches = true // no condition = always applies
       }
 
@@ -260,9 +308,6 @@ export async function getShippingRate(
   return null // not serviceable
 }
 
-/**
- * Check if a pincode is serviceable at all (zone OR delivery_pincodes).
- */
 export async function isPincodeServiceable(pincode: string): Promise<boolean> {
   const result = await getShippingRate(pincode, 0)
   return result !== null
@@ -278,11 +323,16 @@ Add a new hook:
 ```typescript
 import { getShippingRate } from '@/lib/shippingUtils'
 
-export function useShippingRate(pincode: string, orderTotal: number, productIds?: string[]) {
+// cartItems should include product_id and optionally category_id
+export function useShippingRate(
+  pincode: string,
+  orderTotal: number,
+  cartItems: { product_id: string; category_id?: string }[] = []
+) {
   return useQuery({
-    queryKey: ['shipping-rate', pincode, orderTotal],
-    queryFn: () => getShippingRate(pincode, orderTotal, productIds),
-    enabled: pincode.length === 6,
+    queryKey: ['shipping-rate', pincode, orderTotal, cartItems.map(i => i.product_id).join(',')],
+    queryFn: () => getShippingRate(pincode, orderTotal, cartItems),
+    enabled: pincode.length >= 5,
     staleTime: 1000 * 60 * 5,
   })
 }
@@ -298,25 +348,40 @@ Replace the current flat pincode map lookup:
 // REMOVE this:
 const shippingCharge = pincodeMap[pincode]?.charge ?? 0
 
-// ADD this:
+// ADD this — pass cart items WITH category_id so category-based zones work:
+const cartItemsForShipping = cartItems.map(item => ({
+  product_id: item.product_id,
+  category_id: item.category_id,   // make sure cart items include category_id
+}))
+
 const { data: shippingResult, isLoading: shippingLoading } = useShippingRate(
   pincode,
   cartSubtotal,
-  cartItems.map(i => i.product_id)
+  cartItemsForShipping
 )
 
-// Disable Place Order if not serviceable
 const isServiceable = shippingResult !== null
 const shippingCharge = shippingResult?.charge ?? 0
-
-// Show delivery estimate
 const deliveryText = shippingResult
   ? `${shippingResult.deliveryMin}–${shippingResult.deliveryMax} ${shippingResult.timeUnit}`
   : ''
-
-// Show free shipping message
 const isFreeShipping = shippingResult?.isFree ?? false
 ```
+
+> **Important:** When a zone has `product_type = 'category'`, the system queries Supabase to check if any cart product belongs to the selected categories. Make sure your `products` table has a `category_id` column and your cart items carry this field. If not, fetch it from the products table when building the cart.
+
+---
+
+### How Category/Product Group Shipping Works
+
+| Zone product_type | What it means | How Connect checks it |
+|---|---|---|
+| `null` / empty | All products can be shipped to this zone | No check — always eligible |
+| `"category"` | Only products in the selected categories | Queries `products.category_id` for each cart item |
+| `"product_group"` | Only products in the selected groups | Queries `products.product_group_id` for each cart item |
+| `"specific"` | Only the exact selected products | Direct `product_id` match against `selected_products` array |
+
+**Example:** If admin sets a zone to Category = "Pooja Items", then all products under that category will be shippable to that zone. Products from other categories won't match and will fall back to the next zone or `delivery_pincodes`.
 
 ---
 
