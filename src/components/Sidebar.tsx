@@ -106,6 +106,17 @@ export function Sidebar({ onLogout }: SidebarProps) {
           <MapPin size={18} />Delivery Zones
         </NavLink>
 
+        {/* Shipping Zones */}
+        <NavLink
+          to="/shipping-zones"
+          className={({ isActive }) =>
+            cn('flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+              isActive ? 'bg-red-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white')
+          }
+        >
+          <Truck size={18} />Shipping Zones
+        </NavLink>
+
       </nav>
 
       {/* Logout */}
