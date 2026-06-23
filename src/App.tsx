@@ -21,6 +21,7 @@ import ProductForm from '@/pages/ProductForm'
 import SiteNavigation from '@/pages/SiteNavigation'
 import AddOrder from '@/pages/AddOrder'
 import SiteFooter from '@/pages/SiteFooter'
+import FeaturedProducts from '@/pages/FeaturedProducts'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +71,7 @@ export default function App() {
             <Route path="catalog/products/:id/edit" element={<ProductForm />} />
             <Route path="site/navbar" element={<SiteNavigation />} />
             <Route path="site/footer" element={<SiteFooter />} />
+            <Route path="site/featured-products" element={<FeaturedProducts />} />
           </Route>
 
           {/* Fallback */}

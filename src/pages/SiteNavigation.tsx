@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useSiteConfig, useUpdateSiteConfig } from '@/hooks/useSiteConfig'
 import {
   Plus, Trash2, ChevronUp, ChevronDown,
-  Check, Save, ChevronRight, Navigation, AlignLeft
+  Check, Save, ChevronRight, Navigation, AlignLeft, Star
 } from 'lucide-react'
 
 interface NavLink { name: string; href: string; order: number; enabled: boolean }
@@ -303,6 +303,14 @@ export default function SiteNavigation() {
         subtitle="Footer columns, contact info, social links and copyright"
         icon={AlignLeft}
         onNavigate={() => navigate('/site/footer')}
+      />
+
+      {/* Featured Products */}
+      <MenuSection
+        title="Featured Products"
+        subtitle="Select and order products shown in the homepage featured section"
+        icon={Star}
+        onNavigate={() => navigate('/site/featured-products')}
       />
     </div>
   )
