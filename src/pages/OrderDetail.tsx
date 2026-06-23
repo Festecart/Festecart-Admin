@@ -629,9 +629,23 @@ export default function OrderDetail() {
 
   const addr = order.shipping_address
   const paid = isOrderPaid(order)
-  const canGenerateInvoice = order.status === 'processing' || order.status === 'partially_fulfilled'
+
+  // Has any items that haven't been fully fulfilled yet?
+  const fulfilledQtyMap: Record<string, number> = {}
+  invoices.forEach(inv => {
+    (inv.invoice_items ?? []).forEach(ii => {
+      fulfilledQtyMap[ii.product_id] = (fulfilledQtyMap[ii.product_id] ?? 0) + ii.fulfilled_qty
+    })
+  })
+  const hasRemainingItems = (order.items ?? []).some(
+    item => (fulfilledQtyMap[item.product_id] ?? 0) < item.quantity
+  )
+
+  // Allow generating invoice when in processing/partially_fulfilled/shipped/fulfilled as long as items remain
+  const canGenerateInvoice = hasRemainingItems &&
+    ['processing', 'partially_fulfilled', 'shipped', 'fulfilled'].includes(order.status)
   const canMarkProcessing = order.status === 'confirmed'
-  const canCancel = !['cancelled', 'delivered', 'completed', 'fulfilled'].includes(order.status)
+  const canCancel = !['cancelled', 'delivered', 'completed'].includes(order.status)
 
   return (
     <div className="min-h-screen bg-gray-50">
