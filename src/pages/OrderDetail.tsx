@@ -22,12 +22,14 @@ const STATUS_DOT: Record<string, string> = {
   confirmed: 'bg-gray-400', processing: 'bg-blue-500',
   partially_fulfilled: 'bg-orange-400', fulfilled: 'bg-green-400',
   shipped: 'bg-blue-600', out_for_delivery: 'bg-orange-500',
+  partially_delivered: 'bg-orange-500',
   delivered: 'bg-green-600', cancelled: 'bg-gray-300', completed: 'bg-black',
 }
 const STATUS_LABEL: Record<string, string> = {
   confirmed: 'Confirmed', processing: 'Processing',
   partially_fulfilled: 'Partially Fulfilled', fulfilled: 'Fulfilled',
   shipped: 'Shipped', out_for_delivery: 'Out for Delivery',
+  partially_delivered: 'Partially Delivered',
   delivered: 'Delivered', cancelled: 'Cancelled', completed: 'Completed',
 }
 const FULFILLMENT_LABEL: Record<string, string> = {
@@ -360,29 +362,47 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
   const confirm = async () => {
     if (!checked) return
     setLoading(true)
-    await supabase.from('invoices').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', invoice.id)
+    // 1. Mark this invoice as delivered
+    await supabase.from('invoices')
+      .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+      .eq('id', invoice.id)
 
-    // Only set order to 'delivered' if ALL non-cancelled invoices are now delivered
+    // 2. Fetch ALL invoices with their items for this order
     const { data: allInvoices } = await supabase
       .from('invoices')
-      .select('id, status')
+      .select('*, invoice_items(*)')
       .eq('order_id', invoice.order_id)
-    const active = (allInvoices ?? []).filter(i => i.status !== 'cancelled')
-    const allDelivered = active.every(i => i.id === invoice.id || i.status === 'delivered')
-    const newOrderStatus = allDelivered ? 'delivered' : 'partially_fulfilled'
+
+    // 3. Calculate total fulfilled qty per product across all invoices
+    const fulfilledQtyMap: Record<string, number> = {}
+    ;(allInvoices ?? []).forEach(inv => {
+      ;(inv.invoice_items ?? []).forEach((ii: { product_id: string; fulfilled_qty: number }) => {
+        fulfilledQtyMap[ii.product_id] = (fulfilledQtyMap[ii.product_id] ?? 0) + ii.fulfilled_qty
+      })
+    })
+
+    // 4. Check if every ordered item is fully fulfilled and delivered
+    const allDelivered = (order.items ?? []).every(
+      item => (fulfilledQtyMap[item.product_id] ?? 0) >= item.quantity
+    )
+
+    const newOrderStatus = allDelivered ? 'delivered' : 'partially_delivered'
 
     await supabase.from('orders').update({
-      fulfillment_status: allDelivered ? 'delivered' : 'partially_delivered',
       status: newOrderStatus,
+      fulfillment_status: allDelivered ? 'delivered' : 'partially_delivered',
     }).eq('id', invoice.order_id)
+
     await logHistory(invoice.order_id, 'Marked Delivered', null, newOrderStatus, `Invoice ${invoice.invoice_number}`)
-    // Send delivered email only when all items are delivered
+
+    // 5. Send delivered email only when ALL items delivered
     if (allDelivered) {
       const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', invoice.order_id).single()
       if (updatedOrder) {
         await sendStatusEmail(updatedOrder as Order, 'delivered', invoice)
       }
     }
+
     qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
     qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
     setLoading(false)
@@ -684,7 +704,7 @@ export default function OrderDetail() {
 
   // Allow generating invoice when in processing/partially_fulfilled/shipped/fulfilled as long as items remain
   const canGenerateInvoice = hasRemainingItems &&
-    ['processing', 'partially_fulfilled', 'shipped', 'fulfilled'].includes(order.status)
+    ['processing', 'partially_fulfilled', 'partially_delivered', 'shipped', 'fulfilled'].includes(order.status)
   const canMarkProcessing = order.status === 'confirmed'
   const canCancel = !['cancelled', 'delivered', 'completed'].includes(order.status)
 
