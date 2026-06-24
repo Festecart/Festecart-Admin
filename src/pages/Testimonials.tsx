@@ -69,17 +69,25 @@ export default function Testimonials() {
     setConfig(c => ({ ...c, testimonials: arr }))
   }
 
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({})
+
   const handleImageUpload = async (id: string, file: File) => {
     setUploading(id)
+    setUploadErrors(e => ({ ...e, [id]: '' }))
     try {
-      const ext = file.name.split('.').pop()
-      const path = `testimonials/${id}.${ext}`
-      const { error } = await supabase.storage.from('public').upload(path, file, { upsert: true })
-      if (error) throw error
-      const { data: { publicUrl } } = supabase.storage.from('public').getPublicUrl(path)
+      const ext = file.name.split('.').pop() ?? 'jpg'
+      const path = `testimonials/${id}-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('product-images')
+        .upload(path, file, { upsert: true })
+      if (upErr) throw new Error(upErr.message)
+      const { data: { publicUrl } } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(path)
       updateTestimonial(id, 'image_url', publicUrl)
     } catch (e) {
-      console.error('Image upload failed:', e)
+      const msg = e instanceof Error ? e.message : 'Upload failed'
+      setUploadErrors(prev => ({ ...prev, [id]: msg }))
     } finally {
       setUploading(null)
     }
@@ -179,6 +187,9 @@ export default function Testimonials() {
                       {uploading === t.id ? <Loader2 size={12} className="animate-spin" /> : null}
                       Upload Photo
                     </label>
+                    {uploadErrors[t.id] && (
+                      <p className="text-xs text-red-500">{uploadErrors[t.id]}</p>
+                    )}
                     <p className="text-xs text-gray-400">Or paste URL:</p>
                     <input type="text" value={t.image_url}
                       onChange={e => updateTestimonial(t.id, 'image_url', e.target.value)}
