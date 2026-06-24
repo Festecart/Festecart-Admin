@@ -238,40 +238,55 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
   invoice: Invoice; onClose: () => void; onSuccess: () => void
 }) {
   const qc = useQueryClient()
+  const now = new Date()
+  const toLocal = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+  const defaultDelivery = new Date(now); defaultDelivery.setDate(now.getDate() + 7)
+
   const [form, setForm] = useState({
-    courier: invoice.courier ?? '',
+    courier: invoice.courier ?? 'Self-delivery',
     tracking_number: invoice.tracking_number ?? '',
-    sent_at: invoice.sent_at ? invoice.sent_at.slice(0, 16) : '',
-    estimated_delivery: invoice.estimated_delivery ? invoice.estimated_delivery.slice(0, 16) : '',
+    sent_at: invoice.sent_at ? invoice.sent_at.slice(0, 16) : toLocal(now),
+    estimated_delivery: invoice.estimated_delivery ? invoice.estimated_delivery.slice(0, 16) : toLocal(defaultDelivery),
     is_prepaid: invoice.is_prepaid ?? false,
   })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // Fetch courier vendors for dropdown
+  const { data: vendors = [] } = useQuery({
+    queryKey: ['courier-vendors'],
+    queryFn: async () => {
+      const { data } = await supabase.from('courier_vendors').select('id, name').order('name')
+      return (data ?? []) as { id: string; name: string }[]
+    },
+  })
+
   const handleSave = async () => {
     if (!form.courier) { setError('Courier is required'); return }
-    if (!form.tracking_number) { setError('Tracking number is required'); return }
-    if (!form.sent_at) { setError('Sent date is required'); return }
-    if (!form.estimated_delivery) { setError('Estimated delivery date is required'); return }
     setLoading(true); setError(null)
     try {
+      const sentAt = form.sent_at ? new Date(form.sent_at).toISOString() : new Date().toISOString()
+      const estDelivery = form.estimated_delivery ? new Date(form.estimated_delivery).toISOString() : null
       const { error: trackErr } = await supabase.from('invoices').update({
-        courier: form.courier, tracking_number: form.tracking_number,
-        sent_at: new Date(form.sent_at).toISOString(),
-        estimated_delivery: new Date(form.estimated_delivery).toISOString(),
+        courier: form.courier,
+        tracking_number: form.tracking_number || null,
+        sent_at: sentAt,
+        estimated_delivery: estDelivery,
         is_prepaid: form.is_prepaid, status: 'shipped',
       }).eq('id', invoice.id)
       if (trackErr) throw new Error(trackErr.message)
       await supabase.from('orders').update({ status: 'shipped', fulfillment_status: 'shipped' }).eq('id', invoice.order_id)
-      // Fetch updated order for email
       const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', invoice.order_id).single()
       if (updatedOrder) {
         await sendStatusEmail(updatedOrder as Order, 'shipped', {
           ...invoice,
           courier: form.courier,
-          tracking_number: form.tracking_number,
-          sent_at: new Date(form.sent_at).toISOString(),
-          estimated_delivery: new Date(form.estimated_delivery).toISOString(),
+          tracking_number: form.tracking_number || null,
+          sent_at: sentAt,
+          estimated_delivery: estDelivery,
         })
       }
       qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
@@ -286,25 +301,37 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
   return (
     <Modal title="Add Tracking Information" onClose={onClose}>
       <div className="space-y-4">
-        {[
-          { label: 'Courier *', field: 'courier', placeholder: 'e.g. Delhivery, Self-delivery' },
-          { label: 'Tracking Number *', field: 'tracking_number', placeholder: 'AWB / Tracking No' },
-        ].map(({ label, field, placeholder }) => (
-          <div key={field}>
-            <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
-            <input type="text" value={(form as Record<string, string | boolean>)[field] as string}
-              onChange={e => f(field, e.target.value)} placeholder={placeholder}
+        {/* Courier — dropdown from vendors */}
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Courier *</label>
+          {vendors.length > 0 ? (
+            <select value={form.courier} onChange={e => f('courier', e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+              <option value="Self-delivery">Self-delivery</option>
+              {vendors.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
+              <option value="Other">Other</option>
+            </select>
+          ) : (
+            <input type="text" value={form.courier} onChange={e => f('courier', e.target.value)}
+              placeholder="e.g. Delhivery, Self-delivery"
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-          </div>
-        ))}
+          )}
+        </div>
+        {/* Tracking Number — optional */}
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Tracking Number <span className="text-gray-400 font-normal">(optional)</span></label>
+          <input type="text" value={form.tracking_number} onChange={e => f('tracking_number', e.target.value)}
+            placeholder="AWB / Tracking No"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Sent Date & Time *</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Sent Date & Time <span className="text-gray-400 font-normal">(defaults to now)</span></label>
             <input type="datetime-local" value={form.sent_at} onChange={e => f('sent_at', e.target.value)}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Estimated Delivery *</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Est. Delivery <span className="text-gray-400 font-normal">(optional)</span></label>
             <input type="datetime-local" value={form.estimated_delivery} onChange={e => f('estimated_delivery', e.target.value)}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
           </div>
@@ -321,7 +348,6 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
     </Modal>
   )
 }
-
 // ── Mark Delivered Modal ──────────────────────────────────────
 function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
   invoice: Invoice; order: Order; onClose: () => void; onSuccess: () => void
@@ -553,8 +579,8 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
         </div>
       )}
 
-      {/* Actions */}
-      {invoice.status !== 'cancelled' && invoice.status !== 'delivered' && (
+      {/* Actions — hide completely when order is delivered */}
+      {invoice.status !== 'cancelled' && invoice.status !== 'delivered' && order.status !== 'delivered' && (
         <div className="flex flex-wrap gap-2">
           {invoice.status === 'pending_shipment' && (
             <button onClick={() => setShowTracking(true)}
@@ -803,16 +829,16 @@ export default function OrderDetail() {
                   Mark as Processing
                 </button>
               )}
-              {!paid && order.payment_method === 'cod' && (
-                <button onClick={() => setModal('markpaid')}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium">
-                  <IndianRupee size={14} /> Mark as Paid
-                </button>
-              )}
               {canGenerateInvoice && (
                 <button onClick={() => setModal('invoice')}
                   className="flex items-center gap-2 px-5 py-2.5 border border-gray-900 text-gray-900 hover:bg-gray-900 hover:text-white rounded-lg text-sm font-medium transition-colors">
                   <FileText size={14} /> Generate Invoice
+                </button>
+              )}
+              {!paid && order.payment_method === 'cod' && (
+                <button onClick={() => setModal('markpaid')}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium">
+                  <IndianRupee size={14} /> Mark as Paid
                 </button>
               )}
             </div>

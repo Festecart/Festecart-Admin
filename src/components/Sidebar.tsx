@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { ShoppingBag, Truck,  LogOut, ChevronUp, ChevronDown, Package, Globe } from 'lucide-react'
+import { ShoppingBag, Truck, LogOut, ChevronUp, ChevronDown, Package, Globe, Layout } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -78,10 +78,16 @@ export function Sidebar({ onLogout }: SidebarProps) {
           <Sub to="/catalog/categories" label="Categories" />
         </NavGroup>
 
-        {/* Website group */}
-        <NavGroup icon={Globe} label="Website" basePath="/site">
+        {/* Website group — Navigation + Footer */}
+        <NavGroup icon={Globe} label="Website" basePath="/site/navbar">
           <Sub to="/site/navbar" label="Navigation" />
-         
+        </NavGroup>
+
+        {/* Website Builder group — Featured Products, Testimonials, Why Packages */}
+        <NavGroup icon={Layout} label="Website Builder" basePath="/site">
+          <Sub to="/site/featured-products" label="Featured Products" />
+          <Sub to="/site/testimonials" label="Testimonials" />
+          <Sub to="/site/why-packages" label="Why Packages" />
         </NavGroup>
 
         {/* Shipments */}
@@ -94,8 +100,6 @@ export function Sidebar({ onLogout }: SidebarProps) {
         >
           <Truck size={18} />Shipments
         </NavLink>
-
-      
 
         {/* Shipping Zones */}
         <NavLink

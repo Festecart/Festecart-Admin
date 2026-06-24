@@ -18,6 +18,12 @@ interface Product {
   price: number
   images: string[]
   status: string
+  category_id?: string
+}
+
+interface Category {
+  id: string
+  name: string
 }
 
 const DEFAULT_CONFIG: FeaturedConfig = {
@@ -35,6 +41,7 @@ export default function FeaturedProducts() {
   const [productSearch, setProductSearch] = useState('')
   const [searchResults, setSearchResults] = useState<Product[]>([])
   const [searching, setSearching] = useState(false)
+  const [selectedCategory, setSelectedCategory] = useState('')
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -66,6 +73,31 @@ export default function FeaturedProducts() {
   const orderedProducts = config.product_ids
     .map(id => selectedProducts.find(p => p.id === id))
     .filter(Boolean) as Product[]
+
+  // Fetch categories for dropdown
+  const { data: categories = [] } = useQuery({
+    queryKey: ['categories-list'],
+    queryFn: async () => {
+      const { data } = await supabase.from('categories').select('id, name').order('name')
+      return (data ?? []) as Category[]
+    },
+  })
+
+  // When a category is selected, add all its products
+  const addCategoryProducts = async (categoryId: string) => {
+    if (!categoryId) return
+    const { data } = await supabase
+      .from('products')
+      .select('id, name, price, images, status')
+      .eq('status', 'published')
+      .eq('category_id', categoryId)
+    const products = (data ?? []) as Product[]
+    const newIds = products.map(p => p.id).filter(id => !config.product_ids.includes(id))
+    if (newIds.length > 0) {
+      setConfig(c => ({ ...c, product_ids: [...c.product_ids, ...newIds] }))
+    }
+    setSelectedCategory('')
+  }
 
   // Product search
   useEffect(() => {
@@ -177,6 +209,17 @@ export default function FeaturedProducts() {
         <h2 className="font-semibold text-gray-900 text-sm">
           Select Products <span className="text-gray-400 font-normal">({config.product_ids.length} selected)</span>
         </h2>
+
+        {/* Category quick-add */}
+        {categories.length > 0 && (
+          <div className="flex gap-2 items-center">
+            <select value={selectedCategory} onChange={e => { setSelectedCategory(e.target.value); addCategoryProducts(e.target.value) }}
+              className="flex-1 px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+              <option value="">Add all products from a category…</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
 
         {/* Search */}
         <div className="relative">

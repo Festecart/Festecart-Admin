@@ -23,6 +23,7 @@ import AddOrder from '@/pages/AddOrder'
 import SiteFooter from '@/pages/SiteFooter'
 import FeaturedProducts from '@/pages/FeaturedProducts'
 import Testimonials from '@/pages/Testimonials'
+import WhyPackages from '@/pages/WhyPackages'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -74,6 +75,7 @@ export default function App() {
             <Route path="site/footer" element={<SiteFooter />} />
             <Route path="site/featured-products" element={<FeaturedProducts />} />
             <Route path="site/testimonials" element={<Testimonials />} />
+            <Route path="site/why-packages" element={<WhyPackages />} />
           </Route>
 
           {/* Fallback */}
