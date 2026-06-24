@@ -361,12 +361,27 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
     if (!checked) return
     setLoading(true)
     await supabase.from('invoices').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', invoice.id)
-    await supabase.from('orders').update({ fulfillment_status: 'delivered', status: 'delivered' }).eq('id', invoice.order_id)
-    await logHistory(invoice.order_id, 'Marked Delivered', null, 'delivered', `Invoice ${invoice.invoice_number}`)
-    // Send delivered email with invoice info
-    const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', invoice.order_id).single()
-    if (updatedOrder) {
-      await sendStatusEmail(updatedOrder as Order, 'delivered', invoice)
+
+    // Only set order to 'delivered' if ALL non-cancelled invoices are now delivered
+    const { data: allInvoices } = await supabase
+      .from('invoices')
+      .select('id, status')
+      .eq('order_id', invoice.order_id)
+    const active = (allInvoices ?? []).filter(i => i.status !== 'cancelled')
+    const allDelivered = active.every(i => i.id === invoice.id || i.status === 'delivered')
+    const newOrderStatus = allDelivered ? 'delivered' : 'partially_fulfilled'
+
+    await supabase.from('orders').update({
+      fulfillment_status: allDelivered ? 'delivered' : 'partially_delivered',
+      status: newOrderStatus,
+    }).eq('id', invoice.order_id)
+    await logHistory(invoice.order_id, 'Marked Delivered', null, newOrderStatus, `Invoice ${invoice.invoice_number}`)
+    // Send delivered email only when all items are delivered
+    if (allDelivered) {
+      const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', invoice.order_id).single()
+      if (updatedOrder) {
+        await sendStatusEmail(updatedOrder as Order, 'delivered', invoice)
+      }
     }
     qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
     qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
