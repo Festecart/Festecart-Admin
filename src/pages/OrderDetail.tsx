@@ -594,8 +594,8 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
         </div>
       )}
 
-      {/* Actions — hide completely when order is delivered */}
-      {invoice.status !== 'cancelled' && invoice.status !== 'delivered' && order.status !== 'delivered' && (
+      {/* Actions — hide when invoice is done */}
+      {invoice.status !== 'cancelled' && invoice.status !== 'delivered' && (
         <div className="flex flex-wrap gap-2">
           {invoice.status === 'pending_shipment' && (
             <button onClick={() => setShowTracking(true)}
