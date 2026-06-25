@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { MessageSquare, Search } from 'lucide-react'
+import { MessageSquare, Search, ChevronLeft } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
 interface Enquiry {
@@ -36,10 +36,60 @@ function formatDateTime(str: string) {
   }).format(new Date(str))
 }
 
+// ── Detail view ───────────────────────────────────────────────
+function ViewEnquiry({ enquiry, onBack }: { enquiry: Enquiry; onBack: () => void }) {
+  return (
+    <div className="p-6 space-y-5 max-w-4xl">
+      {/* Breadcrumb */}
+      <p className="text-xs text-gray-400">
+        <Link to="/orders" className="hover:text-gray-600">Dashboard</Link>
+        {' / '}
+        <button onClick={onBack} className="hover:text-gray-600">View Enquiry</button>
+      </p>
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">View Enquiry</h1>
+        <button onClick={onBack}
+          className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+          <ChevronLeft size={14} /> Go Back
+        </button>
+      </div>
+
+      {/* Name / Email / Phone row */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="grid grid-cols-3 gap-6">
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Name</p>
+            <p className="text-sm font-medium text-gray-900">{enquiry.name || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Email</p>
+            <p className="text-sm text-gray-700">{enquiry.email || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Phone</p>
+            <p className="text-sm text-gray-700">{enquiry.phone || '—'}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Message */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <p className="text-xs text-gray-500 mb-2">Message</p>
+        <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
+          {enquiry.message || '—'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ── List view ─────────────────────────────────────────────────
 export default function ContactEnquiries() {
   const { data: enquiries, isLoading, error } = useEnquiries()
   const [search, setSearch] = useState('')
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Enquiry | null>(null)
 
   const filtered = (enquiries ?? []).filter(e => {
     const q = search.toLowerCase()
@@ -49,29 +99,28 @@ export default function ContactEnquiries() {
       (e.subject ?? '').toLowerCase().includes(q)
   })
 
+  if (selected) {
+    return <ViewEnquiry enquiry={selected} onBack={() => setSelected(null)} />
+  }
+
   return (
     <div className="p-6 space-y-5">
       {/* Breadcrumb */}
       <p className="text-xs text-gray-400">
         <Link to="/orders" className="hover:text-gray-600">Orders</Link>
         {' / '}
-        <span className="text-gray-600">Contact Enquires</span>
+        <span className="text-gray-600">Contact Enquiries</span>
       </p>
 
-      {/* Header */}
-      <h1 className="text-2xl font-bold text-gray-900">Contact Enquires</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Contact Enquiries</h1>
 
       {/* Search */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <div className="relative max-w-sm">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search by name, email, subject…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
-          />
+          <input type="text" placeholder="Search by name, email, subject…"
+            value={search} onChange={e => setSearch(e.target.value)}
+            className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
         </div>
       </div>
 
@@ -105,30 +154,16 @@ export default function ContactEnquiries() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.map(e => (
-                  <>
-                    <tr
-                      key={e.id}
-                      className="hover:bg-gray-50 cursor-pointer transition-colors"
-                      onClick={() => setExpanded(expanded === e.id ? null : e.id)}
-                    >
-                      <td className="px-5 py-3 font-medium text-gray-900">{e.name || '—'}</td>
-                      <td className="px-5 py-3 text-gray-600">{e.email || '—'}</td>
-                      <td className="px-5 py-3 text-gray-500">{e.phone || '—'}</td>
-                      <td className="px-5 py-3 text-gray-600">{e.subject || '—'}</td>
-                      <td className="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">{formatDateTime(e.created_at)}</td>
-                      <td className="px-5 py-3 text-red-500 text-xs font-medium">
-                        {expanded === e.id ? 'Hide ▲' : 'View ▼'}
-                      </td>
-                    </tr>
-                    {expanded === e.id && (
-                      <tr key={`${e.id}-msg`} className="bg-gray-50">
-                        <td colSpan={6} className="px-5 py-4">
-                          <p className="text-xs text-gray-500 mb-1 font-medium uppercase tracking-wide">Message</p>
-                          <p className="text-sm text-gray-700 leading-relaxed">{e.message || '—'}</p>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  <tr key={e.id}
+                    className="hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => setSelected(e)}>
+                    <td className="px-5 py-3 font-medium text-gray-900">{e.name || '—'}</td>
+                    <td className="px-5 py-3 text-gray-600">{e.email || '—'}</td>
+                    <td className="px-5 py-3 text-gray-500">{e.phone || '—'}</td>
+                    <td className="px-5 py-3 text-gray-600">{e.subject || '—'}</td>
+                    <td className="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">{formatDateTime(e.created_at)}</td>
+                    <td className="px-5 py-3 text-red-500 text-xs font-medium whitespace-nowrap">View →</td>
+                  </tr>
                 ))}
               </tbody>
             </table>

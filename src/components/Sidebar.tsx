@@ -89,8 +89,8 @@ export function Sidebar({ onLogout }: SidebarProps) {
           <Sub to="/site/testimonials" label="Testimonials" />
           <Sub to="/site/why-packages" label="Why Packages" />
         </NavGroup>
-
-        {/* Shipments */}
+ 
+        {/* Shipments
         <NavLink
           to="/shipments"
           className={({ isActive }) =>
@@ -100,7 +100,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
         >
           <Truck size={18} />Shipments
         </NavLink>
-
+ */}
         {/* Shipping Zones */}
         <NavLink
           to="/shipping-zones"
@@ -109,6 +109,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
               isActive ? 'bg-red-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white')
           }
         >
+          
           <Truck size={18} />Shipping Zones
         </NavLink>
 

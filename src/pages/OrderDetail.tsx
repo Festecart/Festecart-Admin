@@ -457,7 +457,7 @@ async function downloadInvoicePdf(invoice: Invoice, order: Order) {
   }
 
   const amountInWords = toWords(Math.round(total)) + ' Rupees Only'
-  const invoiceDate = new Date(invoice.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const invoiceDate = new Date(invoice.invoice_date || invoice.created_at || new Date()).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const orderDate = new Date(order.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const custName = order.guest_name || addr?.name || '—'
   const custEmail = order.customer_email || order.guest_email || '—'
@@ -470,7 +470,7 @@ async function downloadInvoicePdf(invoice: Invoice, order: Order) {
   <div style="font-family:Arial,sans-serif;font-size:13px;color:#222;padding:40px;width:714px;">
     <h1 style="text-align:center;font-size:18px;font-weight:bold;margin:0 0 24px;letter-spacing:2px;">INVOICE</h1>
     <div style="display:flex;justify-content:space-between;margin-bottom:20px;align-items:flex-start;">
-      <div style="font-size:28px;font-weight:900;color:#b91c1c;line-height:1;">fest<span style="color:#1d6b2e;">ecart</span></div>
+      <div><img src="https://festecart.org/logo.png" alt="festecart" style="height:60px;object-fit:contain;" onerror="this.style.display='none';this.nextSibling.style.display='block'"/><div style="display:none;font-size:28px;font-weight:900;color:#b91c1c;line-height:1;">fest<span style="color:#1d6b2e;">ecart</span></div></div>
       <div style="text-align:right;font-size:12px;line-height:1.8;">
         <strong>Invoice Date:</strong> ${invoiceDate}<br/>
         <strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-', '')}<br/>
@@ -569,7 +569,7 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
       <div className="flex items-center justify-between">
         <div>
           <p className="font-semibold text-gray-900 text-sm">{invoice.invoice_number}</p>
-          <p className="text-xs text-gray-400">{formatDate(invoice.invoice_date)}</p>
+          <p className="text-xs text-gray-400">{formatDate(invoice.invoice_date || invoice.created_at)}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
