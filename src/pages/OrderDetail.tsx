@@ -470,7 +470,7 @@ async function downloadInvoicePdf(invoice: Invoice, order: Order) {
   <div style="font-family:Arial,sans-serif;font-size:13px;color:#222;padding:40px;width:714px;">
     <h1 style="text-align:center;font-size:18px;font-weight:bold;margin:0 0 24px;letter-spacing:2px;">INVOICE</h1>
     <div style="display:flex;justify-content:space-between;margin-bottom:20px;align-items:flex-start;">
-      <div><img src="https://festecart.org/logo.png" alt="festecart" style="height:60px;object-fit:contain;" onerror="this.style.display='none';this.nextSibling.style.display='block'"/><div style="display:none;font-size:28px;font-weight:900;color:#b91c1c;line-height:1;">fest<span style="color:#1d6b2e;">ecart</span></div></div>
+      <div><img src="/logo.png" alt="festecart" style="height:70px;object-fit:contain;mix-blend-mode:multiply;" onerror="this.style.display='none';this.nextSibling.style.display='block'"/><div style="display:none;font-size:14px;font-weight:900;line-height:1.1;"><span style="color:#e05a00;">fest</span><br/><span style="color:#1a5c1a;">ecart</span><br/><span style="font-size:8px;color:#3333aa;font-weight:normal;">live desi. be desi.</span></div></div>
       <div style="text-align:right;font-size:12px;line-height:1.8;">
         <strong>Invoice Date:</strong> ${invoiceDate}<br/>
         <strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-', '')}<br/>
