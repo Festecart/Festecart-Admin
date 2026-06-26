@@ -9,8 +9,6 @@ import {
   Package, AlertTriangle, Loader2, IndianRupee, FileText,
   Truck, CheckCircle2, X, Clock, History
 } from 'lucide-react'
-import jsPDF from 'jspdf'
-import html2canvas from 'html2canvas'
 
 // ── helpers ───────────────────────────────────────────────────
 function customerName(o: Order) { return o.guest_name?.trim() || o.shipping_address?.name?.trim() || '—' }
@@ -463,86 +461,115 @@ async function downloadInvoicePdf(invoice: Invoice, order: Order) {
   const custEmail = order.customer_email || order.guest_email || '—'
   const payMode = order.payment_method === 'cod' ? 'Cash on Delivery' : order.payment_method.toUpperCase()
 
-  // Build a hidden div, render it, capture to canvas, save as PDF
-  const container = document.createElement('div')
-  container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;'
-  container.innerHTML = `
-  <div style="font-family:Arial,sans-serif;font-size:13px;color:#222;padding:40px;width:714px;">
-    <h1 style="text-align:center;font-size:18px;font-weight:bold;margin:0 0 24px;letter-spacing:2px;">INVOICE</h1>
-    <div style="display:flex;justify-content:space-between;margin-bottom:20px;align-items:flex-start;">
-      <div><img src="/logo.png" alt="festecart" style="height:70px;object-fit:contain;mix-blend-mode:multiply;" onerror="this.style.display='none';this.nextSibling.style.display='block'"/><div style="display:none;font-size:14px;font-weight:900;line-height:1.1;"><span style="color:#e05a00;">fest</span><br/><span style="color:#1a5c1a;">ecart</span><br/><span style="font-size:8px;color:#3333aa;font-weight:normal;">live desi. be desi.</span></div></div>
-      <div style="text-align:right;font-size:12px;line-height:1.8;">
-        <strong>Invoice Date:</strong> ${invoiceDate}<br/>
-        <strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-', '')}<br/>
-        <strong>GSTIN:</strong> 29AFFFS9227M1Z7
-      </div>
-    </div>
-    <div style="font-size:12px;line-height:1.6;margin-bottom:16px;">
-      <strong>festecart,</strong><br/>
-      No 861, 2nd floor, 5th Main, Near Hopcoms, BEML Layout, 3rd Stage,<br/>
-      Rajarajeshwari Nagar, Bengaluru South, RR Nagar, BBMP West,<br/>
-      Bengaluru, Karnataka, India - 560098
-    </div>
-    <hr style="border:none;border-top:1px solid #ddd;margin:12px 0;"/>
-    <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
-      <div style="font-size:12px;flex:1;margin-right:16px;">
-        <strong>Shipping Address</strong><br/>
-        ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state}, India - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
-      </div>
-      <div style="font-size:12px;flex:1;margin-right:16px;">
-        <strong>Billing Address</strong><br/>
-        ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state}, India - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
-      </div>
-      <div style="text-align:right;font-size:12px;line-height:1.8;">
-        <strong>Order Date:</strong> ${orderDate}<br/>
-        <strong>Order No.</strong> ${order.order_number?.replace('#', '')}<br/>
-        <strong>Email:</strong> ${custEmail}
-      </div>
-    </div>
-    <hr style="border:none;border-top:1px solid #ddd;margin:12px 0;"/>
-    <table style="width:100%;border-collapse:collapse;margin:12px 0;">
-      <thead>
-        <tr style="background:#f5f5f5;">
-          <th style="text-align:left;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Item</th>
-          <th style="text-align:center;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Qty</th>
-          <th style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Price</th>
-          <th style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${items.map(i => `
-          <tr>
-            <td style="padding:8px 10px;font-size:12px;border:1px solid #ddd;"><strong>${i.product_name}</strong></td>
-            <td style="text-align:center;padding:8px 10px;font-size:12px;border:1px solid #ddd;">${i.fulfilled_qty}</td>
-            <td style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">₹${i.price.toFixed(2)}</td>
-            <td style="text-align:right;padding:8px 10px;font-size:12px;border:1px solid #ddd;">₹${(i.price * i.fulfilled_qty).toFixed(2)}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-      <tfoot>
-        <tr style="background:#f5f5f5;">
-          <td colspan="3" style="text-align:right;padding:8px 10px;font-weight:bold;border:1px solid #ddd;">Total:</td>
-          <td style="text-align:right;padding:8px 10px;font-weight:bold;font-size:14px;border:1px solid #ddd;">₹${total.toFixed(2)}</td>
-        </tr>
-      </tfoot>
-    </table>
-    <p style="font-size:12px;color:#444;margin:8px 0;"><strong>In words:</strong> ${amountInWords}</p>
-    <p style="font-size:12px;margin:8px 0;"><strong>Mode of Payment:</strong> ${payMode}</p>
-    ${invoice.notes ? `<p style="font-size:12px;margin:8px 0;"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
-  </div>`
+  const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"/>
+<title>Invoice ${invoice.invoice_number}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#222;background:#fff;padding:32px;}
+  h1{text-align:center;font-size:17px;font-weight:bold;margin-bottom:20px;letter-spacing:2px;}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;}
+  .logo{font-size:22px;font-weight:900;line-height:1.1;}
+  .logo .fest{color:#e05a00;}
+  .logo .ecart{color:#1a5c1a;}
+  .logo .tagline{font-size:8px;color:#3333aa;font-weight:normal;display:block;}
+  .meta{text-align:right;font-size:11px;line-height:1.8;}
+  .company{font-size:11px;line-height:1.6;margin-bottom:14px;}
+  hr{border:none;border-top:1px solid #ddd;margin:10px 0;}
+  .addresses{display:flex;justify-content:space-between;margin-bottom:14px;gap:12px;}
+  .addr-col{flex:1;font-size:11px;line-height:1.7;}
+  .addr-col h4{font-size:10px;font-weight:bold;margin-bottom:4px;text-transform:uppercase;}
+  .order-meta{text-align:right;font-size:11px;line-height:1.8;min-width:160px;}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px;}
+  th{background:#f0f0f0;padding:7px 9px;text-align:left;border:1px solid #ccc;font-size:11px;}
+  td{padding:7px 9px;border:1px solid #ddd;}
+  .text-right{text-align:right;}
+  .text-center{text-align:center;}
+  .total-row td{background:#f0f0f0;font-weight:bold;}
+  .words{font-size:11px;color:#444;margin:6px 0;}
+  .payment{font-size:11px;margin:4px 0;}
+  .notes{font-size:11px;margin:4px 0;}
+  @media print{
+    body{padding:16px;}
+    @page{margin:10mm;}
+  }
+</style>
+</head>
+<body>
+<h1>INVOICE</h1>
+<div class="top">
+  <div class="logo">
+    <span class="fest">fest</span><span class="ecart">ecart</span>
+    <span class="tagline">live desi. be desi.</span>
+  </div>
+  <div class="meta">
+    <strong>Invoice Date:</strong> ${invoiceDate}<br/>
+    <strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-', '')}<br/>
+    <strong>GSTIN:</strong> 29AFFFS9227M1Z7
+  </div>
+</div>
+<div class="company">
+  <strong>festecart,</strong><br/>
+  No 861, 2nd floor, 5th Main, Near Hopcoms, BEML Layout, 3rd Stage,<br/>
+  Rajarajeshwari Nagar, Bengaluru South, RR Nagar, BBMP West,<br/>
+  Bengaluru, Karnataka, India - 560098
+</div>
+<hr/>
+<div class="addresses">
+  <div class="addr-col">
+    <h4>Shipping Address</h4>
+    ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state} - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
+  </div>
+  <div class="addr-col">
+    <h4>Billing Address</h4>
+    ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state} - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
+  </div>
+  <div class="order-meta">
+    <strong>Order Date:</strong> ${orderDate}<br/>
+    <strong>Order No:</strong> ${order.order_number?.replace('#', '') ?? '—'}<br/>
+    <strong>Email:</strong> ${custEmail}
+  </div>
+</div>
+<hr/>
+<table>
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th class="text-center">Qty</th>
+      <th class="text-right">Price</th>
+      <th class="text-right">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${items.map(i => `
+    <tr>
+      <td><strong>${i.product_name}</strong></td>
+      <td class="text-center">${i.fulfilled_qty}</td>
+      <td class="text-right">₹${i.price.toFixed(2)}</td>
+      <td class="text-right">₹${(i.price * i.fulfilled_qty).toFixed(2)}</td>
+    </tr>`).join('')}
+  </tbody>
+  <tfoot>
+    <tr class="total-row">
+      <td colspan="3" class="text-right">Total:</td>
+      <td class="text-right">₹${total.toFixed(2)}</td>
+    </tr>
+  </tfoot>
+</table>
+<p class="words"><strong>In words:</strong> ${amountInWords}</p>
+<p class="payment"><strong>Mode of Payment:</strong> ${payMode}</p>
+${invoice.notes ? `<p class="notes"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+</body></html>`
 
-  document.body.appendChild(container)
-  try {
-    const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' })
-    const imgData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: 'a4' })
-    const pageW = pdf.internal.pageSize.getWidth()
-    const pageH = pdf.internal.pageSize.getHeight()
-    const ratio = Math.min(pageW / canvas.width, pageH / canvas.height)
-    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width * ratio, canvas.height * ratio)
-    pdf.save(`${invoice.invoice_number}.pdf`)
-  } finally {
-    document.body.removeChild(container)
+  const win = window.open('', '_blank', 'width=900,height=1000')
+  if (win) {
+    win.document.write(html)
+    win.document.close()
+    win.focus()
+    setTimeout(() => {
+      win.print()
+    }, 600)
   }
 }
 function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
@@ -575,7 +602,7 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
           <button
             onClick={async () => {
               setPdfLoading(true)
-              try { await downloadInvoicePdf(invoice, order) }
+              try { downloadInvoicePdf(invoice, order) }
               finally { setPdfLoading(false) }
             }}
             disabled={pdfLoading}
