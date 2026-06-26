@@ -157,6 +157,10 @@ export default function ProductForm() {
   // Save
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const discountPct = form.compare_at_price && parseFloat(form.compare_at_price) > 0 && parseFloat(form.price) > 0
+        ? Math.round((1 - parseFloat(form.price) / parseFloat(form.compare_at_price)) * 100)
+        : null
+
       const payload = {
         name:              form.name.trim(),
         slug:              form.slug.trim() || slugify(form.name),
@@ -164,6 +168,7 @@ export default function ProductForm() {
         short_description: form.short_description.trim() || null,
         price:             parseFloat(form.price) || 0,
         compare_at_price:  form.compare_at_price ? parseFloat(form.compare_at_price) : null,
+        discount_percentage: discountPct,
         inventory_count:   form.inventory_count ? parseInt(form.inventory_count) : null,
         sku:               form.sku.trim() || null,
         category_id:       form.category_id || null,
@@ -193,6 +198,9 @@ export default function ProductForm() {
     setError(null)
     if (!form.name.trim()) { setError('Product name is required'); return }
     if (!form.price || isNaN(parseFloat(form.price))) { setError('Valid selling price is required'); return }
+    if (form.compare_at_price && parseFloat(form.price) > parseFloat(form.compare_at_price)) {
+      setError('Selling price cannot be greater than the original price (MRP)'); return
+    }
     if (statusOverride) setForm(f => ({ ...f, status: statusOverride }))
     saveMutation.mutate()
   }
@@ -347,19 +355,46 @@ export default function ProductForm() {
               <h2 className="font-semibold text-gray-900">Pricing & Inventory</h2>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Selling Price (₹) *</label>
-                  <input type="number" value={form.price} onChange={e => set('price', e.target.value)}
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Original Price / MRP (₹) *
+                    <span className="text-gray-400 font-normal ml-1">— shown as strikethrough</span>
+                  </label>
+                  <input type="number" value={form.compare_at_price}
+                    onChange={e => set('compare_at_price', e.target.value)}
                     placeholder="0.00" min="0" step="0.01"
                     className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                  <p className="text-xs text-gray-400 mt-0.5">Leave blank if no discount</p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Compare at Price (₹)
-                    <span className="text-gray-400 font-normal ml-1">— MRP / strikethrough</span>
+                    Selling / Discounted Price (₹) *
                   </label>
-                  <input type="number" value={form.compare_at_price} onChange={e => set('compare_at_price', e.target.value)}
+                  <input type="number" value={form.price} onChange={e => set('price', e.target.value)}
                     placeholder="0.00" min="0" step="0.01"
-                    className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                    className={`w-full px-3 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 ${
+                      form.compare_at_price && form.price &&
+                      parseFloat(form.price) > parseFloat(form.compare_at_price)
+                        ? 'border-red-400 bg-red-50'
+                        : 'border-gray-300'
+                    }`} />
+                  {form.compare_at_price && form.price &&
+                    parseFloat(form.price) > parseFloat(form.compare_at_price) && (
+                    <p className="text-xs text-red-500 mt-0.5">
+                      Selling price cannot exceed original price
+                    </p>
+                  )}
+                </div>
+                {/* Discount % — auto-calculated, read-only */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Discount %
+                    <span className="text-gray-400 font-normal ml-1">— auto-calculated</span>
+                  </label>
+                  <div className={`w-full px-3 py-2.5 text-sm border rounded-lg bg-gray-50 font-medium ${
+                    discount !== null ? 'text-green-700 border-green-300 bg-green-50' : 'text-gray-400 border-gray-200'
+                  }`}>
+                    {discount !== null ? `${discount}% off` : '—'}
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">SKU</label>
@@ -376,10 +411,13 @@ export default function ProductForm() {
               </div>
 
               {discount !== null && (
-                <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg text-sm">
-                  <span className="font-semibold text-green-700">{discount}% off</span>
+                <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-100 rounded-lg text-sm">
+                  <span className="font-semibold text-green-700 text-base">{discount}% off</span>
                   <span className="text-green-600">
                     Customer saves {formatCurrency(parseFloat(form.compare_at_price) - parseFloat(form.price))}
+                  </span>
+                  <span className="ml-auto text-xs text-green-500">
+                    ₹{form.compare_at_price} → ₹{form.price}
                   </span>
                 </div>
               )}
