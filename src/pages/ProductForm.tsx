@@ -158,10 +158,6 @@ export default function ProductForm() {
   // Save
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const discountPct = form.compare_at_price && parseFloat(form.compare_at_price) > 0 && parseFloat(form.price) > 0
-        ? Math.round((1 - parseFloat(form.price) / parseFloat(form.compare_at_price)) * 100)
-        : null
-
       const payload = {
         name:              form.name.trim(),
         slug:              form.slug.trim() || slugify(form.name),
@@ -169,7 +165,6 @@ export default function ProductForm() {
         short_description: form.short_description.trim() || null,
         price:             parseFloat(form.price) || 0,
         compare_at_price:  form.compare_at_price ? parseFloat(form.compare_at_price) : null,
-        discount_percentage: discountPct,
         inventory_count:   form.inventory_count ? parseInt(form.inventory_count) : null,
         sku:               form.sku.trim() || null,
         category_id:       form.category_id || null,
