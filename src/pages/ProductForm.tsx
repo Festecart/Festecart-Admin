@@ -87,6 +87,7 @@ export default function ProductForm() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [discountInput, setDiscountInput] = useState('')  // editable discount %
   const formInit = useRef(false)
 
   const { data: existing } = useProduct(id ?? '')
@@ -224,6 +225,46 @@ export default function ProductForm() {
     ? Math.round((1 - parseFloat(form.price) / parseFloat(form.compare_at_price)) * 100)
     : null
 
+  // ── Bidirectional price handlers ──────────────────────────────
+  // When original price changes → recalculate selling price from current discount %
+  const handleOriginalPriceChange = (val: string) => {
+    set('compare_at_price', val)
+    const orig = parseFloat(val)
+    const pct = parseFloat(discountInput)
+    if (!isNaN(orig) && orig > 0 && !isNaN(pct) && pct > 0 && pct < 100) {
+      set('price', (orig * (1 - pct / 100)).toFixed(2))
+    }
+  }
+
+  // When selling price changes → recalculate discount % from original
+  const handleSellingPriceChange = (val: string) => {
+    set('price', val)
+    const orig = parseFloat(form.compare_at_price)
+    const sell = parseFloat(val)
+    if (!isNaN(orig) && orig > 0 && !isNaN(sell) && sell >= 0) {
+      const pct = Math.max(0, Math.round((1 - sell / orig) * 100))
+      setDiscountInput(pct > 0 ? String(pct) : '')
+    }
+  }
+
+  // When discount % changes → recalculate selling price from original
+  const handleDiscountChange = (val: string) => {
+    setDiscountInput(val)
+    const orig = parseFloat(form.compare_at_price)
+    const pct = parseFloat(val)
+    if (!isNaN(orig) && orig > 0 && !isNaN(pct) && pct >= 0 && pct <= 100) {
+      set('price', (orig * (1 - pct / 100)).toFixed(2))
+    }
+  }
+
+  // Sync discountInput when form loads on edit
+  useEffect(() => {
+    if (discount !== null && !discountInput) {
+      setDiscountInput(String(discount))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discount])
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -353,23 +394,48 @@ export default function ProductForm() {
             {/* Pricing */}
             <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
               <h2 className="font-semibold text-gray-900">Pricing & Inventory</h2>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4 items-start">
+                {/* Original / MRP */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Original Price / MRP (₹) *
-                    <span className="text-gray-400 font-normal ml-1">— shown as strikethrough</span>
+                    Original Price / MRP (₹)
                   </label>
                   <input type="number" value={form.compare_at_price}
-                    onChange={e => set('compare_at_price', e.target.value)}
+                    onChange={e => handleOriginalPriceChange(e.target.value)}
                     placeholder="0.00" min="0" step="0.01"
                     className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
                   <p className="text-xs text-gray-400 mt-0.5">Leave blank if no discount</p>
                 </div>
+
+                {/* Discount % — now editable */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Selling / Discounted Price (₹) *
+                    Discount %
                   </label>
-                  <input type="number" value={form.price} onChange={e => set('price', e.target.value)}
+                  <div className="relative">
+                    <input type="number" value={discountInput}
+                      onChange={e => handleDiscountChange(e.target.value)}
+                      placeholder="0" min="0" max="100" step="1"
+                      disabled={!form.compare_at_price || parseFloat(form.compare_at_price) <= 0}
+                      className={`w-full px-3 py-2.5 pr-8 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 ${
+                        discount !== null
+                          ? 'border-green-400 bg-green-50 text-green-800 font-medium'
+                          : 'border-gray-300'
+                      } disabled:bg-gray-50 disabled:text-gray-400`} />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">%</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {!form.compare_at_price ? 'Set Original Price first' : 'Updates selling price'}
+                  </p>
+                </div>
+
+                {/* Selling Price */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Selling Price (₹) *
+                  </label>
+                  <input type="number" value={form.price}
+                    onChange={e => handleSellingPriceChange(e.target.value)}
                     placeholder="0.00" min="0" step="0.01"
                     className={`w-full px-3 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 ${
                       form.compare_at_price && form.price &&
@@ -378,24 +444,29 @@ export default function ProductForm() {
                         : 'border-gray-300'
                     }`} />
                   {form.compare_at_price && form.price &&
-                    parseFloat(form.price) > parseFloat(form.compare_at_price) && (
-                    <p className="text-xs text-red-500 mt-0.5">
-                      Selling price cannot exceed original price
-                    </p>
+                    parseFloat(form.price) > parseFloat(form.compare_at_price) ? (
+                    <p className="text-xs text-red-500 mt-0.5">Cannot exceed original price</p>
+                  ) : (
+                    <p className="text-xs text-gray-400 mt-0.5">Final price customer pays</p>
                   )}
                 </div>
-                {/* Discount % — auto-calculated, read-only */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Discount %
-                    <span className="text-gray-400 font-normal ml-1">— auto-calculated</span>
-                  </label>
-                  <div className={`w-full px-3 py-2.5 text-sm border rounded-lg bg-gray-50 font-medium ${
-                    discount !== null ? 'text-green-700 border-green-300 bg-green-50' : 'text-gray-400 border-gray-200'
-                  }`}>
-                    {discount !== null ? `${discount}% off` : '—'}
-                  </div>
+              </div>
+
+              {/* Savings badge */}
+              {discount !== null && discount > 0 && (
+                <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-100 rounded-lg text-sm">
+                  <span className="font-bold text-green-700 text-base">{discount}% off</span>
+                  <span className="text-green-600">
+                    Customer saves {formatCurrency(parseFloat(form.compare_at_price) - parseFloat(form.price))}
+                  </span>
+                  <span className="ml-auto text-xs text-green-500">
+                    ₹{parseFloat(form.compare_at_price).toFixed(2)} → ₹{parseFloat(form.price).toFixed(2)}
+                  </span>
                 </div>
+              )}
+
+              {/* SKU + Stock on second row */}
+              <div className="grid grid-cols-2 gap-4 pt-1 border-t border-gray-100">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">SKU</label>
                   <input type="text" value={form.sku} onChange={e => set('sku', e.target.value)}
@@ -409,18 +480,6 @@ export default function ProductForm() {
                     className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
                 </div>
               </div>
-
-              {discount !== null && (
-                <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-100 rounded-lg text-sm">
-                  <span className="font-semibold text-green-700 text-base">{discount}% off</span>
-                  <span className="text-green-600">
-                    Customer saves {formatCurrency(parseFloat(form.compare_at_price) - parseFloat(form.price))}
-                  </span>
-                  <span className="ml-auto text-xs text-green-500">
-                    ₹{form.compare_at_price} → ₹{form.price}
-                  </span>
-                </div>
-              )}
             </div>
           </div>
 
