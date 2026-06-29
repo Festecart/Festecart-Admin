@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { X, Plus, Loader2, ChevronDown } from 'lucide-react'
+import { X, Plus, Loader2 } from 'lucide-react'
 
 // ── States per country ────────────────────────────────────────────
 const STATES_BY_COUNTRY: Record<string, string[]> = {
@@ -445,81 +445,24 @@ function PlacesModal({ place, onClose, onSave }: {
   )
 }
 
-// ── Product Type dropdown ─────────────────────────────────────────
-function ProductTypeDropdown({ value, onChange }: { value: ProductType; onChange: (v: ProductType) => void }) {
-  const OPTIONS = [
-    { value: '' as ProductType, label: '— Select —' },
-    { value: 'category' as ProductType, label: 'Category' },
-    { value: 'product_group' as ProductType, label: 'Product Group' },
-    { value: 'specific' as ProductType, label: 'Specific Products' },
-  ]
-  const label = OPTIONS.find(o => o.value === value)?.label ?? '— Select —'
-  return (
-    <div className="relative w-64">
-      <select value={value} onChange={e => onChange(e.target.value as ProductType)}
-        className="w-full appearance-none px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 pr-8 cursor-pointer">
-        {OPTIONS.map(o => <option key={String(o.value)} value={o.value}>{o.label}</option>)}
-      </select>
-      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-      {value && <span className="sr-only">{label}</span>}
-    </div>
-  )
-}
-
-// ── Product search ────────────────────────────────────────────────
-function ProductSearch({ label, placeholder, queryFn, selected, onAdd, onRemove }: {
-  label: string; placeholder: string
-  queryFn: (q: string) => Promise<{ id: string; name: string }[]>
-  selected: { id: string; name: string }[]
-  onAdd: (item: { id: string; name: string }) => void
-  onRemove: (id: string) => void
+// ── Category dropdown for zone product selection ─────────────────
+function CategoryDropdown({ onSelect, selectedId }: {
+  onSelect: (catId: string) => void
+  selectedId: string
 }) {
-  const [q, setQ] = useState('')
-  const [results, setResults] = useState<{ id: string; name: string }[]>([])
-  const [loading, setLoading] = useState(false)
-  const [searchErr, setSearchErr] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!q.trim()) { setResults([]); setSearchErr(null); return }
-    const t = setTimeout(async () => {
-      setLoading(true); setSearchErr(null)
-      try { const data = await queryFn(q); setResults(data) }
-      catch (e) { setSearchErr((e as { message?: string })?.message ?? 'Search failed'); setResults([]) }
-      finally { setLoading(false) }
-    }, 300)
-    return () => clearTimeout(t)
-  }, [q])
-
+  const { data: categories = [] } = useQuery({
+    queryKey: ['zone-categories'],
+    queryFn: async () => {
+      const { data } = await supabase.from('categories').select('id, name').order('name')
+      return (data ?? []) as { id: string; name: string }[]
+    },
+  })
   return (
-    <div className="space-y-2">
-      <label className="block text-xs font-medium text-gray-700">{label}</label>
-      <div className="relative">
-        <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder={placeholder}
-          className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-        {loading && <Loader2 size={13} className="absolute right-3 top-3 animate-spin text-gray-400" />}
-        {searchErr && <p className="mt-1 text-xs text-red-500">{searchErr}</p>}
-        {results.length > 0 && (
-          <div className="absolute z-10 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto">
-            {results.map(r => (
-              <button key={r.id} onClick={() => { onAdd(r); setQ(''); setResults([]) }}
-                className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 text-gray-800 font-medium">
-                {r.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-1">
-          {selected.map(s => (
-            <span key={s.id} className="flex items-center gap-1 bg-gray-100 text-xs px-2.5 py-1 rounded-full text-gray-700">
-              {s.name}
-              <button onClick={() => onRemove(s.id)} className="text-gray-400 hover:text-gray-700 ml-0.5"><X size={10} /></button>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
+    <select value={selectedId} onChange={e => onSelect(e.target.value)}
+      className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+      <option value="">Select a category…</option>
+      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select>
   )
 }
 
@@ -537,6 +480,13 @@ export default function ShippingZoneForm() {
   const [editingPlace, setEditingPlace] = useState<ZonePlace | null>(null)
   const [productType, setProductType] = useState<ProductType>('')
   const [selectedProducts, setSelectedProducts] = useState<{ id: string; name: string }[]>([])
+  const [selectionType, setSelectionType] = useState<'category' | 'specific'>('specific')
+  const [selectedCategoryId, setSelectedCategoryId] = useState('')
+  const [categoryProductsList, setCategoryProductsList] = useState<{ id: string; name: string; price: number; images: string[] }[]>([])
+  const [loadingCategoryProducts, setLoadingCategoryProducts] = useState(false)
+  const [zoneProductSearch, setZoneProductSearch] = useState('')
+  const [zoneSearchResults, setZoneSearchResults] = useState<{ id: string; name: string; price: number; images: string[] }[]>([])
+  const [zoneSearching, setZoneSearching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const countryRef = useRef<HTMLDivElement>(null)
@@ -580,13 +530,62 @@ export default function ShippingZoneForm() {
 
   const filteredCountries = COUNTRIES.filter(c => c.toLowerCase().includes(countrySearch.toLowerCase()))
 
-  const searchCategories = async (q: string) => {
-    const { data } = await supabase.from('categories').select('id, name').ilike('name', `%${q}%`).limit(8)
-    return (data ?? []) as { id: string; name: string }[]
+  // ── Category product fetch ──────────────────────────────────
+  const handleCategorySelect = async (catId: string) => {
+    setSelectedCategoryId(catId)
+    setCategoryProductsList([])
+    if (!catId) return
+    setLoadingCategoryProducts(true)
+    const { data } = await supabase
+      .from('products')
+      .select('id, name, price, images')
+      .eq('status', 'published')
+      .eq('category_id', catId)
+    setCategoryProductsList((data ?? []) as { id: string; name: string; price: number; images: string[] }[])
+    setLoadingCategoryProducts(false)
   }
-  const searchProducts = async (q: string) => {
-    const { data } = await supabase.from('products').select('id, name').eq('status', 'published').ilike('name', `%${q}%`).limit(8)
-    return (data ?? []) as { id: string; name: string }[]
+
+  // ── Specific product search ─────────────────────────────────
+  useEffect(() => {
+    if (!zoneProductSearch.trim()) { setZoneSearchResults([]); return }
+    const t = setTimeout(async () => {
+      setZoneSearching(true)
+      const { data } = await supabase
+        .from('products')
+        .select('id, name, price, images')
+        .eq('status', 'published')
+        .ilike('name', `%${zoneProductSearch}%`)
+        .limit(8)
+      setZoneSearchResults(
+        (data ?? []).filter(p => !selectedProducts.find(s => s.id === p.id)) as { id: string; name: string; price: number; images: string[] }[]
+      )
+      setZoneSearching(false)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [zoneProductSearch, selectedProducts])
+
+  const toggleZoneProduct = (p: { id: string; name: string }) => {
+    setSelectedProducts(prev =>
+      prev.find(x => x.id === p.id)
+        ? prev.filter(x => x.id !== p.id)
+        : [...prev, { id: p.id, name: p.name }]
+    )
+  }
+
+  const addAllCategoryToZone = () => {
+    const newOnes = categoryProductsList.filter(p => !selectedProducts.find(s => s.id === p.id))
+    setSelectedProducts(prev => [...prev, ...newOnes.map(p => ({ id: p.id, name: p.name }))])
+  }
+
+  const removeZoneProduct = (id: string) =>
+    setSelectedProducts(prev => prev.filter(x => x.id !== id))
+
+  const moveZoneProduct = (idx: number, dir: -1 | 1) => {
+    const arr = [...selectedProducts]
+    const swap = idx + dir
+    if (swap < 0 || swap >= arr.length) return
+    ;[arr[idx], arr[swap]] = [arr[swap], arr[idx]]
+    setSelectedProducts(arr)
   }
 
   const handleSave = async () => {
@@ -692,33 +691,122 @@ export default function ShippingZoneForm() {
 
         {/* Products */}
         <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-gray-900">Products available in this zone</h2>
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1.5">Type</label>
-            <ProductTypeDropdown value={productType} onChange={v => { setProductType(v); setSelectedProducts([]) }} />
+          <h2 className="text-sm font-semibold text-gray-900">
+            Products available in this zone
+            <span className="text-gray-400 font-normal ml-2">({selectedProducts.length} selected)</span>
+          </h2>
+
+          {/* Toggle: By Category / Specific Products */}
+          <div className="flex gap-2">
+            {(['category', 'specific'] as const).map(t => (
+              <button key={t}
+                onClick={() => { setSelectionType(t); setSelectedCategoryId(''); setCategoryProductsList([]) }}
+                className={`px-4 py-2 text-sm rounded-lg border font-medium transition-colors ${
+                  selectionType === t ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                }`}>
+                {t === 'category' ? 'By Category' : 'Specific Products'}
+              </button>
+            ))}
           </div>
-          {productType === 'category' && (
-            <ProductSearch label="Select Category" placeholder="Type and search" queryFn={searchCategories}
-              selected={selectedProducts}
-              onAdd={item => setSelectedProducts(p => p.find(x => x.id === item.id) ? p : [...p, item])}
-              onRemove={id => setSelectedProducts(p => p.filter(x => x.id !== id))} />
+
+          {/* Category mode */}
+          {selectionType === 'category' && (
+            <div className="space-y-3">
+              {/* Category dropdown */}
+              <CategoryDropdown
+                onSelect={handleCategorySelect}
+                selectedId={selectedCategoryId}
+              />
+              {loadingCategoryProducts && (
+                <div className="flex items-center gap-2 text-sm text-gray-400 py-1">
+                  <Loader2 size={13} className="animate-spin" /> Loading products…
+                </div>
+              )}
+              {categoryProductsList.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-gray-500">{categoryProductsList.length} products in this category</p>
+                    <button onClick={addAllCategoryToZone}
+                      className="text-xs border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-medium">
+                      Add All
+                    </button>
+                  </div>
+                  <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                    {categoryProductsList.map(p => {
+                      const isSelected = !!selectedProducts.find(s => s.id === p.id)
+                      return (
+                        <div key={p.id} onClick={() => toggleZoneProduct(p)}
+                          className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer border-b border-gray-100 last:border-0 transition-colors
+                            ${isSelected ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}>
+                          <input type="checkbox" checked={isSelected} readOnly className="accent-gray-900 shrink-0" />
+                          {(p.images as string[])?.[0]
+                            ? <img src={(p.images as string[])[0]} alt={p.name} className="w-8 h-8 rounded object-cover border border-gray-200 shrink-0" />
+                            : <div className="w-8 h-8 rounded bg-gray-200 shrink-0" />}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{p.name}</p>
+                            <p className={`text-xs ${isSelected ? 'text-gray-300' : 'text-gray-400'}`}>₹{p.price}</p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              {selectedCategoryId && !loadingCategoryProducts && categoryProductsList.length === 0 && (
+                <p className="text-sm text-gray-400 py-1">No published products in this category</p>
+              )}
+            </div>
           )}
-          {productType === 'product_group' && (
-            <ProductSearch label="Select Product Group" placeholder="Type and search"
-              queryFn={async q => {
-                const { data, error: e } = await supabase.from('product_groups').select('id, name').ilike('name', `%${q}%`).limit(8)
-                if (e) throw new Error('product_groups table not found')
-                return (data ?? []) as { id: string; name: string }[]
-              }}
-              selected={selectedProducts}
-              onAdd={item => setSelectedProducts(p => p.find(x => x.id === item.id) ? p : [...p, item])}
-              onRemove={id => setSelectedProducts(p => p.filter(x => x.id !== id))} />
+
+          {/* Specific products mode */}
+          {selectionType === 'specific' && (
+            <div className="relative">
+              <input type="text" value={zoneProductSearch} onChange={e => setZoneProductSearch(e.target.value)}
+                placeholder="Search and add products…"
+                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              {zoneSearching && <Loader2 size={13} className="absolute right-3 top-3 animate-spin text-gray-400" />}
+              {zoneSearchResults.length > 0 && (
+                <div className="absolute z-10 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden max-h-52 overflow-y-auto">
+                  {zoneSearchResults.map(p => (
+                    <button key={p.id} onClick={() => { toggleZoneProduct(p); setZoneProductSearch(''); setZoneSearchResults([]) }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 text-left">
+                      {(p.images as string[])?.[0]
+                        ? <img src={(p.images as string[])[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0 border border-gray-200" />
+                        : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-gray-900 truncate">{p.name}</p>
+                        <p className="text-xs text-gray-400">₹{p.price}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
-          {productType === 'specific' && (
-            <ProductSearch label="Select Products" placeholder="Type and search" queryFn={searchProducts}
-              selected={selectedProducts}
-              onAdd={item => setSelectedProducts(p => p.find(x => x.id === item.id) ? p : [...p, item])}
-              onRemove={id => setSelectedProducts(p => p.filter(x => x.id !== id))} />
+
+          {/* Selected products list */}
+          {selectedProducts.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-gray-100">
+              <p className="text-xs text-gray-500 font-medium">Selected ({selectedProducts.length})</p>
+              {selectedProducts.map((p, idx) => (
+                <div key={p.id} className="flex items-center gap-3 px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 hover:bg-white transition-colors">
+                  <span className="text-xs text-gray-400 w-5 text-center shrink-0">{idx + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => moveZoneProduct(idx, -1)} disabled={idx === 0}
+                      className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↑</button>
+                    <button onClick={() => moveZoneProduct(idx, 1)} disabled={idx === selectedProducts.length - 1}
+                      className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↓</button>
+                    <button onClick={() => removeZoneProduct(p.id)}
+                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors">
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
