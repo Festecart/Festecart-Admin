@@ -175,16 +175,44 @@ export default function ProductForm() {
         images:            form.images,
         published_at:      form.status === 'published' ? new Date().toISOString() : null,
       }
+
+      let savedId = id
       if (isEdit) {
         const { error } = await supabase.from('products').update(payload).eq('id', id!)
         if (error) throw new Error(error.message)
       } else {
-        const { error } = await supabase.from('products').insert(payload)
+        const { data: inserted, error } = await supabase
+          .from('products').insert(payload).select('id').single()
         if (error) throw new Error(error.message)
+        savedId = inserted?.id
+      }
+
+      // ── Sync is_featured with site_config.featured_products ──
+      if (savedId) {
+        const { data: configRow } = await supabase
+          .from('site_config').select('value').eq('key', 'featured_products').single()
+        const current = (configRow?.value as { product_ids?: string[] } | null)
+        const ids: string[] = current?.product_ids ?? []
+
+        let newIds: string[]
+        if (form.is_featured) {
+          // Add if not already present
+          newIds = ids.includes(savedId) ? ids : [...ids, savedId]
+        } else {
+          // Remove if present
+          newIds = ids.filter(x => x !== savedId)
+        }
+
+        if (JSON.stringify(newIds) !== JSON.stringify(ids)) {
+          await supabase.from('site_config').update({
+            value: { ...(current ?? {}), product_ids: newIds }
+          }).eq('key', 'featured_products')
+        }
       }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-products'] })
+      qc.invalidateQueries({ queryKey: ['site_config', 'featured_products'] })
       navigate('/catalog/products')
     },
     onError: (e) => setError(e instanceof Error ? e.message : 'Save failed'),
