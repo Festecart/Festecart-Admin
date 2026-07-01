@@ -155,6 +155,22 @@ export default function ProductForm() {
     uploadImages(Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')))
   }
 
+  // Remove image from form state AND delete from storage
+  const removeImage = async (url: string, idx: number) => {
+    // Remove from form immediately for instant feedback
+    set('images', form.images.filter((_, i) => i !== idx))
+    // Extract storage path from URL and delete from bucket
+    try {
+      // URL format: .../storage/v1/object/public/product-images/FOLDER/FILENAME
+      const match = url.match(/product-images\/(.+)$/)
+      if (match) {
+        await supabase.storage.from('product-images').remove([match[1]])
+      }
+    } catch (e) {
+      console.warn('Storage delete failed (non-critical):', e)
+    }
+  }
+
   // Save
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -405,7 +421,7 @@ export default function ProductForm() {
                           Main
                         </span>
                       )}
-                      <button onClick={() => set('images', form.images.filter((_, idx) => idx !== i))}
+                      <button onClick={() => removeImage(url, i)}
                         className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <X size={10} />
                       </button>
