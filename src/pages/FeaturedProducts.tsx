@@ -321,12 +321,12 @@ export default function FeaturedProducts() {
                   <p className="text-xs text-gray-400">₹{p.price}</p>
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <button onClick={() => moveProduct(idx, -1)} disabled={idx === 0}
-                    className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↑</button>
-                  <button onClick={() => moveProduct(idx, 1)} disabled={idx === orderedProducts.length - 1}
-                    className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↓</button>
-                  <button onClick={() => removeProduct(p.id)}
-                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors">
+                  <button onClick={(e) => { e.stopPropagation(); moveProduct(idx, -1) }} disabled={idx === 0}
+                    className="w-7 h-7 flex items-center justify-center border border-gray-200 rounded bg-white hover:bg-gray-100 disabled:opacity-30 text-sm font-bold">↑</button>
+                  <button onClick={(e) => { e.stopPropagation(); moveProduct(idx, 1) }} disabled={idx === orderedProducts.length - 1}
+                    className="w-7 h-7 flex items-center justify-center border border-gray-200 rounded bg-white hover:bg-gray-100 disabled:opacity-30 text-sm font-bold">↓</button>
+                  <button onClick={(e) => { e.stopPropagation(); removeProduct(p.id) }}
+                    className="w-7 h-7 flex items-center justify-center bg-red-100 hover:bg-red-200 text-red-600 rounded transition-colors">
                     <X size={13} />
                   </button>
                 </div>
