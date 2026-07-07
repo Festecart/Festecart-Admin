@@ -1,10 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
-const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string
-
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Missing Supabase environment variables')
-}
-
-export const supabase = createClient(supabaseUrl, supabaseKey)
+// ── MIGRATED TO FIREBASE ──────────────────────────────────────────────────────
+// This file is intentionally left as a compatibility shim.
+// All Supabase usage has been replaced with Firebase.
+// Import from '@/lib/firebase' instead.
+export {}

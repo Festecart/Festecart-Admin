@@ -1,97 +1,64 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSiteConfig, useUpdateSiteConfig } from '@/hooks/useSiteConfig'
-import {
-  Plus, Trash2, ChevronUp, ChevronDown,
-  Check, Save, ChevronRight, Navigation, AlignLeft
-} from 'lucide-react'
+import { Plus, Trash2, ChevronUp, ChevronDown, Check, Save, ChevronRight, Navigation, AlignLeft } from 'lucide-react'
 
 interface NavLink { name: string; href: string; order: number; enabled: boolean }
 interface AnnouncementBar { enabled: boolean; left_text: string; right_text: string }
 
-// ── All pages with correct routes ─────────────────────────────
 const PAGE_TYPES: { label: string; href: string; group: string }[] = [
-  { label: 'Home Page',           href: '/',                    group: 'Main' },
-  { label: 'Products',            href: '/products',            group: 'Main' },
-  { label: 'Categories',          href: '/categories',          group: 'Main' },
-  { label: 'Vendors',             href: '/vendors',             group: 'Main' },
-  { label: 'About',               href: '/about',               group: 'Main' },
-  { label: 'Contact',             href: '/contact',             group: 'Main' },
-  { label: 'Login / Register',    href: '/auth',                group: 'Auth' },
-  { label: 'User Login',          href: '/auth?tab=login',      group: 'Auth' },
-  { label: 'User Register',       href: '/auth?tab=register',   group: 'Auth' },
-  { label: 'Vendor Login',        href: '/vendor-login',        group: 'Auth' },
-  { label: 'Vendor Register',     href: '/vendor/register',     group: 'Auth' },
-  { label: 'My Dashboard',        href: '/user/dashboard',      group: 'User' },
-  { label: 'My Orders',           href: '/user/orders',         group: 'User' },
-  { label: 'My Profile',          href: '/user/profile',        group: 'User' },
-  { label: 'Vendor Dashboard',    href: '/vendor/dashboard',    group: 'Vendor' },
-  { label: 'Become a Vendor',     href: '/vendor/register',     group: 'Vendor' },
-  { label: 'Cart',                href: '/cart',                group: 'Shopping' },
-  { label: 'Checkout',            href: '/checkout',            group: 'Shopping' },
-  { label: 'Order Success',       href: '/order-success',       group: 'Shopping' },
-  { label: 'Privacy Policy',      href: '/privacy',             group: 'Legal' },
-  { label: 'Terms of Service',    href: '/terms',               group: 'Legal' },
-  { label: 'Custom URL',          href: '',                     group: 'Custom' },
+  { label: 'Home Page',        href: '/',                 group: 'Main'     },
+  { label: 'Products',         href: '/products',         group: 'Main'     },
+  { label: 'Categories',       href: '/categories',       group: 'Main'     },
+  { label: 'About',            href: '/about',            group: 'Main'     },
+  { label: 'Contact',          href: '/contact',          group: 'Main'     },
+  { label: 'Login / Register', href: '/auth',             group: 'Auth'     },
+  { label: 'My Orders',        href: '/user/orders',      group: 'User'     },
+  { label: 'My Profile',       href: '/user/profile',     group: 'User'     },
+  { label: 'Vendor Dashboard', href: '/vendor/dashboard', group: 'Vendor'   },
+  { label: 'Become a Vendor',  href: '/vendor/register',  group: 'Vendor'   },
+  { label: 'Cart',             href: '/cart',             group: 'Shopping' },
+  { label: 'Checkout',         href: '/checkout',         group: 'Shopping' },
+  { label: 'Privacy Policy',   href: '/privacy',          group: 'Legal'    },
+  { label: 'Terms of Service', href: '/terms',            group: 'Legal'    },
+  { label: 'Custom URL',       href: '',                  group: 'Custom'   },
 ]
-
-function getType(href: string) {
-  return PAGE_TYPES.find(p => p.href === href && p.href !== '')?.label ?? 'Custom URL'
-}
-
-const PAGE_TYPE_GROUPS = PAGE_TYPES.reduce<Record<string, typeof PAGE_TYPES>>((acc, p) => {
-  if (!acc[p.group]) acc[p.group] = []
-  acc[p.group].push(p)
-  return acc
+function getType(href: string) { return PAGE_TYPES.find(p => p.href === href && p.href !== '')?.label ?? 'Custom URL' }
+const PAGE_GROUPS = PAGE_TYPES.reduce<Record<string, typeof PAGE_TYPES>>((acc, p) => {
+  if (!acc[p.group]) acc[p.group] = []; acc[p.group].push(p); return acc
 }, {})
 
-// ── Inline Header editor ───────────────────────────────────────
 function HeaderEditor() {
-  const { data: announcementRaw } = useSiteConfig('announcement_bar')
+  const { data: annRaw } = useSiteConfig('announcement_bar')
   const { data: navRaw } = useSiteConfig('nav_links')
   const update = useUpdateSiteConfig()
-
-  const [ann, setAnn] = useState<AnnouncementBar>({ enabled: true, left_text: '', right_text: '' })
-  const [links, setLinks] = useState<NavLink[]>([])
+  const [ann,      setAnn]      = useState<AnnouncementBar>({ enabled: true, left_text: '', right_text: '' })
+  const [links,    setLinks]    = useState<NavLink[]>([])
   const [annSaved, setAnnSaved] = useState(false)
   const [navSaved, setNavSaved] = useState(false)
   const [annError, setAnnError] = useState<string | null>(null)
   const [navError, setNavError] = useState<string | null>(null)
+  const annInit = useRef(false); const navInit = useRef(false)
 
-  const annInit = useRef(false)
-  const navInit = useRef(false)
-
-  useEffect(() => {
-    if (announcementRaw && !annInit.current) { setAnn(announcementRaw as AnnouncementBar); annInit.current = true }
-  }, [announcementRaw])
-  useEffect(() => {
-    if (navRaw && !navInit.current) { setLinks((navRaw as NavLink[]).slice().sort((a, b) => a.order - b.order)); navInit.current = true }
-  }, [navRaw])
+  useEffect(() => { if (annRaw && !annInit.current) { setAnn(annRaw as AnnouncementBar); annInit.current = true } }, [annRaw])
+  useEffect(() => { if (navRaw && !navInit.current) { setLinks((navRaw as NavLink[]).slice().sort((a, b) => a.order - b.order)); navInit.current = true } }, [navRaw])
 
   const saveAnn = async () => {
     setAnnError(null)
-    try {
-      await update.mutateAsync({ key: 'announcement_bar', value: ann })
-      setAnnSaved(true); setTimeout(() => setAnnSaved(false), 2000)
-    } catch (e) { setAnnError(e instanceof Error ? e.message : 'Save failed') }
+    try { await update.mutateAsync({ key: 'announcement_bar', value: ann }); setAnnSaved(true); setTimeout(() => setAnnSaved(false), 2000) }
+    catch (e) { setAnnError(e instanceof Error ? e.message : 'Save failed') }
   }
-
   const saveNav = async () => {
     setNavError(null)
     const reordered = links.map((l, i) => ({ ...l, order: i + 1 }))
-    try {
-      await update.mutateAsync({ key: 'nav_links', value: reordered })
-      setLinks(reordered); navInit.current = false
-      setNavSaved(true); setTimeout(() => setNavSaved(false), 2000)
-    } catch (e) { setNavError(e instanceof Error ? e.message : 'Save failed') }
+    try { await update.mutateAsync({ key: 'nav_links', value: reordered }); setLinks(reordered); navInit.current = false; setNavSaved(true); setTimeout(() => setNavSaved(false), 2000) }
+    catch (e) { setNavError(e instanceof Error ? e.message : 'Save failed') }
   }
-
   const moveLink = (idx: number, dir: -1 | 1) => {
     const next = [...links]; const swap = idx + dir
     if (swap < 0 || swap >= next.length) return
     ;[next[idx], next[swap]] = [next[swap], next[idx]]; setLinks(next)
   }
-
   const handleTypeChange = (idx: number, label: string) => {
     const preset = PAGE_TYPES.find(p => p.label === label)
     setLinks(ls => ls.map((l, i) => i === idx ? { ...l, href: (preset && preset.href !== '') ? preset.href : '' } : l))
@@ -99,7 +66,7 @@ function HeaderEditor() {
 
   return (
     <div className="space-y-6 pt-2">
-      {/* Announcement Bar */}
+      {/* Announcement */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-700">Announcement Bar</h3>
@@ -131,7 +98,6 @@ function HeaderEditor() {
           {annSaved ? <><Check size={11} /> Saved</> : <><Save size={11} /> Save Announcement</>}
         </button>
       </div>
-
       <div className="border-t border-gray-100" />
 
       {/* Nav Links */}
@@ -143,16 +109,11 @@ function HeaderEditor() {
             <Plus size={12} /> Add Link
           </button>
         </div>
-
         <div className="grid grid-cols-12 gap-2 px-2 text-xs font-medium text-gray-400 uppercase tracking-wide">
-          <div className="col-span-1" />
-          <div className="col-span-2">Name</div>
-          <div className="col-span-3">Type</div>
-          <div className="col-span-3">URL</div>
-          <div className="col-span-2">Status</div>
-          <div className="col-span-1" />
+          <div className="col-span-1" /><div className="col-span-2">Name</div>
+          <div className="col-span-3">Type</div><div className="col-span-3">URL</div>
+          <div className="col-span-2">Status</div><div className="col-span-1" />
         </div>
-
         <div className="space-y-2">
           {links.map((link, idx) => {
             const currentType = getType(link.href)
@@ -171,7 +132,7 @@ function HeaderEditor() {
                 <div className="col-span-3">
                   <select value={currentType} onChange={e => handleTypeChange(idx, e.target.value)}
                     className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-gray-900">
-                    {Object.entries(PAGE_TYPE_GROUPS).map(([group, pages]) => (
+                    {Object.entries(PAGE_GROUPS).map(([group, pages]) => (
                       <optgroup key={group} label={group}>
                         {pages.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
                       </optgroup>
@@ -179,14 +140,12 @@ function HeaderEditor() {
                   </select>
                 </div>
                 <div className="col-span-3">
-                  {isCustom ? (
-                    <input type="text" value={link.href}
-                      onChange={e => setLinks(ls => ls.map((l, i) => i === idx ? { ...l, href: e.target.value } : l))}
-                      placeholder="/path"
-                      className="w-full px-2 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-900" />
-                  ) : (
-                    <span className="block px-2 py-1.5 text-xs font-mono text-gray-400 bg-gray-50 border border-gray-100 rounded-lg truncate">{link.href}</span>
-                  )}
+                  {isCustom
+                    ? <input type="text" value={link.href}
+                        onChange={e => setLinks(ls => ls.map((l, i) => i === idx ? { ...l, href: e.target.value } : l))}
+                        placeholder="/path"
+                        className="w-full px-2 py-1.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none" />
+                    : <span className="block px-2 py-1.5 text-xs font-mono text-gray-400 bg-gray-50 border border-gray-100 rounded-lg truncate">{link.href}</span>}
                 </div>
                 <div className="col-span-2 flex items-center gap-1.5">
                   <button onClick={() => setLinks(ls => ls.map((l, i) => i === idx ? { ...l, enabled: !l.enabled } : l))}
@@ -197,15 +156,12 @@ function HeaderEditor() {
                 </div>
                 <div className="col-span-1 flex justify-end">
                   <button onClick={() => setLinks(ls => ls.filter((_, i) => i !== idx))}
-                    className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">
-                    <Trash2 size={12} />
-                  </button>
+                    className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 size={12} /></button>
                 </div>
               </div>
             )
           })}
         </div>
-
         {navError && <p className="text-xs text-red-600">{navError}</p>}
         <button onClick={saveNav} disabled={update.isPending}
           className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-xs font-medium px-3 py-1.5 rounded-lg">
@@ -216,22 +172,11 @@ function HeaderEditor() {
   )
 }
 
-// ── Expandable section card ────────────────────────────────────
-function MenuSection({
-  title,
-  subtitle,
-  icon: Icon,
-  children,
-  onNavigate,
-}: {
-  title: string
-  subtitle: string
-  icon: React.ElementType
-  children?: React.ReactNode
-  onNavigate?: () => void
+function MenuSection({ title, subtitle, icon: Icon, children, onNavigate }: {
+  title: string; subtitle: string; icon: React.ElementType
+  children?: React.ReactNode; onNavigate?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
-
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="flex items-center justify-between px-5 py-4">
@@ -247,63 +192,39 @@ function MenuSection({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {children && (
-            <button
-              onClick={() => setExpanded(e => !e)}
-              className="px-4 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
+            <button onClick={() => setExpanded(e => !e)}
+              className="px-4 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
               {expanded ? 'Close' : 'Edit'}
             </button>
           )}
           {onNavigate && (
-            <button
-              onClick={onNavigate}
-              className="px-4 py-1.5 text-xs font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
-            >
+            <button onClick={onNavigate}
+              className="px-4 py-1.5 text-xs font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors">
               Edit
             </button>
           )}
         </div>
       </div>
-
       {expanded && children && (
-        <div className="px-5 pb-5 border-t border-gray-100">
-          {children}
-        </div>
+        <div className="px-5 pb-5 border-t border-gray-100">{children}</div>
       )}
     </div>
   )
 }
 
-// ── Main page ──────────────────────────────────────────────────
 export default function SiteNavigation() {
   const navigate = useNavigate()
-
   return (
     <div className="p-6 space-y-5">
-      {/* Breadcrumb */}
       <p className="text-xs text-gray-400">Website / <span className="text-gray-600">Navigation</span></p>
-
-      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Navigation</h1>
       </div>
-
-      {/* Header section — inline editor */}
-      <MenuSection
-        title="Header"
-        subtitle="Announcement bar and navigation links"
-        icon={Navigation}
-      >
+      <MenuSection title="Header" subtitle="Announcement bar and navigation links" icon={Navigation}>
         <HeaderEditor />
       </MenuSection>
-
-      {/* Footer section — navigates to full footer editor */}
-      <MenuSection
-        title="Footer"
-        subtitle="Footer columns, contact info, social links and copyright"
-        icon={AlignLeft}
-        onNavigate={() => navigate('/site/footer')}
-      />
+      <MenuSection title="Footer" subtitle="Footer columns, contact info, social links and copyright"
+        icon={AlignLeft} onNavigate={() => navigate('/site/footer')} />
     </div>
   )
 }

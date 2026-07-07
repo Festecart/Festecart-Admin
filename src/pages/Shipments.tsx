@@ -6,12 +6,8 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { useState } from 'react'
 import type { Order } from '@/types'
 
-function customerName(order: Order) {
-  return order.guest_name?.trim() || order.shipping_address?.name?.trim() || '—'
-}
-function customerPhone(order: Order) {
-  return order.guest_phone?.trim() || order.shipping_address?.phone?.trim() || '—'
-}
+function customerName(order: Order)  { return order.guest_name?.trim()  || order.shipping_address?.name?.trim()  || '—' }
+function customerPhone(order: Order) { return order.guest_phone?.trim() || order.shipping_address?.phone?.trim() || '—' }
 
 export default function Shipments() {
   const { data: shipments, isLoading, refetch } = useActiveShipments()
@@ -20,34 +16,22 @@ export default function Shipments() {
 
   const markDelivered = async (orderId: string) => {
     setUpdatingId(orderId)
-    try {
-      await updateStatus.mutateAsync({ orderId, status: 'delivered' })
-    } finally {
-      setUpdatingId(null)
-    }
+    try { await updateStatus.mutateAsync({ orderId, status: 'delivered' }) }
+    finally { setUpdatingId(null) }
   }
 
   return (
     <div className="p-6 space-y-5">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Truck size={22} /> Active Shipments
-          </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Orders currently shipped or out for delivery
-          </p>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Truck size={22} /> Active Shipments</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Orders currently shipped or out for delivery</p>
         </div>
-        <button
-          onClick={() => refetch()}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors"
-        >
+        <button onClick={() => refetch()} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors">
           <RefreshCw size={14} /> Refresh
         </button>
       </div>
 
-      {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {isLoading ? (
           <div className="p-8 text-center text-gray-400">Loading shipments…</div>
@@ -62,24 +46,16 @@ export default function Shipments() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Order #</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Customer</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Phone</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Total</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Courier</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Tracking #</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Shipped At</th>
-                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-                  <th className="px-5 py-3" />
+                  {['Order #','Customer','Phone','Total','Courier','Tracking #','Shipped At','Status',''].map(h => (
+                    <th key={h} className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {(shipments ?? []).map(order => (
                   <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-5 py-3 font-medium text-gray-900 whitespace-nowrap">
-                      <Link to={`/orders/${order.id}`} className="hover:text-red-600">
-                        {order.order_number}
-                      </Link>
+                      <Link to={`/orders/${order.id}`} className="hover:text-red-600">{order.order_number}</Link>
                     </td>
                     <td className="px-5 py-3 text-gray-700">{customerName(order)}</td>
                     <td className="px-5 py-3 text-gray-500">{customerPhone(order)}</td>
@@ -89,11 +65,8 @@ export default function Shipments() {
                     <td className="px-5 py-3 text-gray-500 whitespace-nowrap text-xs">{formatDate(order.shipped_at)}</td>
                     <td className="px-5 py-3"><StatusBadge status={order.status} /></td>
                     <td className="px-5 py-3">
-                      <button
-                        onClick={() => markDelivered(order.id)}
-                        disabled={updatingId === order.id}
-                        className="flex items-center gap-1.5 text-xs font-medium text-green-700 border border-green-300 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                      >
+                      <button onClick={() => markDelivered(order.id)} disabled={updatingId === order.id}
+                        className="flex items-center gap-1.5 text-xs font-medium text-green-700 border border-green-300 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
                         <CheckCircle2 size={13} />
                         {updatingId === order.id ? 'Updating…' : 'Mark Delivered'}
                       </button>

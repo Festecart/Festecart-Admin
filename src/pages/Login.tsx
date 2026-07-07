@@ -4,12 +4,12 @@ import { useAuth } from '@/hooks/useAuth'
 import { AlertCircle, Loader2 } from 'lucide-react'
 
 export default function Login() {
-  const { session, isAdmin, loading, error, login } = useAuth()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const { user, isAdmin, loading, error, login } = useAuth()
+  const [email,      setEmail]      = useState('')
+  const [password,   setPassword]   = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  if (!loading && session && isAdmin) return <Navigate to="/" replace />
+  if (!loading && user && isAdmin) return <Navigate to="/" replace />
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()

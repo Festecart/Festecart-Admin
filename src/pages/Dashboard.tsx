@@ -58,11 +58,11 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          <StatCard icon={ShoppingBag} label="Today's Orders" value={stats?.todayOrders ?? 0} color="bg-blue-500" />
-          <StatCard icon={Clock} label="Pending (Confirmed)" value={stats?.pendingOrders ?? 0} color="bg-amber-500" />
-          <StatCard icon={Truck} label="In Transit" value={stats?.inTransitOrders ?? 0} color="bg-orange-500" />
-          <StatCard icon={TrendingUp} label="Today's Revenue" value={formatCurrency(stats?.todayRevenue ?? 0)} color="bg-green-500" />
-          <StatCard icon={Calendar} label="Month Revenue" value={formatCurrency(stats?.monthRevenue ?? 0)} color="bg-red-600" />
+          <StatCard icon={ShoppingBag} label="Today's Orders"     value={stats?.todayOrders   ?? 0}                          color="bg-blue-500"  />
+          <StatCard icon={Clock}       label="Pending (Confirmed)" value={stats?.pendingOrders  ?? 0}                          color="bg-amber-500" />
+          <StatCard icon={Truck}       label="In Transit"          value={stats?.inTransitOrders ?? 0}                          color="bg-orange-500"/>
+          <StatCard icon={TrendingUp}  label="Today's Revenue"    value={formatCurrency(stats?.todayRevenue  ?? 0)}             color="bg-green-500" />
+          <StatCard icon={Calendar}    label="Month Revenue"       value={formatCurrency(stats?.monthRevenue   ?? 0)}             color="bg-red-600"   />
         </div>
       )}
 
@@ -95,16 +95,13 @@ export default function Dashboard() {
                 {(recent ?? []).map(order => (
                   <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-5 py-3 font-medium text-gray-900">{order.order_number}</td>
-                    <td className="px-5 py-3 text-gray-600">{order.guest_name ?? '—'}</td>
+                    <td className="px-5 py-3 text-gray-600">{order.guest_name ?? order.shipping_address?.name ?? '—'}</td>
                     <td className="px-5 py-3 text-gray-600">{order.items?.length ?? 0}</td>
                     <td className="px-5 py-3 font-medium">{formatCurrency(order.total)}</td>
                     <td className="px-5 py-3"><StatusBadge status={order.status} /></td>
                     <td className="px-5 py-3 text-gray-500">{formatDateShort(order.created_at)}</td>
                     <td className="px-5 py-3">
-                      <Link
-                        to={`/orders/${order.id}`}
-                        className="text-red-600 hover:text-red-700 font-medium text-xs"
-                      >
+                      <Link to={`/orders/${order.id}`} className="text-red-600 hover:text-red-700 font-medium text-xs">
                         View →
                       </Link>
                     </td>

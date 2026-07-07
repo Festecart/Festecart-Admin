@@ -1,20 +1,23 @@
 import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import {
+  db, doc, getDoc, updateDoc, collection, addDoc, getDocs, query, where, orderBy, Timestamp,
+} from '@/lib/firebase'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { Order, Invoice, OrderItem } from '@/types'
+import { sendOrderStatusEmail, type OrderForEmail } from '@/lib/emailService'
 import {
   ChevronLeft, ChevronRight, User, MapPin, Phone, Mail,
   Package, AlertTriangle, Loader2, IndianRupee, FileText,
-  Truck, CheckCircle2, X, Clock, History
+  Truck, CheckCircle2, X, Clock, History,
 } from 'lucide-react'
 
 // ── helpers ───────────────────────────────────────────────────
-function customerName(o: Order) { return o.guest_name?.trim() || o.shipping_address?.name?.trim() || '—' }
+function customerName(o: Order)  { return o.guest_name?.trim()  || o.shipping_address?.name?.trim()  || '—' }
 function customerPhone(o: Order) { return o.guest_phone?.trim() || o.shipping_address?.phone?.trim() || '—' }
 function customerEmail(o: Order) { return o.customer_email?.trim() || o.guest_email?.trim() || '—' }
-function isOrderPaid(o: Order) { return o.payment_method !== 'cod' || o.payment_status === 'paid' }
+function isOrderPaid(o: Order)   { return o.payment_method !== 'cod' || o.payment_status === 'paid' }
 
 const STATUS_DOT: Record<string, string> = {
   confirmed: 'bg-gray-400', processing: 'bg-blue-500',
@@ -34,6 +37,67 @@ const FULFILLMENT_LABEL: Record<string, string> = {
   pending_shipment: 'Pending Shipment', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled',
 }
 
+// ── Firebase helpers ──────────────────────────────────────────
+function tsToStr(ts: unknown): string | null {
+  if (!ts) return null
+  if (ts instanceof Timestamp) return ts.toDate().toISOString()
+  if (typeof ts === 'string') return ts
+  return null
+}
+
+function toOrder(id: string, data: Record<string, unknown>): Order {
+  return {
+    id,
+    order_number:        String(data.order_number ?? ''),
+    user_id:             (data.user_id as string | null) ?? null,
+    customer_email:      (data.customer_email as string | null) ?? null,
+    guest_name:          (data.guest_name as string | null) ?? null,
+    guest_email:         (data.guest_email as string | null) ?? null,
+    guest_phone:         (data.guest_phone as string | null) ?? null,
+    status:              data.status as Order['status'],
+    payment_method:      String(data.payment_method ?? 'cod'),
+    payment_status:      (data.payment_status as string | null) ?? null,
+    acceptance_status:   (data.acceptance_status as string | null) ?? null,
+    fulfillment_status:  (data.fulfillment_status as string | null) ?? null,
+    paid_at:             tsToStr(data.paid_at),
+    subtotal:            Number(data.subtotal ?? 0),
+    shipping_charge:     Number(data.shipping_charge ?? 0),
+    total:               Number(data.total ?? 0),
+    note:                (data.note as string | null) ?? null,
+    coupon_code:         (data.coupon_code as string | null) ?? null,
+    shipping_address:    (data.shipping_address as Order['shipping_address']) ?? null,
+    items:               (data.items as Order['items']) ?? [],
+    tracking_number:     (data.tracking_number as string | null) ?? null,
+    courier_name:        (data.courier_name as string | null) ?? null,
+    confirmed_at:        tsToStr(data.confirmed_at),
+    shipped_at:          tsToStr(data.shipped_at),
+    out_for_delivery_at: tsToStr(data.out_for_delivery_at),
+    delivered_at:        tsToStr(data.delivered_at),
+    cancelled_at:        tsToStr(data.cancelled_at),
+    created_at:          tsToStr(data.created_at) ?? new Date().toISOString(),
+    updated_at:          tsToStr(data.updated_at) ?? new Date().toISOString(),
+  } as Order
+}
+
+function toInvoice(id: string, data: Record<string, unknown>): Invoice {
+  return {
+    id,
+    order_id:           String(data.order_id ?? ''),
+    invoice_number:     String(data.invoice_number ?? ''),
+    invoice_date:       tsToStr(data.invoice_date) ?? tsToStr(data.created_at) ?? '',
+    notes:              (data.notes as string | null) ?? null,
+    status:             String(data.status ?? 'pending_shipment'),
+    courier:            (data.courier as string | null) ?? null,
+    tracking_number:    (data.tracking_number as string | null) ?? null,
+    sent_at:            tsToStr(data.sent_at),
+    estimated_delivery: tsToStr(data.estimated_delivery),
+    delivered_at:       tsToStr(data.delivered_at),
+    is_prepaid:         Boolean(data.is_prepaid),
+    created_at:         tsToStr(data.created_at) ?? '',
+    invoice_items:      (data.invoice_items as Invoice['invoice_items']) ?? [],
+  }
+}
+
 // ── Modal wrapper ─────────────────────────────────────────────
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -49,7 +113,6 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   )
 }
 
-// ── Confirm dialog ────────────────────────────────────────────
 function ConfirmModal({ title, message, onClose, onConfirm, loading }: {
   title: string; message: string; onClose: () => void; onConfirm: () => void; loading?: boolean
 }) {
@@ -67,14 +130,14 @@ function ConfirmModal({ title, message, onClose, onConfirm, loading }: {
   )
 }
 
-// ── Hooks ────────────────────────────────────────────────────
-function useOrder(id: string) {
+// ── Firebase hooks ────────────────────────────────────────────
+function useOrderData(id: string) {
   return useQuery({
     queryKey: ['orders', id],
     queryFn: async () => {
-      const { data, error } = await supabase.from('orders').select('*').eq('id', id).single()
-      if (error) throw error
-      return data as Order
+      const snap = await getDoc(doc(db, 'orders', id))
+      if (!snap.exists()) throw new Error('Order not found')
+      return toOrder(snap.id, snap.data() as Record<string, unknown>)
     },
     enabled: !!id,
   })
@@ -84,10 +147,10 @@ function useInvoices(orderId: string) {
   return useQuery({
     queryKey: ['invoices', orderId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('invoices').select('*, invoice_items(*)').eq('order_id', orderId).order('created_at')
-      if (error) throw error
-      return (data ?? []) as Invoice[]
+      const snap = await getDocs(
+        query(collection(db, 'invoices'), where('order_id', '==', orderId), orderBy('created_at', 'asc'))
+      )
+      return snap.docs.map(d => toInvoice(d.id, d.data() as Record<string, unknown>))
     },
     enabled: !!orderId,
   })
@@ -97,27 +160,49 @@ function useOrderHistory(orderId: string) {
   return useQuery({
     queryKey: ['order-history', orderId],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('order_status_history').select('*').eq('order_id', orderId).order('created_at', { ascending: false })
-      return data ?? []
+      const snap = await getDocs(
+        query(collection(db, 'order_status_history'),
+          where('order_id', '==', orderId), orderBy('created_at', 'desc'))
+      )
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }))
     },
     enabled: !!orderId,
   })
 }
 
 async function logHistory(orderId: string, action: string, oldStatus: string | null, newStatus: string | null, remarks?: string) {
-  await supabase.from('order_status_history').insert({ order_id: orderId, action, old_status: oldStatus, new_status: newStatus, remarks: remarks ?? null })
+  await addDoc(collection(db, 'order_status_history'), {
+    order_id: orderId, action,
+    old_status: oldStatus ?? null,
+    new_status: newStatus ?? null,
+    remarks: remarks ?? null,
+    created_at: Timestamp.now(),
+  })
 }
 
-async function sendStatusEmail(order: Order, newStatus: string, invoice?: Invoice) {
+async function sendStatusEmail(order: Order, newStatus: string, invoice?: Partial<Invoice>) {
   try {
-    console.log('[sendStatusEmail] Invoking for:', order.order_number, '→', newStatus, 'email:', (order as unknown as Record<string,unknown>).customer_email || order.guest_email)
-    const result = await supabase.functions.invoke('send-order-email', {
-      body: { order, new_status: newStatus, invoice: invoice ?? null },
-    })
-    console.log('[sendStatusEmail] Result:', JSON.stringify(result.data))
+    const emailOrder: OrderForEmail = {
+      id:               order.id,
+      order_number:     order.order_number,
+      customer_email:   order.customer_email,
+      guest_email:      order.guest_email,
+      guest_name:       order.guest_name,
+      shipping_address: order.shipping_address,
+      items:            order.items ?? [],
+      subtotal:         order.subtotal,
+      shipping_charge:  order.shipping_charge,
+      total:            order.total,
+      payment_method:   order.payment_method,
+      tracking_number:  order.tracking_number,
+      courier_name:     order.courier_name,
+    };
+    await sendOrderStatusEmail(emailOrder, newStatus, {
+      courierName:    invoice?.courier    ?? order.courier_name,
+      trackingNumber: invoice?.tracking_number ?? order.tracking_number,
+    });
   } catch (e) {
-    console.error('[Email] Failed to send status email:', e)
+    console.error('[Email] Failed to send status email:', e);
   }
 }
 
@@ -130,17 +215,17 @@ function GenerateInvoiceModal({ order, invoices, onClose, onSuccess }: {
 
   const fulfilledQty = (productId: string) =>
     invoices.flatMap(inv => inv.invoice_items ?? [])
-      .filter(ii => ii.product_id === productId && ii.invoice_id !== undefined)
+      .filter(ii => ii.product_id === productId)
       .reduce((s, ii) => s + ii.fulfilled_qty, 0)
 
   const remainingQty = (item: OrderItem) => item.quantity - fulfilledQty(item.product_id)
 
-  const [selected, setSelected] = useState<Record<string, boolean>>({})
-  const [fulfillQty, setFulfillQty] = useState<Record<string, number>>(
+  const [selected,    setSelected]    = useState<Record<string, boolean>>({})
+  const [fulfillQty,  setFulfillQty]  = useState<Record<string, number>>(
     Object.fromEntries(items.map(i => [i.product_id, Math.max(1, remainingQty(i))]))
   )
-  const [notes, setNotes] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [notes,   setNotes]   = useState('')
+  const [error,   setError]   = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   const toggleAll = (checked: boolean) =>
@@ -152,32 +237,47 @@ function GenerateInvoiceModal({ order, invoices, onClose, onSuccess }: {
     if (selectedItems.length === 0) { setError('Select at least one product'); return }
     setLoading(true); setError(null)
     try {
-      const { data: inv, error: invErr } = await supabase.from('invoices')
-        .insert({ order_id: order.id, notes: notes || null, status: 'pending_shipment' })
-        .select('id, invoice_number').single()
-      if (invErr) throw new Error(invErr.message)
-
-      await supabase.from('invoice_items').insert(
-        selectedItems.map(i => ({
-          invoice_id: inv.id, product_id: i.product_id,
-          product_name: i.name, ordered_qty: i.quantity,
-          fulfilled_qty: fulfillQty[i.product_id] ?? 1, price: i.price,
-        }))
+      // Get next invoice number
+      const invSnap = await getDocs(
+        query(collection(db, 'invoices'), orderBy('created_at', 'desc'))
       )
+      const nextInvNum = invSnap.docs.length + 1
+      const invoice_number = `INV-${String(nextInvNum).padStart(6, '0')}`
+
+      const invRef = await addDoc(collection(db, 'invoices'), {
+        order_id: order.id,
+        invoice_number,
+        notes: notes || null,
+        status: 'pending_shipment',
+        invoice_items: selectedItems.map(i => ({
+          product_id: i.product_id,
+          product_name: i.name,
+          ordered_qty: i.quantity,
+          fulfilled_qty: fulfillQty[i.product_id] ?? 1,
+          price: i.price,
+        })),
+        created_at: Timestamp.now(),
+        invoice_date: Timestamp.now(),
+      })
 
       const totalFulfilled = items.every(i => {
         const nowFulfilled = fulfilledQty(i.product_id) + (fulfillQty[i.product_id] ?? 0)
         return nowFulfilled >= i.quantity
       })
       const newStatus = totalFulfilled ? 'fulfilled' : 'partially_fulfilled'
-      await supabase.from('orders').update({ status: newStatus, fulfillment_status: 'pending_shipment' }).eq('id', order.id)
-      await logHistory(order.id, 'Invoice Generated', order.status, newStatus, `Invoice ${inv.invoice_number}`)
-      // Send email for fulfillment status change
-      const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', order.id).single()
-      if (updatedOrder) await sendStatusEmail(updatedOrder as Order, newStatus)
+      await updateDoc(doc(db, 'orders', order.id), {
+        status: newStatus,
+        fulfillment_status: 'pending_shipment',
+        updated_at: Timestamp.now(),
+      })
+      await logHistory(order.id, 'Invoice Generated', order.status, newStatus, `Invoice ${invoice_number}`)
+
+      const freshSnap = await getDoc(doc(db, 'orders', order.id))
+      if (freshSnap.exists()) await sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), newStatus)
 
       qc.invalidateQueries({ queryKey: ['orders', order.id] })
       qc.invalidateQueries({ queryKey: ['invoices', order.id] })
+      void invRef // suppress unused warning
       onSuccess()
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
     finally { setLoading(false) }
@@ -217,7 +317,6 @@ function GenerateInvoiceModal({ order, invoices, onClose, onSuccess }: {
         <div>
           <label className="text-xs font-medium text-gray-700 block mb-1">Notes</label>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
-            placeholder="Add notes in invoice…"
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-gray-900" />
         </div>
         {error && <p className="text-xs text-red-600">{error}</p>}
@@ -246,23 +345,15 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
   const defaultDelivery = new Date(now); defaultDelivery.setDate(now.getDate() + 7)
 
   const [form, setForm] = useState({
-    courier: invoice.courier ?? 'Self-delivery',
-    tracking_number: invoice.tracking_number ?? '',
-    sent_at: invoice.sent_at ? invoice.sent_at.slice(0, 16) : toLocal(now),
+    courier:            invoice.courier ?? 'Self-delivery',
+    tracking_number:    invoice.tracking_number ?? '',
+    sent_at:            invoice.sent_at ? invoice.sent_at.slice(0, 16) : toLocal(now),
     estimated_delivery: invoice.estimated_delivery ? invoice.estimated_delivery.slice(0, 16) : toLocal(defaultDelivery),
-    is_prepaid: invoice.is_prepaid ?? false,
   })
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError]   = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // Fetch courier vendors for dropdown
-  const { data: vendors = [] } = useQuery({
-    queryKey: ['courier-vendors'],
-    queryFn: async () => {
-      const { data } = await supabase.from('courier_vendors').select('id, name').order('name')
-      return (data ?? []) as { id: string; name: string }[]
-    },
-  })
+  const f = (field: string, val: string) => setForm(p => ({ ...p, [field]: val }))
 
   const handleSave = async () => {
     if (!form.courier) { setError('Courier is required'); return }
@@ -270,23 +361,27 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
     try {
       const sentAt = form.sent_at ? new Date(form.sent_at).toISOString() : new Date().toISOString()
       const estDelivery = form.estimated_delivery ? new Date(form.estimated_delivery).toISOString() : null
-      const { error: trackErr } = await supabase.from('invoices').update({
+
+      await updateDoc(doc(db, 'invoices', invoice.id), {
         courier: form.courier,
         tracking_number: form.tracking_number || null,
         sent_at: sentAt,
         estimated_delivery: estDelivery,
-        is_prepaid: form.is_prepaid, status: 'shipped',
-      }).eq('id', invoice.id)
-      if (trackErr) throw new Error(trackErr.message)
-      await supabase.from('orders').update({ status: 'shipped', fulfillment_status: 'shipped' }).eq('id', invoice.order_id)
-      const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', invoice.order_id).single()
-      if (updatedOrder) {
-        await sendStatusEmail(updatedOrder as Order, 'shipped', {
-          ...invoice,
-          courier: form.courier,
-          tracking_number: form.tracking_number || null,
-          sent_at: sentAt,
-          estimated_delivery: estDelivery,
+        status: 'shipped',
+        updated_at: Timestamp.now(),
+      })
+      await updateDoc(doc(db, 'orders', invoice.order_id), {
+        status: 'shipped',
+        fulfillment_status: 'shipped',
+        shipped_at: Timestamp.now(),
+        updated_at: Timestamp.now(),
+      })
+
+      const freshSnap = await getDoc(doc(db, 'orders', invoice.order_id))
+      if (freshSnap.exists()) {
+        await sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'shipped', {
+          ...invoice, courier: form.courier,
+          tracking_number: form.tracking_number || null, sent_at: sentAt, estimated_delivery: estDelivery,
         })
       }
       qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
@@ -296,28 +391,15 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
     finally { setLoading(false) }
   }
 
-  const f = (field: string, val: string | boolean) => setForm(p => ({ ...p, [field]: val }))
-
   return (
     <Modal title="Add Tracking Information" onClose={onClose}>
       <div className="space-y-4">
-        {/* Courier — dropdown from vendors */}
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Courier *</label>
-          {vendors.length > 0 ? (
-            <select value={form.courier} onChange={e => f('courier', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
-              <option value="Self-delivery">Self-delivery</option>
-              {vendors.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
-              <option value="Other">Other</option>
-            </select>
-          ) : (
-            <input type="text" value={form.courier} onChange={e => f('courier', e.target.value)}
-              placeholder="e.g. Delhivery, Self-delivery"
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-          )}
+          <input type="text" value={form.courier} onChange={e => f('courier', e.target.value)}
+            placeholder="e.g. Delhivery, Self-delivery"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
         </div>
-        {/* Tracking Number — optional */}
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Tracking Number <span className="text-gray-400 font-normal">(optional)</span></label>
           <input type="text" value={form.tracking_number} onChange={e => f('tracking_number', e.target.value)}
@@ -326,14 +408,14 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Sent Date & Time <span className="text-gray-400 font-normal">(defaults to now)</span></label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Sent Date & Time</label>
             <input type="datetime-local" value={form.sent_at} onChange={e => f('sent_at', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Est. Delivery <span className="text-gray-400 font-normal">(optional)</span></label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Est. Delivery</label>
             <input type="datetime-local" value={form.estimated_delivery} onChange={e => f('estimated_delivery', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none" />
           </div>
         </div>
         {error && <p className="text-xs text-red-600">{error}</p>}
@@ -348,6 +430,7 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
     </Modal>
   )
 }
+
 // ── Mark Delivered Modal ──────────────────────────────────────
 function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
   invoice: Invoice; order: Order; onClose: () => void; onSuccess: () => void
@@ -360,51 +443,37 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
   const confirm = async () => {
     if (!checked) return
     setLoading(true)
-    // 1. Mark this invoice as delivered
-    await supabase.from('invoices')
-      .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-      .eq('id', invoice.id)
-
-    // 2. Fetch ALL invoices with their items for this order
-    const { data: allInvoices } = await supabase
-      .from('invoices')
-      .select('*, invoice_items(*)')
-      .eq('order_id', invoice.order_id)
-
-    // 3. Calculate total fulfilled qty per product across all invoices
+    await updateDoc(doc(db, 'invoices', invoice.id), {
+      status: 'delivered', delivered_at: Timestamp.now(), updated_at: Timestamp.now(),
+    })
+    const invSnap = await getDocs(
+      query(collection(db, 'invoices'), where('order_id', '==', invoice.order_id))
+    )
+    const allInvoices = invSnap.docs.map(d => ({ ...d.data(), id: d.id }) as Invoice & Record<string, unknown>)
     const fulfilledQtyMap: Record<string, number> = {}
-    ;(allInvoices ?? []).forEach(inv => {
-      ;(inv.invoice_items ?? []).forEach((ii: { product_id: string; fulfilled_qty: number }) => {
+    allInvoices.forEach(inv => {
+      (inv.invoice_items ?? []).forEach((ii: { product_id: string; fulfilled_qty: number }) => {
         fulfilledQtyMap[ii.product_id] = (fulfilledQtyMap[ii.product_id] ?? 0) + ii.fulfilled_qty
       })
     })
-
-    // 4. Check if every ordered item is fully fulfilled and delivered
     const allDelivered = (order.items ?? []).every(
       item => (fulfilledQtyMap[item.product_id] ?? 0) >= item.quantity
     )
-
     const newOrderStatus = allDelivered ? 'delivered' : 'partially_delivered'
-
-    await supabase.from('orders').update({
+    await updateDoc(doc(db, 'orders', invoice.order_id), {
       status: newOrderStatus,
       fulfillment_status: allDelivered ? 'delivered' : 'partially_delivered',
-    }).eq('id', invoice.order_id)
-
+      delivered_at: allDelivered ? Timestamp.now() : null,
+      updated_at: Timestamp.now(),
+    })
     await logHistory(invoice.order_id, 'Marked Delivered', null, newOrderStatus, `Invoice ${invoice.invoice_number}`)
-
-    // 5. Send delivered email only when ALL items delivered
     if (allDelivered) {
-      const { data: updatedOrder } = await supabase.from('orders').select('*').eq('id', invoice.order_id).single()
-      if (updatedOrder) {
-        await sendStatusEmail(updatedOrder as Order, 'delivered', invoice)
-      }
+      const freshSnap = await getDoc(doc(db, 'orders', invoice.order_id))
+      if (freshSnap.exists()) await sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'delivered', invoice)
     }
-
     qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
     qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
-    setLoading(false)
-    onSuccess()
+    setLoading(false); onSuccess()
   }
 
   return (
@@ -417,9 +486,7 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
       )}
       <div className="space-y-3 text-sm text-gray-700">
         {invoice.tracking_number && <p><span className="text-gray-400">Tracking No:</span> <strong>{invoice.tracking_number}</strong></p>}
-        {invoice.courier && <p><span className="text-gray-400">Courier:</span> <strong>{invoice.courier}</strong></p>}
-        {invoice.sent_at && <p><span className="text-gray-400">Sent Date:</span> {formatDate(invoice.sent_at)}</p>}
-        {invoice.estimated_delivery && <p><span className="text-gray-400">Estimated Date:</span> {formatDate(invoice.estimated_delivery)}</p>}
+        {invoice.courier         && <p><span className="text-gray-400">Courier:</span> <strong>{invoice.courier}</strong></p>}
         <div className="flex items-center gap-2 mt-3 p-3 bg-gray-50 rounded-lg">
           <input type="checkbox" id="markdel" checked={checked} onChange={e => setChecked(e.target.checked)} disabled={!paid} />
           <label htmlFor="markdel" className={`text-sm font-medium ${paid ? 'text-gray-800' : 'text-gray-400'}`}>Mark As Delivered</label>
@@ -436,159 +503,78 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
   )
 }
 
-// ── Generate Invoice PDF ──────────────────────────────────────
-async function downloadInvoicePdf(invoice: Invoice, order: Order) {
+// ── Invoice PDF download ──────────────────────────────────────
+function downloadInvoicePdf(invoice: Invoice, order: Order) {
   const items = invoice.invoice_items ?? []
   const total = items.reduce((s, i) => s + i.price * i.fulfilled_qty, 0)
   const addr = order.shipping_address
-
-  const toWords = (n: number): string => {
-    const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
-      'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen']
-    const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
-    if (n === 0) return 'Zero'
-    if (n < 20) return ones[n]
-    if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '')
-    if (n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + toWords(n % 100) : '')
-    if (n < 100000) return toWords(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + toWords(n % 1000) : '')
-    return toWords(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + toWords(n % 100000) : '')
-  }
-
-  const amountInWords = toWords(Math.round(total)) + ' Rupees Only'
-  const invoiceDate = new Date(invoice.invoice_date || invoice.created_at || new Date()).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const orderDate = new Date(order.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const custName = order.guest_name || addr?.name || '—'
+  const custName  = order.guest_name  || addr?.name  || '—'
   const custEmail = order.customer_email || order.guest_email || '—'
-  const payMode = order.payment_method === 'cod' ? 'Cash on Delivery' : order.payment_method.toUpperCase()
+  const payMode   = order.payment_method === 'cod' ? 'Cash on Delivery' : order.payment_method.toUpperCase()
+  const invDate   = new Date(invoice.invoice_date || invoice.created_at || Date.now())
+    .toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
+  const ordDate   = new Date(order.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
 
-  const html = `<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8"/>
-<title>Invoice ${invoice.invoice_number}</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#222;background:#fff;padding:32px;}
-  h1{text-align:center;font-size:17px;font-weight:bold;margin-bottom:20px;letter-spacing:2px;}
-  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;}
-  .logo{font-size:22px;font-weight:900;line-height:1.1;}
-  .logo .fest{color:#e05a00;}
-  .logo .ecart{color:#1a5c1a;}
-  .logo .tagline{font-size:8px;color:#3333aa;font-weight:normal;display:block;}
-  .meta{text-align:right;font-size:11px;line-height:1.8;}
-  .company{font-size:11px;line-height:1.6;margin-bottom:14px;}
-  hr{border:none;border-top:1px solid #ddd;margin:10px 0;}
-  .addresses{display:flex;justify-content:space-between;margin-bottom:14px;gap:12px;}
-  .addr-col{flex:1;font-size:11px;line-height:1.7;}
-  .addr-col h4{font-size:10px;font-weight:bold;margin-bottom:4px;text-transform:uppercase;}
-  .order-meta{text-align:right;font-size:11px;line-height:1.8;min-width:160px;}
-  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px;}
-  th{background:#f0f0f0;padding:7px 9px;text-align:left;border:1px solid #ccc;font-size:11px;}
-  td{padding:7px 9px;border:1px solid #ddd;}
-  .text-right{text-align:right;}
-  .text-center{text-align:center;}
-  .total-row td{background:#f0f0f0;font-weight:bold;}
-  .words{font-size:11px;color:#444;margin:6px 0;}
-  .payment{font-size:11px;margin:4px 0;}
-  .notes{font-size:11px;margin:4px 0;}
-  @media print{
-    body{padding:16px;}
-    @page{margin:10mm;}
-  }
-</style>
-</head>
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invoice.invoice_number}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:12px;padding:32px;}
+h1{text-align:center;font-size:17px;margin-bottom:20px;letter-spacing:2px;}
+.top{display:flex;justify-content:space-between;margin-bottom:16px;}
+.logo{font-size:22px;font-weight:900;}.logo .fest{color:#e05a00;}.logo .ecart{color:#1a5c1a;}
+hr{border:none;border-top:1px solid #ddd;margin:10px 0;}
+.addr{display:flex;justify-content:space-between;margin-bottom:14px;gap:12px;}
+.addr-col{flex:1;font-size:11px;line-height:1.7;}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px;}
+th{background:#f0f0f0;padding:7px 9px;text-align:left;border:1px solid #ccc;}
+td{padding:7px 9px;border:1px solid #ddd;}
+.tr{text-align:right;}.tc{text-align:center;}
+.total-row td{background:#f0f0f0;font-weight:bold;}
+@media print{body{padding:16px;}@page{margin:10mm;}}</style></head>
 <body>
 <h1>INVOICE</h1>
 <div class="top">
-  <div class="logo">
-    <span class="fest">fest</span><span class="ecart">ecart</span>
-    <span class="tagline">live desi. be desi.</span>
-  </div>
-  <div class="meta">
-    <strong>Invoice Date:</strong> ${invoiceDate}<br/>
-    <strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-', '')}<br/>
-    <strong>GSTIN:</strong> 29AFFFS9227M1Z7
-  </div>
+  <div class="logo"><span class="fest">fest</span><span class="ecart">ecart</span></div>
+  <div style="text-align:right;font-size:11px;line-height:1.8;"><strong>Invoice Date:</strong> ${invDate}<br/><strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-','')}<br/><strong>GSTIN:</strong> 29AFFFS9227M1Z7</div>
 </div>
-<div class="company">
-  <strong>festecart,</strong><br/>
-  No 861, 2nd floor, 5th Main, Near Hopcoms, BEML Layout, 3rd Stage,<br/>
-  Rajarajeshwari Nagar, Bengaluru South, RR Nagar, BBMP West,<br/>
-  Bengaluru, Karnataka, India - 560098
-</div>
+<div style="font-size:11px;line-height:1.6;margin-bottom:14px;"><strong>festecart,</strong><br/>No 861, 2nd floor, 5th Main, Near Hopcoms, BEML Layout, Rajarajeshwari Nagar, Bengaluru — 560098</div>
 <hr/>
-<div class="addresses">
-  <div class="addr-col">
-    <h4>Shipping Address</h4>
+<div class="addr">
+  <div class="addr-col"><h4 style="font-size:10px;font-weight:bold;margin-bottom:4px;text-transform:uppercase;">Shipping Address</h4>
     ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state} - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
   </div>
-  <div class="addr-col">
-    <h4>Billing Address</h4>
-    ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state} - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
+  <div class="addr-col"><h4 style="font-size:10px;font-weight:bold;margin-bottom:4px;text-transform:uppercase;">Billing Address</h4>
+    ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state} - ${addr.pincode}` : custName}
   </div>
-  <div class="order-meta">
-    <strong>Order Date:</strong> ${orderDate}<br/>
-    <strong>Order No:</strong> ${order.order_number?.replace('#', '') ?? '—'}<br/>
-    <strong>Email:</strong> ${custEmail}
-  </div>
+  <div style="text-align:right;font-size:11px;line-height:1.8;"><strong>Order Date:</strong> ${ordDate}<br/><strong>Order No:</strong> ${(order.order_number ?? '').replace('#','')}<br/><strong>Email:</strong> ${custEmail}</div>
 </div>
 <hr/>
-<table>
-  <thead>
-    <tr>
-      <th>Item</th>
-      <th class="text-center">Qty</th>
-      <th class="text-right">Price</th>
-      <th class="text-right">Total</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${items.map(i => `
-    <tr>
-      <td><strong>${i.product_name}</strong></td>
-      <td class="text-center">${i.fulfilled_qty}</td>
-      <td class="text-right">₹${i.price.toFixed(2)}</td>
-      <td class="text-right">₹${(i.price * i.fulfilled_qty).toFixed(2)}</td>
-    </tr>`).join('')}
-  </tbody>
-  <tfoot>
-    <tr class="total-row">
-      <td colspan="3" class="text-right">Total:</td>
-      <td class="text-right">₹${total.toFixed(2)}</td>
-    </tr>
-  </tfoot>
-</table>
-<p class="words"><strong>In words:</strong> ${amountInWords}</p>
-<p class="payment"><strong>Mode of Payment:</strong> ${payMode}</p>
-${invoice.notes ? `<p class="notes"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+<table><thead><tr><th>Item</th><th class="tc">Qty</th><th class="tr">Price</th><th class="tr">Total</th></tr></thead>
+<tbody>${items.map(i=>`<tr><td><strong>${i.product_name}</strong></td><td class="tc">${i.fulfilled_qty}</td><td class="tr">₹${i.price.toFixed(2)}</td><td class="tr">₹${(i.price*i.fulfilled_qty).toFixed(2)}</td></tr>`).join('')}</tbody>
+<tfoot><tr class="total-row"><td colspan="3" class="tr">Total:</td><td class="tr">₹${total.toFixed(2)}</td></tr></tfoot></table>
+<p style="font-size:11px;margin:6px 0;"><strong>Mode of Payment:</strong> ${payMode}</p>
+${invoice.notes ? `<p style="font-size:11px;margin:4px 0;"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
 </body></html>`
 
   const win = window.open('', '_blank', 'width=900,height=1000')
-  if (win) {
-    win.document.write(html)
-    win.document.close()
-    win.focus()
-    setTimeout(() => {
-      win.print()
-    }, 600)
-  }
+  if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => win.print(), 600) }
 }
+
+// ── Invoice Card ──────────────────────────────────────────────
 function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
   const qc = useQueryClient()
-  const [showTracking, setShowTracking] = useState(false)
+  const [showTracking,  setShowTracking]  = useState(false)
   const [showDelivered, setShowDelivered] = useState(false)
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
-  const [pdfLoading, setPdfLoading] = useState(false)
+  const [pdfLoading,    setPdfLoading]    = useState(false)
 
   const cancelFulfillment = async () => {
     setCancelLoading(true)
-    await supabase.from('invoices').update({ status: 'cancelled' }).eq('id', invoice.id)
-    await supabase.from('orders').update({ status: 'processing', fulfillment_status: null }).eq('id', order.id)
+    await updateDoc(doc(db, 'invoices', invoice.id), { status: 'cancelled', updated_at: Timestamp.now() })
+    await updateDoc(doc(db, 'orders', order.id), { status: 'processing', fulfillment_status: null, updated_at: Timestamp.now() })
     await logHistory(order.id, 'Fulfillment Cancelled', order.status, 'processing', `Invoice ${invoice.invoice_number} cancelled`)
     qc.invalidateQueries({ queryKey: ['invoices', order.id] })
     qc.invalidateQueries({ queryKey: ['orders', order.id] })
-    setCancelLoading(false)
-    setCancelConfirm(false)
+    setCancelLoading(false); setCancelConfirm(false)
   }
 
   return (
@@ -599,49 +585,33 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
           <p className="text-xs text-gray-400">{formatDate(invoice.invoice_date || invoice.created_at)}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={async () => {
-              setPdfLoading(true)
-              try { downloadInvoicePdf(invoice, order) }
-              finally { setPdfLoading(false) }
-            }}
+          <button onClick={async () => { setPdfLoading(true); try { downloadInvoicePdf(invoice, order) } finally { setPdfLoading(false) } }}
             disabled={pdfLoading}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60"
-            title="Download Invoice PDF"
-          >
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
             {pdfLoading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
             {pdfLoading ? 'Generating…' : 'Download Invoice'}
           </button>
           <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-          invoice.status === 'delivered' ? 'bg-green-100 text-green-700' :
-          invoice.status === 'shipped' ? 'bg-blue-100 text-blue-700' :
-          invoice.status === 'cancelled' ? 'bg-red-100 text-red-700' :
-          'bg-gray-100 text-gray-600'
-        }`}>{FULFILLMENT_LABEL[invoice.status] ?? invoice.status}</span>
+            invoice.status === 'delivered' ? 'bg-green-100 text-green-700' :
+            invoice.status === 'shipped'   ? 'bg-blue-100 text-blue-700' :
+            invoice.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
+          }`}>{FULFILLMENT_LABEL[invoice.status] ?? invoice.status}</span>
         </div>
       </div>
-
-      {/* Items */}
       <div className="space-y-1">
         {(invoice.invoice_items ?? []).map(ii => (
-          <div key={ii.id} className="flex justify-between text-xs text-gray-600">
-            <span>{ii.product_name}</span>
-            <span>Qty: {ii.fulfilled_qty} / {ii.ordered_qty}</span>
+          <div key={ii.id ?? ii.product_id} className="flex justify-between text-xs text-gray-600">
+            <span>{ii.product_name}</span><span>Qty: {ii.fulfilled_qty} / {ii.ordered_qty}</span>
           </div>
         ))}
       </div>
-
-      {/* Tracking info */}
       {invoice.courier && (
         <div className="text-xs text-gray-500 space-y-0.5 bg-gray-50 rounded-lg p-2">
           <p><span className="text-gray-400">Courier:</span> {invoice.courier}</p>
           {invoice.tracking_number && <p><span className="text-gray-400">Tracking:</span> <span className="font-mono">{invoice.tracking_number}</span></p>}
           {invoice.sent_at && <p><span className="text-gray-400">Sent:</span> {formatDate(invoice.sent_at)}</p>}
-          {invoice.estimated_delivery && <p><span className="text-gray-400">Est. Delivery:</span> {formatDate(invoice.estimated_delivery)}</p>}
         </div>
       )}
-
-      {/* Actions — hide when invoice is done */}
       {invoice.status !== 'cancelled' && invoice.status !== 'delivered' && (
         <div className="flex flex-wrap gap-2">
           {invoice.status === 'pending_shipment' && (
@@ -662,63 +632,67 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
           </button>
         </div>
       )}
-
-      {showTracking && <TrackingModal invoice={invoice} onClose={() => setShowTracking(false)} onSuccess={() => setShowTracking(false)} />}
+      {showTracking  && <TrackingModal  invoice={invoice} onClose={() => setShowTracking(false)}  onSuccess={() => setShowTracking(false)}  />}
       {showDelivered && <MarkDeliveredModal invoice={invoice} order={order} onClose={() => setShowDelivered(false)} onSuccess={() => setShowDelivered(false)} />}
       {cancelConfirm && (
-        <ConfirmModal title="Cancel Fulfillment"
-          message="Are you sure you want to cancel this fulfillment? Fulfilled quantities will be reversed."
-          onClose={() => setCancelConfirm(false)}
-          onConfirm={cancelFulfillment}
-          loading={cancelLoading} />
+        <ConfirmModal title="Cancel Fulfillment" message="Are you sure you want to cancel this fulfillment?"
+          onClose={() => setCancelConfirm(false)} onConfirm={cancelFulfillment} loading={cancelLoading} />
       )}
     </div>
   )
 }
 
-// ── Main page ────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
 
-  const { data: order, isLoading, error } = useOrder(id!)
+  const { data: order, isLoading, error } = useOrderData(id!)
   const { data: invoices = [] } = useInvoices(id!)
-  const { data: history = [] } = useOrderHistory(id!)
+  const { data: history  = [] } = useOrderHistory(id!)
 
-  const [modal, setModal] = useState<string | null>(null)
+  const [modal,       setModal]       = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy,        setBusy]        = useState(false)
 
   const doUpdate = async (updates: Record<string, unknown>, action: string, newStatus?: string) => {
     if (!order) return
     setBusy(true); setActionError(null)
-    const { error } = await supabase.from('orders').update(updates).eq('id', order.id)
-    if (error) { setActionError(error.message); setBusy(false); return }
-    await logHistory(order.id, action, order.status, newStatus ?? null)
-    // Re-fetch the order fresh from DB to get customer_email before sending
-    const { data: freshOrder } = await supabase.from('orders').select('*').eq('id', order.id).single()
-    console.log('[Email] freshOrder:', freshOrder?.order_number, 'customer_email:', freshOrder?.customer_email, 'guest_email:', freshOrder?.guest_email)
-    if (newStatus && freshOrder && (freshOrder.customer_email || freshOrder.guest_email)) {
-      console.log('[Email] Sending to:', freshOrder.customer_email || freshOrder.guest_email)
-      await sendStatusEmail(freshOrder as Order, newStatus)
-      console.log('[Email] Sent successfully')
-    } else {
-      console.warn('[Email] SKIPPED — no email on order or no newStatus. newStatus:', newStatus, 'freshOrder:', !!freshOrder)
+    try {
+      await updateDoc(doc(db, 'orders', order.id), { ...updates, updated_at: Timestamp.now() })
+      await logHistory(order.id, action, order.status, newStatus ?? null)
+      const freshSnap = await getDoc(doc(db, 'orders', order.id))
+      if (newStatus && freshSnap.exists()) {
+        const freshOrder = toOrder(freshSnap.id, freshSnap.data() as Record<string, unknown>)
+        if (freshOrder.customer_email || freshOrder.guest_email) {
+          await sendStatusEmail(freshOrder, newStatus)
+        }
+      }
+      qc.invalidateQueries({ queryKey: ['orders', order.id] })
+      qc.invalidateQueries({ queryKey: ['orders'] })
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Update failed')
+    } finally {
+      setBusy(false); setModal(null)
     }
-    qc.invalidateQueries({ queryKey: ['orders', order.id] })
-    qc.invalidateQueries({ queryKey: ['orders'] })
-    setBusy(false)
-    setModal(null)
   }
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-96"><Loader2 className="animate-spin text-gray-400" size={28} /></div>
-  if (error || !order) return <div className="p-8"><p className="text-red-600">Order not found.</p><Link to="/orders" className="text-sm text-red-600 underline">← Back</Link></div>
+  if (isLoading) return (
+    <div className="flex items-center justify-center min-h-96">
+      <Loader2 className="animate-spin text-gray-400" size={28} />
+    </div>
+  )
+  if (error || !order) return (
+    <div className="p-8">
+      <p className="text-red-600">Order not found.</p>
+      <Link to="/orders" className="text-sm text-red-600 underline">← Back</Link>
+    </div>
+  )
 
   const addr = order.shipping_address
   const paid = isOrderPaid(order)
 
-  // Has any items that haven't been fully fulfilled yet?
   const fulfilledQtyMap: Record<string, number> = {}
   invoices.forEach(inv => {
     (inv.invoice_items ?? []).forEach(ii => {
@@ -729,7 +703,6 @@ export default function OrderDetail() {
     item => (fulfilledQtyMap[item.product_id] ?? 0) < item.quantity
   )
 
-  // Allow generating invoice when in processing/partially_fulfilled/shipped/fulfilled as long as items remain
   const canGenerateInvoice = hasRemainingItems &&
     ['processing', 'partially_fulfilled', 'partially_delivered', 'shipped', 'fulfilled'].includes(order.status)
   const canMarkProcessing = order.status === 'confirmed'
@@ -748,12 +721,14 @@ export default function OrderDetail() {
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-gray-100"><ChevronLeft size={18} /></button>
+            <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-gray-100">
+              <ChevronLeft size={18} />
+            </button>
             <h1 className="text-xl font-bold text-gray-900">View Order ({order.order_number})</h1>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => navigate(-1)} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50"><ChevronLeft size={16} /></button>
-            <button onClick={() => navigate(1)} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50"><ChevronRight size={16} /></button>
+            <button onClick={() => navigate(1)}  className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50"><ChevronRight size={16} /></button>
             <button onClick={() => navigate('/orders')} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50">Go Back</button>
           </div>
         </div>
@@ -768,10 +743,6 @@ export default function OrderDetail() {
               <span className="text-gray-500">Order Status:</span>
               <span className={`w-2 h-2 rounded-full ${STATUS_DOT[order.status] ?? 'bg-gray-400'}`} />
               <span className="font-medium">{STATUS_LABEL[order.status] ?? order.status}</span>
-            </span>
-            <span className="flex items-center gap-2 px-6 border-r border-gray-200">
-              <span className="text-gray-500">Acceptance:</span>
-              <span className="font-medium text-green-600">{order.acceptance_status ?? 'Accepted'}</span>
             </span>
             <span className="flex items-center gap-2 px-6 border-r border-gray-200">
               <span className="text-gray-500">Payment:</span>
@@ -792,17 +763,17 @@ export default function OrderDetail() {
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h2 className="font-semibold text-gray-900 text-sm mb-4">Customer Details</h2>
             <div className="space-y-2.5 text-sm text-gray-700">
-              <div className="flex items-center gap-2"><User size={14} className="text-gray-400" /><span>{customerName(order)}</span></div>
-              <div className="flex items-center gap-2"><Mail size={14} className="text-gray-400" /><span className="break-all">{customerEmail(order)}</span></div>
-              <div className="flex items-center gap-2"><Phone size={14} className="text-gray-400" /><span>{customerPhone(order)}</span></div>
+              <div className="flex items-center gap-2"><User   size={14} className="text-gray-400" /><span>{customerName(order)}</span></div>
+              <div className="flex items-center gap-2"><Mail   size={14} className="text-gray-400" /><span className="break-all">{customerEmail(order)}</span></div>
+              <div className="flex items-center gap-2"><Phone  size={14} className="text-gray-400" /><span>{customerPhone(order)}</span></div>
             </div>
           </div>
-          {['Billing Address', 'Shipping Address'].map(title => (
+          {(['Billing Address', 'Shipping Address'] as const).map(title => (
             <div key={title} className="bg-white rounded-xl border border-gray-200 p-5">
               <h2 className="font-semibold text-gray-900 text-sm mb-4">{title}</h2>
               {addr ? (
                 <div className="space-y-2 text-sm text-gray-700">
-                  <div className="flex items-center gap-2"><User size={14} className="text-gray-400" /><span>{addr.name}</span></div>
+                  <div className="flex items-center gap-2"><User   size={14} className="text-gray-400" /><span>{addr.name}</span></div>
                   <div className="flex items-start gap-2"><MapPin size={14} className="text-gray-400 shrink-0 mt-0.5" />
                     <address className="not-italic leading-relaxed">{addr.address}<br />{addr.city}{addr.state ? `, ${addr.state}` : ''} — {addr.pincode}</address>
                   </div>
@@ -828,7 +799,8 @@ export default function OrderDetail() {
               {(order.items ?? []).map((item, idx) => (
                 <tr key={idx} className="hover:bg-gray-50">
                   <td className="px-5 py-4 w-16">
-                    {item.image ? <img src={item.image} alt={item.name} className="w-12 h-12 rounded-lg object-cover border border-gray-200" />
+                    {item.image
+                      ? <img src={item.image} alt={item.name} className="w-12 h-12 rounded-lg object-cover border border-gray-200" />
                       : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center"><Package size={16} className="text-gray-400" /></div>}
                   </td>
                   <td className="px-2 py-4"><p className="font-medium text-gray-900">{item.name}</p></td>
@@ -850,12 +822,14 @@ export default function OrderDetail() {
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h2 className="font-semibold text-gray-900 mb-4 text-sm">Summary</h2>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between text-gray-600"><span>Order Total</span><span>{formatCurrency(order.subtotal)}</span></div>
+              <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>{formatCurrency(order.subtotal)}</span></div>
               <div className="flex justify-between text-gray-600">
                 <span>Shipping {order.shipping_charge === 0 && <span className="text-xs text-green-600 ml-1">[Free]</span>}</span>
                 <span>{order.shipping_charge > 0 ? formatCurrency(order.shipping_charge) : '₹0.00'}</span>
               </div>
-              <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-900"><span>Total</span><span>{formatCurrency(order.total)}</span></div>
+              <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-900">
+                <span>Total</span><span>{formatCurrency(order.total)}</span>
+              </div>
             </div>
             <div className="mt-4 bg-gray-900 text-white rounded-lg px-4 py-3 flex justify-between items-center">
               <span className="text-sm font-medium">Amount Payable</span>
@@ -864,7 +838,7 @@ export default function OrderDetail() {
           </div>
         </div>
 
-        {/* Invoices section */}
+        {/* Invoices */}
         {invoices.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2"><FileText size={16} /> Invoices</h2>
@@ -877,7 +851,11 @@ export default function OrderDetail() {
         {/* Action buttons */}
         {!['cancelled', 'completed'].includes(order.status) && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-            {actionError && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg flex items-center gap-2"><AlertTriangle size={13} />{actionError}</p>}
+            {actionError && (
+              <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg flex items-center gap-2">
+                <AlertTriangle size={13} />{actionError}
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               {canCancel && (
                 <button onClick={() => setModal('cancel')}
@@ -907,20 +885,20 @@ export default function OrderDetail() {
           </div>
         )}
 
-        {/* Status history */}
+        {/* Audit trail */}
         {history.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
             <h2 className="font-semibold text-gray-900 text-sm flex items-center gap-2"><History size={15} /> Audit Trail</h2>
             <div className="space-y-2">
-              {history.map((h: { id: string; action: string; new_status: string | null; remarks: string | null; created_at: string }) => (
+              {(history as Array<{ id: string; action: string; new_status: string | null; remarks: string | null; created_at: unknown }>).map(h => (
                 <div key={h.id} className="flex items-center justify-between text-xs py-1.5 border-b border-gray-50 last:border-0">
                   <div className="flex items-center gap-2">
                     <Clock size={11} className="text-gray-400" />
                     <span className="font-medium text-gray-800">{h.action}</span>
                     {h.new_status && <span className="text-gray-400">→ {STATUS_LABEL[h.new_status] ?? h.new_status}</span>}
-                    {h.remarks && <span className="text-gray-400">({h.remarks})</span>}
+                    {h.remarks    && <span className="text-gray-400">({h.remarks})</span>}
                   </div>
-                  <span className="text-gray-400 whitespace-nowrap ml-4">{formatDate(h.created_at)}</span>
+                  <span className="text-gray-400 whitespace-nowrap ml-4">{formatDate(tsToStr(h.created_at))}</span>
                 </div>
               ))}
             </div>
@@ -930,22 +908,21 @@ export default function OrderDetail() {
 
       {/* Modals */}
       {modal === 'cancel' && (
-        <ConfirmModal title="Cancel Order" message="Are you sure you want to cancel this order? This cannot be undone."
+        <ConfirmModal title="Cancel Order" message="Are you sure you want to cancel this order?"
           onClose={() => setModal(null)} loading={busy}
-          onConfirm={() => doUpdate({ status: 'cancelled', cancelled_at: new Date().toISOString() }, 'Order Cancelled', 'cancelled')} />
+          onConfirm={() => doUpdate({ status: 'cancelled', cancelled_at: Timestamp.now() }, 'Order Cancelled', 'cancelled')} />
       )}
       {modal === 'markpaid' && (
-        <ConfirmModal title="Mark as Paid" message="Are you sure payment has been received for this order?"
+        <ConfirmModal title="Mark as Paid" message="Confirm payment has been received?"
           onClose={() => setModal(null)} loading={busy}
-          onConfirm={() => doUpdate({ payment_status: 'paid', paid_at: new Date().toISOString() }, 'Payment Received', order.status)} />
+          onConfirm={() => doUpdate({ payment_status: 'paid', paid_at: Timestamp.now() }, 'Payment Received', order.status)} />
       )}
       {modal === 'processing' && (
-        <ConfirmModal title="Mark as Processing"
-          message="Are you sure you want to mark this order as processing?"
+        <ConfirmModal title="Mark as Processing" message="Mark this order as processing?"
           onClose={() => setModal(null)} loading={busy}
           onConfirm={() => doUpdate({ status: 'processing' }, 'Marked Processing', 'processing')} />
       )}
-      {modal === 'invoice' && order && (
+      {modal === 'invoice' && (
         <GenerateInvoiceModal order={order} invoices={invoices}
           onClose={() => setModal(null)} onSuccess={() => setModal(null)} />
       )}

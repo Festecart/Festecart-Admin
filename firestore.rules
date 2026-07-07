@@ -1,0 +1,166 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Core helpers ───────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Reads the user_roles doc for the current user
+    function myRole() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/user_roles/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    // TRUE only for super_admin  ← this is what the Admin panel checks
+    function isSuperAdmin() {
+      return myRole() == 'super_admin';
+    }
+
+    // TRUE for super_admin OR admin roles
+    function isAdmin() {
+      return myRole() == 'super_admin' || myRole() == 'admin';
+    }
+
+    // ── user_roles ────────────────────────────────────────────────────
+    // Own user can read their role (needed for login redirect in both
+    // the store AND the admin panel).
+    // create: any signed-in user can create their own role doc
+    //   → this allows the super admin to self-provision on first login
+    //   → also allows the store to create vendor/user roles at signup
+    // update/delete: only super_admin can modify roles
+    match /user_roles/{uid} {
+      allow read:          if isOwner(uid) || isSuperAdmin();
+      allow create:        if isOwner(uid);
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // ── user_profiles ─────────────────────────────────────────────────
+    match /user_profiles/{uid} {
+      allow read, write: if isOwner(uid) || isSuperAdmin();
+    }
+
+    // ── vendors ───────────────────────────────────────────────────────
+    match /vendors/{vendorId} {
+      allow read:   if true;
+      allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
+      allow update: if isSignedIn() &&
+                      (resource.data.user_id == request.auth.uid || isSuperAdmin());
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── vendor_kyc ────────────────────────────────────────────────────
+    match /vendor_kyc/{vendorId} {
+      allow read:  if isSuperAdmin() ||
+                     (isSignedIn() &&
+                      get(/databases/$(database)/documents/vendors/$(vendorId)).data.user_id == request.auth.uid);
+      allow write: if isSignedIn();
+    }
+
+    // ── products ──────────────────────────────────────────────────────
+    match /products/{productId} {
+      allow read:   if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() &&
+                      (resource.data.vendor_id == request.auth.uid || isSuperAdmin());
+      allow delete: if isSignedIn() &&
+                      (resource.data.vendor_id == request.auth.uid || isSuperAdmin());
+    }
+
+    // ── categories ────────────────────────────────────────────────────
+    match /categories/{catId} {
+      allow read:  if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ── home_banners ──────────────────────────────────────────────────
+    match /home_banners/{bannerId} {
+      allow read:  if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ── site_config ───────────────────────────────────────────────────
+    // Store reads public config. Only super_admin writes.
+    match /site_config/{key} {
+      allow read:  if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ── orders ────────────────────────────────────────────────────────
+    // super_admin: full access (read, create, update, delete)
+    // Authenticated user: read/create their own orders
+    match /orders/{orderId} {
+      allow read:          if isSuperAdmin() ||
+                              (isSignedIn() && resource.data.user_id == request.auth.uid);
+      allow create:        if true;           // allow guest checkout
+      allow update,
+            delete:        if isSuperAdmin();
+    }
+
+    // ── order_status_history ──────────────────────────────────────────
+    match /order_status_history/{docId} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // ── invoices ──────────────────────────────────────────────────────
+    match /invoices/{invoiceId} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // ── cart_items ────────────────────────────────────────────────────
+    // Per-user subcollection OR flat collection with user_id field
+    match /cart_items/{docId} {
+      allow read, write: if isSuperAdmin() ||
+                            (isSignedIn() && (
+                              resource == null ||
+                              resource.data.user_id == request.auth.uid
+                            ));
+    }
+    // Subcollection variant (if store uses this pattern)
+    match /cart_items/{uid}/{document=**} {
+      allow read, write: if isOwner(uid) || isSuperAdmin();
+    }
+
+    // ── contact_enquiries ─────────────────────────────────────────────
+    match /contact_enquiries/{id} {
+      allow create:               if true;   // public contact form
+      allow read, update, delete: if isSuperAdmin();
+    }
+
+    // ── delivery_pincodes ─────────────────────────────────────────────
+    match /delivery_pincodes/{id} {
+      allow read:  if true;        // store checkout reads this
+      allow write: if isSuperAdmin();
+    }
+
+    // ── shipping_zones ────────────────────────────────────────────────
+    match /shipping_zones/{id} {
+      allow read:  if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ── shipping_methods ──────────────────────────────────────────────
+    match /shipping_methods/{id} {
+      allow read:  if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // ── courier_vendors ───────────────────────────────────────────────
+    match /courier_vendors/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // ── admin_invitations ─────────────────────────────────────────────
+    match /admin_invitations/{invId} {
+      allow read, create, delete: if isSuperAdmin();
+      allow update:               if isSignedIn();
+    }
+  }
+}

@@ -1,51 +1,35 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import {
+  db, collection, doc, getDocs, deleteDoc,
+  query, where, orderBy,
+} from '@/lib/firebase'
 import { formatCurrency } from '@/lib/utils'
-import { Search, Plus, MoreVertical, Pencil, Trash2} from 'lucide-react'
+import { Search, Plus, MoreVertical, Pencil, Trash2 } from 'lucide-react'
 
 interface Product {
-  id: string
-  name: string
-  slug: string
-  price: number
-  compare_at_price: number | null
-  inventory_count: number | null
-  sku: string | null
-  images: string[]
-  status: string
-  is_featured: boolean
-  display_order: number
-  category_id: string | null
-  vendor_id: string | null
-  created_at: string
+  id: string; name: string; slug: string; price: number
+  compare_at_price: number | null; inventory_count: number | null
+  sku: string | null; images: string[]; status: string
+  is_featured: boolean; display_order: number
+  category_id: string | null; vendor_id: string | null; created_at: string
 }
-
 interface Category { id: string; name: string }
 
-function useProducts(search: string, status: string) {
+function useProducts(_search: string, status: string) {
   return useQuery({
-    queryKey: ['admin-products', search, status],
+    queryKey: ['admin-products', status],
     queryFn: async () => {
-      let q = supabase.from('products').select('*').order('display_order', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false })
-      if (status && status !== 'all') q = q.eq('status', status)
-      const { data, error } = await q
-      if (error) throw error
-      let products = (data ?? []) as Product[]
-
-      // Sort: non-zero display_order first (ascending), then zero/unset by created_at desc
+      const constraints = status && status !== 'all'
+        ? [where('status', '==', status), orderBy('display_order', 'asc')]
+        : [orderBy('display_order', 'asc')]
+      const snap = await getDocs(query(collection(db, 'products'), ...constraints))
+      let products = snap.docs.map(d => ({ id: d.id, ...d.data() } as Product))
       products = [
         ...products.filter(p => p.display_order > 0).sort((a, b) => a.display_order - b.display_order),
         ...products.filter(p => !p.display_order),
       ]
-      if (search) {
-        const s = search.toLowerCase()
-        products = products.filter(p =>
-          p.name.toLowerCase().includes(s) ||
-          (p.sku ?? '').toLowerCase().includes(s)
-        )
-      }
       return products
     },
     staleTime: 1000 * 30,
@@ -56,8 +40,8 @@ function useCategories() {
   return useQuery({
     queryKey: ['categories'],
     queryFn: async () => {
-      const { data } = await supabase.from('categories').select('id, name').order('display_order')
-      return (data ?? []) as Category[]
+      const snap = await getDocs(collection(db, 'categories'))
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Category))
     },
   })
 }
@@ -69,12 +53,9 @@ const STATUS_OPTIONS = [
   { value: 'pending', label: 'Pending Review' },
   { value: 'rejected', label: 'Rejected' },
 ]
-
 const STATUS_BADGE: Record<string, string> = {
-  published: 'text-green-700',
-  draft:     'text-gray-500',
-  pending:   'text-amber-600',
-  rejected:  'text-red-600',
+  published: 'text-green-700', draft: 'text-gray-500',
+  pending: 'text-amber-600', rejected: 'text-red-600',
 }
 
 export default function Products() {
@@ -86,40 +67,33 @@ export default function Products() {
 
   const { data: products, isLoading, refetch } = useProducts(search, status)
   const { data: categories } = useCategories()
-
   const catMap = Object.fromEntries((categories ?? []).map(c => [c.id, c.name]))
 
+  const filtered = search
+    ? (products ?? []).filter(p =>
+        p.name.toLowerCase().includes(search.toLowerCase()) ||
+        (p.sku ?? '').toLowerCase().includes(search.toLowerCase())
+      )
+    : (products ?? [])
+
   const toggleSelect = (id: string) => {
-    setSelected(s => {
-      const n = new Set(s)
-      n.has(id) ? n.delete(id) : n.add(id)
-      return n
-    })
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
   const deleteProduct = async (id: string) => {
-    await supabase.from('products').delete().eq('id', id)
-    refetch()
-    setMenuId(null)
+    await deleteDoc(doc(db, 'products', id))
+    refetch(); setMenuId(null)
   }
 
   return (
     <div className="p-6 space-y-5">
-      {/* Breadcrumb */}
       <p className="text-xs text-gray-400">Catalog / <span className="text-gray-600">Products</span></p>
-
-      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Products</h1>
-        <div className="flex items-center gap-2">
-         
-          <Link
-            to="/catalog/products/add"
-            className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg"
-          >
-            <Plus size={15} /> Add Product
-          </Link>
-        </div>
+        <Link to="/catalog/products/add"
+          className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg">
+          <Plus size={15} /> Add Product
+        </Link>
       </div>
 
       {/* Filters */}
@@ -127,24 +101,16 @@ export default function Products() {
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Name / SKU / Code"
-              value={search}
+            <input type="text" placeholder="Name / SKU" value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
-            />
+              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
           </div>
-          <select
-            value={status}
-            onChange={e => setStatus(e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 min-w-[160px]"
-          >
+          <select value={status} onChange={e => setStatus(e.target.value)}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 min-w-[160px]">
             {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
           <button onClick={() => { setSearch(''); setStatus('all') }}
             className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Reset</button>
-          <button className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800">Search</button>
         </div>
       </div>
 
@@ -158,34 +124,31 @@ export default function Products() {
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
                   <th className="w-10 px-4 py-3">
-                    <input type="checkbox" onChange={e => setSelected(e.target.checked ? new Set((products ?? []).map(p => p.id)) : new Set())} />
+                    <input type="checkbox"
+                      onChange={e => setSelected(e.target.checked ? new Set(filtered.map(p => p.id)) : new Set())} />
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" colSpan={2}>Name</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">SKU</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Selling Price</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Category</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Order</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase" colSpan={2}>Name</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">SKU</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Price</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Stock</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Category</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Order</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {(products ?? []).map(product => (
+                {filtered.map(product => (
                   <tr key={product.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
                       <input type="checkbox" checked={selected.has(product.id)} onChange={() => toggleSelect(product.id)} />
                     </td>
                     <td className="px-4 py-3 w-14">
-                      {product.images?.[0] ? (
-                        <img src={product.images[0]} alt={product.name} className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs">No img</div>
-                      )}
+                      {product.images?.[0]
+                        ? <img src={product.images[0]} alt={product.name} className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
+                        : <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs">No img</div>}
                     </td>
-                    <td className="px-2 py-3">
-                      <p className="font-medium text-gray-900 text-sm">{product.name}</p>
-                    </td>
+                    <td className="px-2 py-3"><p className="font-medium text-gray-900 text-sm">{product.name}</p></td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{product.sku || '—'}</td>
                     <td className="px-4 py-3 font-medium">{formatCurrency(product.price)}</td>
                     <td className="px-4 py-3 text-gray-500">{product.inventory_count ?? '—'}</td>
@@ -213,7 +176,6 @@ export default function Products() {
                               className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
                               <Pencil size={13} /> Edit
                             </button>
-                    
                             <button onClick={() => deleteProduct(product.id)}
                               className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50">
                               <Trash2 size={13} /> Delete
@@ -224,8 +186,8 @@ export default function Products() {
                     </td>
                   </tr>
                 ))}
-                {(products ?? []).length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">No products found</td></tr>
+                {filtered.length === 0 && (
+                  <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">No products found</td></tr>
                 )}
               </tbody>
             </table>

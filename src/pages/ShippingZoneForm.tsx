@@ -2,10 +2,13 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import {
+  db, collection, doc, getDoc, getDocs, addDoc, updateDoc,
+  query, where, orderBy, Timestamp,
+} from '@/lib/firebase'
 import { X, Plus, Loader2 } from 'lucide-react'
 
-// ── States per country ────────────────────────────────────────────
+// ── States per country ───────────────────────────────────────────
 const STATES_BY_COUNTRY: Record<string, string[]> = {
   'India': [
     'Andaman & Nicobar Islands','Andhra Pradesh','Arunachal Pradesh','Assam','Bihar',
@@ -16,479 +19,162 @@ const STATES_BY_COUNTRY: Record<string, string[]> = {
     'Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh',
     'Uttarakhand','West Bengal',
   ],
-  'United States': [
-    'Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut',
-    'Delaware','Florida','Georgia','Hawaii','Idaho','Illinois','Indiana','Iowa',
-    'Kansas','Kentucky','Louisiana','Maine','Maryland','Massachusetts','Michigan',
-    'Minnesota','Mississippi','Missouri','Montana','Nebraska','Nevada','New Hampshire',
-    'New Jersey','New Mexico','New York','North Carolina','North Dakota','Ohio',
-    'Oklahoma','Oregon','Pennsylvania','Rhode Island','South Carolina','South Dakota',
-    'Tennessee','Texas','Utah','Vermont','Virginia','Washington','West Virginia',
-    'Wisconsin','Wyoming','Washington D.C.',
-  ],
-  'United Kingdom': [
-    'England','Scotland','Wales','Northern Ireland','London','South East','South West',
-    'East of England','West Midlands','East Midlands','Yorkshire and the Humber',
-    'North West','North East',
-  ],
-  'Australia': [
-    'New South Wales','Victoria','Queensland','Western Australia',
-    'South Australia','Tasmania','Australian Capital Territory','Northern Territory',
-  ],
-  'Canada': [
-    'Alberta','British Columbia','Manitoba','New Brunswick',
-    'Newfoundland and Labrador','Northwest Territories','Nova Scotia',
-    'Nunavut','Ontario','Prince Edward Island','Quebec','Saskatchewan','Yukon',
+  'United States': ['Alabama','Alaska','Arizona','Arkansas','California','Colorado',
+    'Connecticut','Delaware','Florida','Georgia','Hawaii','Idaho','Illinois',
+    'Indiana','Iowa','Kansas','Kentucky','Louisiana','Maine','Maryland',
+    'Massachusetts','Michigan','Minnesota','Mississippi','Missouri','Montana',
+    'Nebraska','Nevada','New Hampshire','New Jersey','New Mexico','New York',
+    'North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania',
+    'Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah',
+    'Vermont','Virginia','Washington','West Virginia','Wisconsin','Wyoming',
   ],
 }
 
 const COUNTRIES = ['India','United States','United Kingdom','Australia','Canada','Rest of the World']
 
 type PlaceType = 'state' | 'city' | 'pincode'
-type BulkMode = 'manual' | 'bulk'
-type BulkAction = 'add' | 'delete'
-type ProductType = '' | 'category' | 'product_group' | 'specific'
 
-interface ZonePlace {
-  id: string
-  country: string
-  placeType: PlaceType
-  values: string[]
-}
+interface ZonePlace { id: string; country: string; placeType: PlaceType; values: string[] }
 
-interface PreviewRow {
-  sno: number
-  country: string
-  value: string
-  status: 'Valid' | 'Invalid' | 'Duplicate'
-  action: 'add' | 'delete'
-}
+interface ProductItem { id: string; name: string; price: number; images: string[] }
 
-// ── Bulk Preview Modal ────────────────────────────────────────────
-function BulkPreviewModal({ title, rows: initialRows, onCancel, onSubmit }: {
-  title: string
-  rows: PreviewRow[]
-  onCancel: () => void
-  onSubmit: (validValues: string[], action: 'add' | 'delete') => void
+// ── Places Modal ─────────────────────────────────────────────────
+function PlacesModal({ place, onClose, onSave }: {
+  place: ZonePlace; onClose: () => void; onSave: (p: ZonePlace) => void
 }) {
-  const [rows, setRows] = useState<PreviewRow[]>(initialRows)
-  const action = rows[0]?.action ?? 'add'
-  const errorCount = rows.filter(r => r.status !== 'Valid').length
-  const valid = rows.filter(r => r.status === 'Valid').map(r => r.value)
-  const isCity = title.toLowerCase().includes('cit')
+  const [placeType,      setPlaceType]      = useState<PlaceType>(place.placeType)
+  const [selectedStates, setSelectedStates] = useState<string[]>(place.placeType === 'state' ? place.values : [])
+  const [stateSearch,    setStateSearch]    = useState('')
+  const [cityInput,      setCityInput]      = useState(place.placeType === 'city' ? place.values.join(', ') : '')
+  const [manualPincodes, setManualPincodes] = useState<string[]>(
+    place.placeType === 'pincode' && place.values.length ? place.values : ['']
+  )
 
-  const deleteRow = (sno: number) => {
-    setRows(prev => prev.filter(r => r.sno !== sno).map((r, i) => ({ ...r, sno: i + 1 })))
+  const stateList     = STATES_BY_COUNTRY[place.country] ?? []
+  const hasStates     = stateList.length > 0
+  const filteredStates = stateList.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase()))
+  const toggleState   = (s: string) =>
+    setSelectedStates(v => v.includes(s) ? v.filter(x => x !== s) : [...v, s])
+
+  const handleSubmit = () => {
+    if (placeType === 'state')   onSave({ ...place, placeType, values: selectedStates })
+    else if (placeType === 'city') onSave({ ...place, placeType, values: cityInput.split(',').map(s => s.trim()).filter(Boolean) })
+    else                         onSave({ ...place, placeType, values: manualPincodes.filter(s => s.trim() !== '') })
+    onClose()
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-start justify-center pt-8 bg-black/60"
-      onClick={e => { if (e.target === e.currentTarget) onCancel() }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-12 bg-black/50"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl mx-4 max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-900 text-base">{title} – Preview
-            <span className={`ml-2 text-xs font-medium px-2 py-0.5 rounded-full ${action === 'add' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-              {action === 'add' ? 'Adding' : 'Deleting'}
-            </span>
-          </h3>
-          <button onClick={onCancel} className="p-1.5 rounded hover:bg-gray-100 text-gray-500"><X size={16} /></button>
+          <h3 className="font-semibold text-gray-900 text-base">Places in {place.country}</h3>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-100 text-gray-500"><X size={16} /></button>
         </div>
-        <div className="overflow-y-auto flex-1">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
-              <tr>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase w-14">S.No.</th>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Country</th>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                  {isCity ? 'City' : 'Pincode/Zip code'}
-                </th>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Status</th>
-                <th className="w-10 px-2 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {rows.map(row => (
-                <tr key={row.sno} className={row.sno % 2 === 0 ? 'bg-gray-50/40' : ''}>
-                  <td className="text-center px-4 py-2.5 text-gray-500 text-xs">{row.sno}</td>
-                  <td className="text-center px-4 py-2.5 text-gray-700 text-sm">{row.country}</td>
-                  <td className="text-center px-4 py-2.5 font-mono text-gray-800 text-sm">{row.value}</td>
-                  <td className="text-center px-4 py-2.5">
-                    <span className={`text-xs font-medium ${
-                      row.status === 'Valid' ? 'text-gray-600' :
-                      row.status === 'Duplicate' ? 'text-amber-600' : 'text-red-600'
-                    }`}>{row.status}</span>
-                  </td>
-                  <td className="px-2 py-2.5 text-center">
-                    <button onClick={() => deleteRow(row.sno)}
-                      className="p-1 text-gray-300 hover:text-red-500 transition-colors" title="Remove row">
-                      <X size={13} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">All rows removed</td></tr>
+        <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
+          {/* Type radio */}
+          <div className="flex gap-8">
+            {(hasStates ? ['state','city','pincode'] : ['city','pincode']).map(t => (
+              <label key={t} className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="radio" checked={placeType === t} onChange={() => setPlaceType(t as PlaceType)} className="accent-gray-900 w-4 h-4" />
+                {t === 'pincode' ? 'Zipcode/Pincode' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </label>
+            ))}
+          </div>
+
+          {placeType === 'state' && hasStates && (
+            <div className="space-y-2">
+              <input type="text" value={stateSearch} onChange={e => setStateSearch(e.target.value)}
+                placeholder={`Search ${place.country} state…`} autoFocus
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+              <div className="border border-gray-200 rounded-lg overflow-hidden max-h-56 overflow-y-auto">
+                {filteredStates.map(s => (
+                  <div key={s} onClick={() => toggleState(s)}
+                    className={`px-4 py-2.5 text-sm cursor-pointer border-b border-gray-100 last:border-0 transition-colors ${selectedStates.includes(s) ? 'bg-gray-900 text-white' : 'hover:bg-gray-50 text-gray-800'}`}>
+                    {s}
+                  </div>
+                ))}
+                {filteredStates.length === 0 && <p className="px-4 py-3 text-sm text-gray-400">No states found</p>}
+              </div>
+              {selectedStates.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {selectedStates.map(v => (
+                    <span key={v} className="flex items-center gap-1 bg-gray-100 text-xs px-2.5 py-1 rounded-full text-gray-700">
+                      {v}<button onClick={() => toggleState(v)} className="text-gray-400 hover:text-gray-700 ml-0.5"><X size={10} /></button>
+                    </span>
+                  ))}
+                </div>
               )}
-            </tbody>
-          </table>
+            </div>
+          )}
+
+          {placeType === 'city' && (
+            <div className="space-y-1">
+              <label className="block text-xs text-gray-500">Enter city names (comma separated)</label>
+              <input type="text" value={cityInput} onChange={e => setCityInput(e.target.value)}
+                placeholder="e.g. Bengaluru, Mysuru, Mangaluru" autoFocus
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+            </div>
+          )}
+
+          {placeType === 'pincode' && (
+            <div className="space-y-3">
+              {manualPincodes.map((pin, idx) => (
+                <div key={idx} className="flex gap-3 items-end">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Pincode</label>
+                    <input type="text" value={pin}
+                      onChange={e => setManualPincodes(p => p.map((x, i) => i === idx ? e.target.value : x))}
+                      className="w-44 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                  </div>
+                  <button onClick={() => setManualPincodes(p => p.filter((_, i) => i !== idx))}
+                    className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 mb-0.5">Delete</button>
+                </div>
+              ))}
+              <div className="flex justify-between">
+                <button onClick={() => setManualPincodes(p => [...p, ''])}
+                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Add More</button>
+                <button onClick={handleSubmit}
+                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Submit</button>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100">
-          <button onClick={onCancel}
-            className="px-5 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50">
-            Cancel
-          </button>
-          <span className={`text-sm font-medium ${errorCount > 0 ? 'text-red-500' : 'text-gray-500'}`}>
-            {rows.length === 0 ? 'No rows remaining' :
-              errorCount > 0 ? `${errorCount} error${errorCount > 1 ? 's' : ''} found!` : 'No errors found !'}
-          </span>
-          <button onClick={() => onSubmit(valid, action)} disabled={valid.length === 0}
-            className="px-5 py-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium rounded-lg disabled:opacity-50">
-            Submit
-          </button>
-        </div>
+
+        {placeType !== 'pincode' && (
+          <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
+            <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+            <button onClick={handleSubmit} className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Save</button>
+          </div>
+        )}
       </div>
     </div>,
     document.body
   )
 }
 
-// ── CSV parsers ───────────────────────────────────────────────────
-function parsePincodeCSV(text: string, defaultCountry: string, action: BulkAction = 'add'): PreviewRow[] {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-  const seen = new Set<string>()
-  const rows: PreviewRow[] = []
-  lines.forEach((line, idx) => {
-    if (idx === 0 && /pincode|zip/i.test(line)) return
-    const cols = line.split(',').map(c => c.trim())
-    const country = cols.length >= 2 ? (cols[0] || defaultCountry) : defaultCountry
-    const value = cols.length >= 2 ? cols[1] : cols[0]
-    let status: PreviewRow['status'] = 'Valid'
-    if (!value || value.length === 0) status = 'Invalid'
-    else if (seen.has(value.toLowerCase())) status = 'Duplicate'
-    else seen.add(value.toLowerCase())
-    rows.push({ sno: rows.length + 1, country, value: value ?? '', status, action })
-  })
-  return rows
-}
-
-function parseCityCSV(text: string, defaultCountry: string, action: BulkAction = 'add'): PreviewRow[] {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-  const seen = new Set<string>()
-  const rows: PreviewRow[] = []
-  lines.forEach((line, idx) => {
-    if (idx === 0 && /city/i.test(line)) return
-    const cols = line.split(',').map(c => c.trim())
-    const country = cols.length >= 2 ? (cols[0] || defaultCountry) : defaultCountry
-    const value = cols.length >= 2 ? cols[1] : cols[0]
-    let status: PreviewRow['status'] = 'Valid'
-    if (!value || value.trim().length === 0) status = 'Invalid'
-    else if (seen.has(value.toLowerCase())) status = 'Duplicate'
-    else seen.add(value.toLowerCase())
-    rows.push({ sno: rows.length + 1, country, value: value ?? '', status, action })
-  })
-  return rows
-}
-
-// ── Places Modal ──────────────────────────────────────────────────
-function PlacesModal({ place, onClose, onSave }: {
-  place: ZonePlace; onClose: () => void; onSave: (p: ZonePlace) => void
-}) {
-  const [placeType, setPlaceType] = useState<PlaceType>(place.placeType)
-  const [selectedStates, setSelectedStates] = useState<string[]>(place.placeType === 'state' ? place.values : [])
-  const [stateSearch, setStateSearch] = useState('')
-  const [cityMode, setCityMode] = useState<BulkMode>('manual')
-  const [cityBulkAction, setCityBulkAction] = useState<BulkAction>('add')
-  const [cityInput, setCityInput] = useState(place.placeType === 'city' ? place.values.join(', ') : '')
-  const [pincodeMode, setPincodeMode] = useState<BulkMode>('manual')
-  const [pinBulkAction, setPinBulkAction] = useState<BulkAction>('add')
-  const [manualPincodes, setManualPincodes] = useState<string[]>(
-    place.placeType === 'pincode' && place.values.length ? place.values : ['']
-  )
-  const [preview, setPreview] = useState<{ rows: PreviewRow[]; type: 'pincode' | 'city' } | null>(null)
-
-  const stateList = STATES_BY_COUNTRY[place.country] ?? []
-  const hasStates = stateList.length > 0
-  const filteredStates = stateList.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase()))
-  const toggleState = (s: string) =>
-    setSelectedStates(v => v.includes(s) ? v.filter(x => x !== s) : [...v, s])
-
-  const handleSubmit = () => {
-    if (placeType === 'state') onSave({ ...place, placeType, values: selectedStates })
-    else if (placeType === 'city') onSave({ ...place, placeType, values: cityInput.split(',').map(s => s.trim()).filter(Boolean) })
-    else onSave({ ...place, placeType, values: manualPincodes.filter(s => s.trim() !== '') })
-    onClose()
-  }
-
-  const showFooter = placeType === 'state' || (placeType === 'city' && cityMode === 'manual')
-
-  return (
-    <>
-      {createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-12 bg-black/50"
-          onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl mx-4 max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="font-semibold text-gray-900 text-base">Places in {place.country}</h3>
-              <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-100 text-gray-500"><X size={16} /></button>
-            </div>
-
-            <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
-              {/* Type radio */}
-              <div className="flex gap-8">
-                {(hasStates ? ['state','city','pincode'] : ['city','pincode']).map(t => (
-                  <label key={t} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="radio" name={`pt-${place.id}`} checked={placeType === t}
-                      onChange={() => setPlaceType(t as PlaceType)} className="accent-gray-900 w-4 h-4" />
-                    {t === 'pincode' ? 'Zipcode/Pincode' : t.charAt(0).toUpperCase() + t.slice(1)}
-                  </label>
-                ))}
-              </div>
-
-              {/* ── State ── */}
-              {placeType === 'state' && hasStates && (
-                <div className="space-y-2">
-                  <input type="text" value={stateSearch} onChange={e => setStateSearch(e.target.value)}
-                    placeholder={`Search ${place.country} state…`} autoFocus
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                  <div className="border border-gray-200 rounded-lg overflow-hidden max-h-56 overflow-y-auto">
-                    {filteredStates.length > 0 ? filteredStates.map(s => (
-                      <div key={s} onClick={() => toggleState(s)}
-                        className={`px-4 py-2.5 text-sm cursor-pointer border-b border-gray-100 last:border-0 transition-colors
-                          ${selectedStates.includes(s) ? 'bg-gray-900 text-white' : 'hover:bg-gray-50 text-gray-800'}`}>
-                        {s}
-                      </div>
-                    )) : <p className="px-4 py-3 text-sm text-gray-400">No states found</p>}
-                  </div>
-                  {selectedStates.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {selectedStates.map(v => (
-                        <span key={v} className="flex items-center gap-1 bg-gray-100 text-xs px-2.5 py-1 rounded-full text-gray-700">
-                          {v}<button onClick={() => toggleState(v)} className="text-gray-400 hover:text-gray-700 ml-0.5"><X size={10} /></button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ── City ── */}
-              {placeType === 'city' && (
-                <div className="space-y-4">
-                  <div className="flex gap-8">
-                    {(['manual','bulk'] as BulkMode[]).map(m => (
-                      <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input type="radio" name={`cm-${place.id}`} checked={cityMode === m}
-                          onChange={() => setCityMode(m)} className="accent-gray-900 w-4 h-4" />
-                        {m === 'manual' ? 'Manual' : 'Bulk Upload'}
-                      </label>
-                    ))}
-                  </div>
-                  {cityMode === 'manual' ? (
-                    <div className="space-y-1">
-                      <label className="block text-xs text-gray-500">Enter city names (comma separated)</label>
-                      <input type="text" value={cityInput} onChange={e => setCityInput(e.target.value)}
-                        placeholder="e.g. Bengaluru, Mysuru, Mangaluru" autoFocus
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {/* Add/Delete action */}
-                      <div className="flex gap-8">
-                        {(['add', 'delete'] as BulkAction[]).map(a => (
-                          <label key={a} className="flex items-center gap-2 text-sm cursor-pointer">
-                            <input type="radio" name={`ca-${place.id}`} checked={cityBulkAction === a}
-                              onChange={() => setCityBulkAction(a)} className="accent-gray-900 w-4 h-4" />
-                            {a === 'add' ? 'Add cities' : 'Delete cities'}
-                          </label>
-                        ))}
-                      </div>
-                      <label className="flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg p-10 cursor-pointer hover:bg-gray-50 text-sm text-gray-500 bg-gray-50/50">
-                        <input type="file" accept=".csv" className="hidden"
-                          onChange={e => {
-                            const file = e.target.files?.[0]; if (!file) return
-                            const reader = new FileReader()
-                            reader.onload = ev => {
-                              const text = ev.target?.result as string
-                              setPreview({ rows: parseCityCSV(text, place.country, cityBulkAction), type: 'city' })
-                            }
-                            reader.readAsText(file)
-                          }} />
-                        Click here to upload the CSV file
-                      </label>
-                      <a href="data:text/csv;charset=utf-8,Country,City%0AIndia,Bengaluru%0AIndia,Mysuru%0AIndia,Mangaluru"
-                        download="sample_cities.csv"
-                        className="block text-center text-xs text-gray-500 hover:underline">
-                        Download sample CSV
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ── Pincode ── */}
-              {placeType === 'pincode' && (
-                <div className="space-y-4">
-                  <div className="flex gap-8">
-                    {(['manual','bulk'] as BulkMode[]).map(m => (
-                      <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input type="radio" name={`pm-${place.id}`} checked={pincodeMode === m}
-                          onChange={() => setPincodeMode(m)} className="accent-gray-900 w-4 h-4" />
-                        {m === 'manual' ? 'Manual' : 'Bulk Upload'}
-                      </label>
-                    ))}
-                  </div>
-                  {pincodeMode === 'manual' ? (
-                    <div className="space-y-3">
-                      {manualPincodes.map((pin, idx) => (
-                        <div key={idx} className="flex gap-3 items-end">
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-1">Pincode</label>
-                            <input type="text" value={pin}
-                              onChange={e => setManualPincodes(p => p.map((x, i) => i === idx ? e.target.value : x))}
-                              className="w-44 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                          </div>
-                          <button onClick={() => setManualPincodes(p => p.filter((_, i) => i !== idx))}
-                            className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 mb-0.5">Delete</button>
-                        </div>
-                      ))}
-                      <hr className="border-gray-100" />
-                      <div className="flex justify-between">
-                        <button onClick={() => setManualPincodes(p => [...p, ''])}
-                          className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Add More</button>
-                        <button onClick={handleSubmit}
-                          className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Submit</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {/* Add/Delete action */}
-                      <div className="flex gap-8">
-                        {(['add', 'delete'] as BulkAction[]).map(a => (
-                          <label key={a} className="flex items-center gap-2 text-sm cursor-pointer">
-                            <input type="radio" name={`pa-${place.id}`} checked={pinBulkAction === a}
-                              onChange={() => setPinBulkAction(a)} className="accent-gray-900 w-4 h-4" />
-                            {a === 'add' ? 'Add pincodes' : 'Delete pincodes'}
-                          </label>
-                        ))}
-                      </div>
-                      <label className="flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg p-10 cursor-pointer hover:bg-gray-50 text-sm text-gray-500 bg-gray-50/50">
-                        <input type="file" accept=".csv" className="hidden"
-                          onChange={e => {
-                            const file = e.target.files?.[0]; if (!file) return
-                            const reader = new FileReader()
-                            reader.onload = ev => {
-                              const text = ev.target?.result as string
-                              setPreview({ rows: parsePincodeCSV(text, place.country, pinBulkAction), type: 'pincode' })
-                            }
-                            reader.readAsText(file)
-                          }} />
-                        Click here to upload the CSV file
-                      </label>
-                      <a href="data:text/csv;charset=utf-8,Country,Pincode%0AIndia,560001%0AIndia,560002%0AIndia,560003"
-                        download="sample_pincodes.csv"
-                        className="block text-center text-xs text-gray-500 hover:underline">
-                        Download sample CSV
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {showFooter && (
-              <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
-                <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
-                <button onClick={handleSubmit} className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Save</button>
-              </div>
-            )}
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {preview && (
-        <BulkPreviewModal
-          title={preview.type === 'pincode' ? `Pincodes of ${place.country}` : `Cities of ${place.country}`}
-          rows={preview.rows}
-          onCancel={() => setPreview(null)}
-          onSubmit={(validValues, action) => {
-            if (preview.type === 'pincode') {
-              if (action === 'add') {
-                // Merge new pincodes with existing, deduplicate
-                const existing = manualPincodes.filter(p => p.trim() !== '')
-                const merged = Array.from(new Set([...existing, ...validValues]))
-                setManualPincodes(merged.length ? merged : [''])
-              } else {
-                // Remove matching pincodes
-                const toDelete = new Set(validValues.map(v => v.toLowerCase()))
-                const remaining = manualPincodes.filter(p => !toDelete.has(p.toLowerCase()))
-                setManualPincodes(remaining.length ? remaining : [''])
-              }
-              setPincodeMode('manual')
-            } else {
-              const existing = cityInput.split(',').map(s => s.trim()).filter(Boolean)
-              if (action === 'add') {
-                const merged = Array.from(new Set([...existing, ...validValues]))
-                setCityInput(merged.join(', '))
-              } else {
-                const toDelete = new Set(validValues.map(v => v.toLowerCase()))
-                const remaining = existing.filter(c => !toDelete.has(c.toLowerCase()))
-                setCityInput(remaining.join(', '))
-              }
-              setCityMode('manual')
-            }
-            setPreview(null)
-          }}
-        />
-      )}
-    </>
-  )
-}
-
-// ── Category dropdown for zone product selection ─────────────────
-function CategoryDropdown({ onSelect, selectedId }: {
-  onSelect: (catId: string) => void
-  selectedId: string
-}) {
-  const { data: categories = [] } = useQuery({
-    queryKey: ['zone-categories'],
-    queryFn: async () => {
-      const { data } = await supabase.from('categories').select('id, name').order('name')
-      return (data ?? []) as { id: string; name: string }[]
-    },
-  })
-  return (
-    <select value={selectedId} onChange={e => onSelect(e.target.value)}
-      className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
-      <option value="">Select a category…</option>
-      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-    </select>
-  )
-}
-
-// ── Main Form ─────────────────────────────────────────────────────
+// ── Main Form ────────────────────────────────────────────────────
 export default function ShippingZoneForm() {
   const navigate = useNavigate()
   const { zoneId } = useParams<{ zoneId: string }>()
   const isEdit = !!zoneId
   const qc = useQueryClient()
 
-  const [zoneName, setZoneName] = useState('')
-  const [countrySearch, setCountrySearch] = useState('')
-  const [showCountryDrop, setShowCountryDrop] = useState(false)
-  const [places, setPlaces] = useState<ZonePlace[]>([])
-  const [editingPlace, setEditingPlace] = useState<ZonePlace | null>(null)
-  const [productType, setProductType] = useState<ProductType>('')
-  const [selectedProducts, setSelectedProducts] = useState<{ id: string; name: string }[]>([])
-  const [selectionType, setSelectionType] = useState<'category' | 'specific'>('specific')
-  const [selectedCategoryId, setSelectedCategoryId] = useState('')
-  const [categoryProductsList, setCategoryProductsList] = useState<{ id: string; name: string; price: number; images: string[] }[]>([])
-  const [loadingCategoryProducts, setLoadingCategoryProducts] = useState(false)
-  const [zoneProductSearch, setZoneProductSearch] = useState('')
-  const [zoneSearchResults, setZoneSearchResults] = useState<{ id: string; name: string; price: number; images: string[] }[]>([])
-  const [zoneSearching, setZoneSearching] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [zoneName,          setZoneName]          = useState('')
+  const [countrySearch,     setCountrySearch]     = useState('')
+  const [showCountryDrop,   setShowCountryDrop]   = useState(false)
+  const [places,            setPlaces]            = useState<ZonePlace[]>([])
+  const [editingPlace,      setEditingPlace]      = useState<ZonePlace | null>(null)
+  const [selectedProducts,  setSelectedProducts]  = useState<{ id: string; name: string }[]>([])
+  const [selectionType,     setSelectionType]     = useState<'category' | 'specific'>('specific')
+  const [selectedCatId,     setSelectedCatId]     = useState('')
+  const [catProducts,       setCatProducts]       = useState<ProductItem[]>([])
+  const [loadingCat,        setLoadingCat]        = useState(false)
+  const [prodSearch,        setProdSearch]        = useState('')
+  const [prodResults,       setProdResults]       = useState<ProductItem[]>([])
+  const [searching,         setSearching]         = useState(false)
+  const [saving,            setSaving]            = useState(false)
+  const [error,             setError]             = useState<string | null>(null)
   const countryRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -499,16 +185,68 @@ export default function ShippingZoneForm() {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
+  // Load existing zone if editing
   useQuery({
     queryKey: ['shipping-zone-edit', zoneId],
     enabled: isEdit,
     queryFn: async () => {
-      const { data, error: e } = await supabase.from('shipping_zones').select('*').eq('id', zoneId).single()
-      if (e) { if (e.message?.includes('does not exist') || e.message?.includes('schema cache')) setError('Table not found — run the SQL migration first'); return null }
-      if (data) { setZoneName(data.name ?? ''); setPlaces(data.places ?? []); setProductType(data.product_type ?? ''); setSelectedProducts(data.selected_products ?? []) }
-      return data
+      const snap = await getDoc(doc(db, 'shipping_zones', zoneId!))
+      if (snap.exists()) {
+        const d = snap.data()
+        setZoneName(d.name ?? '')
+        setPlaces(d.places ?? [])
+        setSelectedProducts(d.selected_products ?? [])
+        if (d.product_type) setSelectionType(d.product_type as 'category' | 'specific')
+      }
+      return snap.data() ?? null
     },
   })
+
+  // Categories dropdown
+  const { data: categories = [] } = useQuery({
+    queryKey: ['categories-list'],
+    queryFn: async () => {
+      const snap = await getDocs(query(collection(db, 'categories'), orderBy('name', 'asc')))
+      return snap.docs.map(d => ({ id: d.id, name: (d.data().name as string) ?? '' }))
+    },
+  })
+
+  // Category products
+  const handleCategorySelect = async (catId: string) => {
+    setSelectedCatId(catId); setCatProducts([])
+    if (!catId) return
+    setLoadingCat(true)
+    const snap = await getDocs(query(collection(db, 'products'),
+      where('status', '==', 'published'), where('category_id', '==', catId)))
+    setCatProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductItem)))
+    setLoadingCat(false)
+  }
+
+  // Specific product search
+  useEffect(() => {
+    if (!prodSearch.trim()) { setProdResults([]); return }
+    const t = setTimeout(async () => {
+      setSearching(true)
+      const snap = await getDocs(query(collection(db, 'products'), where('status', '==', 'published')))
+      const q = prodSearch.toLowerCase()
+      setProdResults(snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as ProductItem))
+        .filter(p => p.name.toLowerCase().includes(q) && !selectedProducts.find(s => s.id === p.id))
+        .slice(0, 8))
+      setSearching(false)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [prodSearch, selectedProducts])
+
+  const toggleProduct = (p: { id: string; name: string }) =>
+    setSelectedProducts(prev => prev.find(x => x.id === p.id) ? prev.filter(x => x.id !== p.id) : [...prev, { id: p.id, name: p.name }])
+  const removeProduct = (id: string) => setSelectedProducts(prev => prev.filter(x => x.id !== id))
+  const moveProduct   = (idx: number, dir: -1 | 1) => {
+    const arr = [...selectedProducts]; const swap = idx + dir
+    if (swap < 0 || swap >= arr.length) return
+    ;[arr[idx], arr[swap]] = [arr[swap], arr[idx]]
+    setSelectedProducts(arr)
+  }
 
   const addCountry = (name: string) => {
     const trimmed = name.trim(); if (!trimmed) return
@@ -519,9 +257,6 @@ export default function ShippingZoneForm() {
     setCountrySearch(''); setShowCountryDrop(false)
   }
 
-  const updatePlace = (updated: ZonePlace) => setPlaces(p => p.map(pl => pl.id === updated.id ? updated : pl))
-  const removePlace = (id: string) => setPlaces(p => p.filter(pl => pl.id !== id))
-
   const placeSummary = (p: ZonePlace): string => {
     if (!p.values?.length) return `All over "${p.country}"`
     if (p.values.length <= 2) return p.values.join(', ')
@@ -530,73 +265,23 @@ export default function ShippingZoneForm() {
 
   const filteredCountries = COUNTRIES.filter(c => c.toLowerCase().includes(countrySearch.toLowerCase()))
 
-  // ── Category product fetch ──────────────────────────────────
-  const handleCategorySelect = async (catId: string) => {
-    setSelectedCategoryId(catId)
-    setCategoryProductsList([])
-    if (!catId) return
-    setLoadingCategoryProducts(true)
-    const { data } = await supabase
-      .from('products')
-      .select('id, name, price, images')
-      .eq('status', 'published')
-      .eq('category_id', catId)
-    setCategoryProductsList((data ?? []) as { id: string; name: string; price: number; images: string[] }[])
-    setLoadingCategoryProducts(false)
-  }
-
-  // ── Specific product search ─────────────────────────────────
-  useEffect(() => {
-    if (!zoneProductSearch.trim()) { setZoneSearchResults([]); return }
-    const t = setTimeout(async () => {
-      setZoneSearching(true)
-      const { data } = await supabase
-        .from('products')
-        .select('id, name, price, images')
-        .eq('status', 'published')
-        .ilike('name', `%${zoneProductSearch}%`)
-        .limit(8)
-      setZoneSearchResults(
-        (data ?? []).filter(p => !selectedProducts.find(s => s.id === p.id)) as { id: string; name: string; price: number; images: string[] }[]
-      )
-      setZoneSearching(false)
-    }, 300)
-    return () => clearTimeout(t)
-  }, [zoneProductSearch, selectedProducts])
-
-  const toggleZoneProduct = (p: { id: string; name: string }) => {
-    setSelectedProducts(prev =>
-      prev.find(x => x.id === p.id)
-        ? prev.filter(x => x.id !== p.id)
-        : [...prev, { id: p.id, name: p.name }]
-    )
-  }
-
-  const addAllCategoryToZone = () => {
-    const newOnes = categoryProductsList.filter(p => !selectedProducts.find(s => s.id === p.id))
-    setSelectedProducts(prev => [...prev, ...newOnes.map(p => ({ id: p.id, name: p.name }))])
-  }
-
-  const removeZoneProduct = (id: string) =>
-    setSelectedProducts(prev => prev.filter(x => x.id !== id))
-
-  const moveZoneProduct = (idx: number, dir: -1 | 1) => {
-    const arr = [...selectedProducts]
-    const swap = idx + dir
-    if (swap < 0 || swap >= arr.length) return
-    ;[arr[idx], arr[swap]] = [arr[swap], arr[idx]]
-    setSelectedProducts(arr)
-  }
-
   const handleSave = async () => {
     if (!zoneName.trim()) { setError('Zone name is required'); return }
     setSaving(true); setError(null)
     try {
-      const payload = { name: zoneName.trim(), location: places.map(p => p.country).join(', ') || null, places, product_type: productType || null, selected_products: selectedProducts.length ? selectedProducts : null }
-      const { error: e } = isEdit
-        ? await supabase.from('shipping_zones').update(payload).eq('id', zoneId)
-        : await supabase.from('shipping_zones').insert(payload)
-      if (e) throw e
+      const payload = {
+        name: zoneName.trim(),
+        location: places.map(p => p.country).join(', ') || null,
+        places,
+        product_type: selectedProducts.length ? selectionType : null,
+        selected_products: selectedProducts.length ? selectedProducts : null,
+        updated_at: Timestamp.now(),
+      }
+      if (isEdit) {
+        await updateDoc(doc(db, 'shipping_zones', zoneId!), payload)
+      } else {
+        await addDoc(collection(db, 'shipping_zones'), { ...payload, created_at: Timestamp.now() })
+      }
       qc.invalidateQueries({ queryKey: ['shipping-zones'] })
       navigate('/shipping-zones')
     } catch (e) { setError((e as { message?: string })?.message ?? 'Save failed') }
@@ -610,7 +295,7 @@ export default function ShippingZoneForm() {
           <div>
             <p className="text-xs text-gray-400 mb-0.5">
               <Link to="/" className="hover:underline">Dashboard</Link>{' / '}
-              <Link to="/shipping-zones" className="hover:underline">shippingZone</Link>{' / '}
+              <Link to="/shipping-zones" className="hover:underline">Shipping Zones</Link>{' / '}
               {isEdit ? 'Edit' : 'Add'} Shipping Zone
             </p>
             <h1 className="text-xl font-bold text-gray-900">{isEdit ? 'Edit' : 'Add'} Shipping Zone</h1>
@@ -676,11 +361,10 @@ export default function ShippingZoneForm() {
                     <td className="px-4 py-3 font-medium text-gray-900">{p.country}</td>
                     <td className="px-4 py-3 text-gray-600 text-sm">
                       <span>{placeSummary(p)}</span>
-                      <button onClick={() => setEditingPlace({ ...p })}
-                        className="ml-3 text-blue-600 hover:underline text-xs font-medium">Specific Places</button>
+                      <button onClick={() => setEditingPlace({ ...p })} className="ml-3 text-blue-600 hover:underline text-xs font-medium">Specific Places</button>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => removePlace(p.id)} className="text-red-400 hover:text-red-600 p-1"><X size={14} /></button>
+                      <button onClick={() => setPlaces(prev => prev.filter(x => x.id !== p.id))} className="text-red-400 hover:text-red-600 p-1"><X size={14} /></button>
                     </td>
                   </tr>
                 ))}
@@ -692,59 +376,45 @@ export default function ShippingZoneForm() {
         {/* Products */}
         <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
           <h2 className="text-sm font-semibold text-gray-900">
-            Products available in this zone
-            <span className="text-gray-400 font-normal ml-2">({selectedProducts.length} selected)</span>
+            Products available in this zone <span className="text-gray-400 font-normal ml-1">({selectedProducts.length} selected)</span>
           </h2>
-
-          {/* Toggle: By Category / Specific Products */}
           <div className="flex gap-2">
             {(['category', 'specific'] as const).map(t => (
-              <button key={t}
-                onClick={() => { setSelectionType(t); setSelectedCategoryId(''); setCategoryProductsList([]) }}
-                className={`px-4 py-2 text-sm rounded-lg border font-medium transition-colors ${
-                  selectionType === t ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-                }`}>
+              <button key={t} onClick={() => { setSelectionType(t); setSelectedCatId(''); setCatProducts([]) }}
+                className={`px-4 py-2 text-sm rounded-lg border font-medium transition-colors ${selectionType === t ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
                 {t === 'category' ? 'By Category' : 'Specific Products'}
               </button>
             ))}
           </div>
 
-          {/* Category mode */}
           {selectionType === 'category' && (
             <div className="space-y-3">
-              {/* Category dropdown */}
-              <CategoryDropdown
-                onSelect={handleCategorySelect}
-                selectedId={selectedCategoryId}
-              />
-              {loadingCategoryProducts && (
-                <div className="flex items-center gap-2 text-sm text-gray-400 py-1">
-                  <Loader2 size={13} className="animate-spin" /> Loading products…
-                </div>
-              )}
-              {categoryProductsList.length > 0 && (
+              <select value={selectedCatId} onChange={e => handleCategorySelect(e.target.value)}
+                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
+                <option value="">Select a category…</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {loadingCat && <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 size={13} className="animate-spin" /> Loading…</div>}
+              {catProducts.length > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs text-gray-500">{categoryProductsList.length} products in this category</p>
-                    <button onClick={addAllCategoryToZone}
-                      className="text-xs border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-medium">
-                      Add All
-                    </button>
+                    <p className="text-xs text-gray-500">{catProducts.length} products</p>
+                    <button onClick={() => {
+                      const newOnes = catProducts.filter(p => !selectedProducts.find(s => s.id === p.id))
+                      setSelectedProducts(prev => [...prev, ...newOnes.map(p => ({ id: p.id, name: p.name }))])
+                    }} className="text-xs border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 font-medium">Add All</button>
                   </div>
                   <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
-                    {categoryProductsList.map(p => {
-                      const isSelected = !!selectedProducts.find(s => s.id === p.id)
+                    {catProducts.map(p => {
+                      const isSel = !!selectedProducts.find(s => s.id === p.id)
                       return (
-                        <div key={p.id} onClick={() => toggleZoneProduct(p)}
-                          className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer border-b border-gray-100 last:border-0 transition-colors
-                            ${isSelected ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}>
-                          <input type="checkbox" checked={isSelected} readOnly className="accent-gray-900 shrink-0" />
-                          {(p.images as string[])?.[0]
-                            ? <img src={(p.images as string[])[0]} alt={p.name} className="w-8 h-8 rounded object-cover border border-gray-200 shrink-0" />
-                            : <div className="w-8 h-8 rounded bg-gray-200 shrink-0" />}
+                        <div key={p.id} onClick={() => toggleProduct(p)}
+                          className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer border-b border-gray-100 last:border-0 transition-colors ${isSel ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}>
+                          <input type="checkbox" checked={isSel} readOnly className="accent-gray-900 shrink-0" />
+                          {p.images?.[0] ? <img src={p.images[0]} alt={p.name} className="w-8 h-8 rounded object-cover border border-gray-200 shrink-0" /> : <div className="w-8 h-8 rounded bg-gray-200 shrink-0" />}
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate">{p.name}</p>
-                            <p className={`text-xs ${isSelected ? 'text-gray-300' : 'text-gray-400'}`}>₹{p.price}</p>
+                            <p className={`text-xs ${isSel ? 'text-gray-300' : 'text-gray-400'}`}>₹{p.price}</p>
                           </div>
                         </div>
                       )
@@ -752,27 +422,20 @@ export default function ShippingZoneForm() {
                   </div>
                 </div>
               )}
-              {selectedCategoryId && !loadingCategoryProducts && categoryProductsList.length === 0 && (
-                <p className="text-sm text-gray-400 py-1">No published products in this category</p>
-              )}
             </div>
           )}
 
-          {/* Specific products mode */}
           {selectionType === 'specific' && (
             <div className="relative">
-              <input type="text" value={zoneProductSearch} onChange={e => setZoneProductSearch(e.target.value)}
-                placeholder="Search and add products…"
+              <input type="text" value={prodSearch} onChange={e => setProdSearch(e.target.value)} placeholder="Search and add products…"
                 className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-              {zoneSearching && <Loader2 size={13} className="absolute right-3 top-3 animate-spin text-gray-400" />}
-              {zoneSearchResults.length > 0 && (
+              {searching && <Loader2 size={13} className="absolute right-3 top-3 animate-spin text-gray-400" />}
+              {prodResults.length > 0 && (
                 <div className="absolute z-10 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden max-h-52 overflow-y-auto">
-                  {zoneSearchResults.map(p => (
-                    <button key={p.id} onClick={() => { toggleZoneProduct(p); setZoneProductSearch(''); setZoneSearchResults([]) }}
+                  {prodResults.map(p => (
+                    <button key={p.id} onClick={() => { toggleProduct(p); setProdSearch(''); setProdResults([]) }}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 text-left">
-                      {(p.images as string[])?.[0]
-                        ? <img src={(p.images as string[])[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0 border border-gray-200" />
-                        : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
+                      {p.images?.[0] ? <img src={p.images[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0 border border-gray-200" /> : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-gray-900 truncate">{p.name}</p>
                         <p className="text-xs text-gray-400">₹{p.price}</p>
@@ -784,25 +447,17 @@ export default function ShippingZoneForm() {
             </div>
           )}
 
-          {/* Selected products list */}
           {selectedProducts.length > 0 && (
             <div className="space-y-2 pt-2 border-t border-gray-100">
               <p className="text-xs text-gray-500 font-medium">Selected ({selectedProducts.length})</p>
               {selectedProducts.map((p, idx) => (
-                <div key={p.id} className="flex items-center gap-3 px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 hover:bg-white transition-colors">
+                <div key={p.id} className="flex items-center gap-3 px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50">
                   <span className="text-xs text-gray-400 w-5 text-center shrink-0">{idx + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
-                  </div>
+                  <div className="flex-1 min-w-0"><p className="text-sm font-medium text-gray-900 truncate">{p.name}</p></div>
                   <div className="flex gap-1 shrink-0">
-                    <button onClick={() => moveZoneProduct(idx, -1)} disabled={idx === 0}
-                      className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↑</button>
-                    <button onClick={() => moveZoneProduct(idx, 1)} disabled={idx === selectedProducts.length - 1}
-                      className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↓</button>
-                    <button onClick={() => removeZoneProduct(p.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors">
-                      <X size={13} />
-                    </button>
+                    <button onClick={() => moveProduct(idx, -1)} disabled={idx === 0} className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↑</button>
+                    <button onClick={() => moveProduct(idx, 1)} disabled={idx === selectedProducts.length - 1} className="px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 disabled:opacity-30">↓</button>
+                    <button onClick={() => removeProduct(p.id)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded"><X size={13} /></button>
                   </div>
                 </div>
               ))}
@@ -813,7 +468,7 @@ export default function ShippingZoneForm() {
 
       {editingPlace && (
         <PlacesModal place={editingPlace} onClose={() => setEditingPlace(null)}
-          onSave={updated => { updatePlace(updated); setEditingPlace(null) }} />
+          onSave={updated => { setPlaces(p => p.map(pl => pl.id === updated.id ? updated : pl)); setEditingPlace(null) }} />
       )}
     </div>
   )

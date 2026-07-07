@@ -1,0 +1,70 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── Helpers ────────────────────────────────────────────────────────
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function isUnder2MB()  { return request.resource.size < 2 * 1024 * 1024; }
+    function isUnder5MB()  { return request.resource.size < 5 * 1024 * 1024; }
+    function isImage()     { return request.resource.contentType.matches('image/.*'); }
+    function isDocument()  {
+      return request.resource.contentType.matches('image/.*') ||
+             request.resource.contentType == 'application/pdf';
+    }
+
+    // ── 1. HOME BANNERS ────────────────────────────────────────────────
+    // Admin panel uploads. Any signed-in user (only admins can log in).
+    match /home-banners/{fileName} {
+      allow read:   if true;
+      allow write:  if isSignedIn() && isImage() && isUnder2MB();
+      allow delete: if isSignedIn();
+    }
+
+    // ── 2. PRODUCT IMAGES ─────────────────────────────────────────────
+    // Vendors upload to their own folder. Any signed-in user can write.
+    match /product-images/{allPaths=**} {
+      allow read:   if true;
+      allow write:  if isSignedIn() && isImage() && isUnder2MB();
+      allow delete: if isSignedIn();
+    }
+
+    // ── 3. VENDOR IMAGES ──────────────────────────────────────────────
+    match /vendor-images/{userId}/{fileName} {
+      allow read:   if true;
+      allow write:  if isOwner(userId) && isImage() && isUnder2MB();
+      allow delete: if isOwner(userId) || isSignedIn();
+    }
+
+    // ── 4. KYC DOCUMENTS ──────────────────────────────────────────────
+    // Private. Owner uploads only. Max 5 MB (PDFs can be larger).
+    match /kyc-documents/{userId}/{fileName} {
+      allow read:   if isOwner(userId) || isSignedIn();
+      allow write:  if isOwner(userId) && isDocument() && isUnder5MB();
+      allow delete: if isOwner(userId) || isSignedIn();
+    }
+
+    // ── 5. CATEGORY IMAGES ────────────────────────────────────────────
+    // Admin panel only — any signed-in user (only admins are signed in here).
+    match /categories/{fileName} {
+      allow read:   if true;
+      allow write:  if isSignedIn() && isImage() && isUnder2MB();
+      allow delete: if isSignedIn();
+    }
+
+    // ── 6. TESTIMONIAL PHOTOS ─────────────────────────────────────────
+    match /testimonials/{fileName} {
+      allow read:   if true;
+      allow write:  if isSignedIn() && isImage() && isUnder2MB();
+      allow delete: if isSignedIn();
+    }
+
+    // ── 7. WHY PACKAGES SLIDES ────────────────────────────────────────
+    match /why-packages/{fileName} {
+      allow read:   if true;
+      allow write:  if isSignedIn() && isImage() && isUnder2MB();
+      allow delete: if isSignedIn();
+    }
+
+  }
+}
