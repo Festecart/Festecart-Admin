@@ -181,29 +181,25 @@ async function logHistory(orderId: string, action: string, oldStatus: string | n
 }
 
 async function sendStatusEmail(order: Order, newStatus: string, invoice?: Partial<Invoice>) {
-  try {
-    const emailOrder: OrderForEmail = {
-      id:               order.id,
-      order_number:     order.order_number,
-      customer_email:   order.customer_email,
-      guest_email:      order.guest_email,
-      guest_name:       order.guest_name,
-      shipping_address: order.shipping_address,
-      items:            order.items ?? [],
-      subtotal:         order.subtotal,
-      shipping_charge:  order.shipping_charge,
-      total:            order.total,
-      payment_method:   order.payment_method,
-      tracking_number:  order.tracking_number,
-      courier_name:     order.courier_name,
-    };
-    await sendOrderStatusEmail(emailOrder, newStatus, {
-      courierName:    invoice?.courier    ?? order.courier_name,
-      trackingNumber: invoice?.tracking_number ?? order.tracking_number,
-    });
-  } catch (e) {
-    console.error('[Email] Failed to send status email:', e);
-  }
+  const emailOrder: OrderForEmail = {
+    id:               order.id,
+    order_number:     order.order_number,
+    customer_email:   order.customer_email,
+    guest_email:      order.guest_email,
+    guest_name:       order.guest_name,
+    shipping_address: order.shipping_address,
+    items:            order.items ?? [],
+    subtotal:         order.subtotal,
+    shipping_charge:  order.shipping_charge,
+    total:            order.total,
+    payment_method:   order.payment_method,
+    tracking_number:  order.tracking_number,
+    courier_name:     order.courier_name,
+  };
+  await sendOrderStatusEmail(emailOrder, newStatus, {
+    courierName:    invoice?.courier    ?? order.courier_name,
+    trackingNumber: invoice?.tracking_number ?? order.tracking_number,
+  });
 }
 
 // ── Generate Invoice Modal ────────────────────────────────────
@@ -273,7 +269,10 @@ function GenerateInvoiceModal({ order, invoices, onClose, onSuccess }: {
       await logHistory(order.id, 'Invoice Generated', order.status, newStatus, `Invoice ${invoice_number}`)
 
       const freshSnap = await getDoc(doc(db, 'orders', order.id))
-      if (freshSnap.exists()) await sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), newStatus)
+      if (freshSnap.exists()) {
+        sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), newStatus)
+          .catch(e => console.warn('[Email] Invoice status email failed:', e instanceof Error ? e.message : e))
+      }
 
       qc.invalidateQueries({ queryKey: ['orders', order.id] })
       qc.invalidateQueries({ queryKey: ['invoices', order.id] })
@@ -379,10 +378,10 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
 
       const freshSnap = await getDoc(doc(db, 'orders', invoice.order_id))
       if (freshSnap.exists()) {
-        await sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'shipped', {
+        sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'shipped', {
           ...invoice, courier: form.courier,
           tracking_number: form.tracking_number || null, sent_at: sentAt, estimated_delivery: estDelivery,
-        })
+        }).catch(e => console.warn('[Email] Shipped email failed:', e instanceof Error ? e.message : e))
       }
       qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
       qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
@@ -469,7 +468,10 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
     await logHistory(invoice.order_id, 'Marked Delivered', null, newOrderStatus, `Invoice ${invoice.invoice_number}`)
     if (allDelivered) {
       const freshSnap = await getDoc(doc(db, 'orders', invoice.order_id))
-      if (freshSnap.exists()) await sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'delivered', invoice)
+      if (freshSnap.exists()) {
+        sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'delivered', invoice)
+          .catch(e => console.warn('[Email] Delivered email failed:', e instanceof Error ? e.message : e))
+      }
     }
     qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
     qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
@@ -666,7 +668,8 @@ export default function OrderDetail() {
       if (newStatus && freshSnap.exists()) {
         const freshOrder = toOrder(freshSnap.id, freshSnap.data() as Record<string, unknown>)
         if (freshOrder.customer_email || freshOrder.guest_email) {
-          await sendStatusEmail(freshOrder, newStatus)
+          sendStatusEmail(freshOrder, newStatus)
+            .catch(e => console.warn('[Email] Status email failed:', e instanceof Error ? e.message : e))
         }
       }
       qc.invalidateQueries({ queryKey: ['orders', order.id] })

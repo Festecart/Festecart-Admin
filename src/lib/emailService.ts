@@ -20,27 +20,25 @@ async function sendEmail(to: string | string[], subject: string, html: string): 
     console.warn('[emailService] VITE_RESEND_API_KEY not set — skipping email');
     return false;
   }
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-      },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        to: Array.isArray(to) ? to : [to],
-        subject,
-        html,
-      }),
-    });
-    const json = await res.json();
-    if (!res.ok) { console.error('[emailService] Resend error:', json); return false; }
-    return true;
-  } catch (err) {
-    console.error('[emailService] fetch error:', err);
-    return false;
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+    },
+    body: JSON.stringify({
+      from: FROM_EMAIL,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html,
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    const msg = json?.message ?? json?.name ?? JSON.stringify(json);
+    throw new Error(`Resend API error (${res.status}): ${msg}`);
   }
+  return true;
 }
 
 // ── Base template ────────────────────────────────────────────────
