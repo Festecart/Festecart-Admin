@@ -8,8 +8,7 @@ dist/
 dist-ssr/
 *.local
 
-# Environment — NEVER commit these
-.env
+# Environment — commit .env (no secrets inside), but never commit .env.local
 .env.local
 .env.*.local
 functions/.env
