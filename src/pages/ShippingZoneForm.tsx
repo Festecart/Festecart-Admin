@@ -49,6 +49,48 @@ function PlacesModal({ place, onClose, onSave }: {
   const [manualPincodes, setManualPincodes] = useState<string[]>(
     place.placeType === 'pincode' && place.values.length ? place.values : ['']
   )
+  // Bulk upload state (all three modes)
+  const [inputMode,     setInputMode]     = useState<'manual' | 'bulk'>('manual')
+  const [bulkText,      setBulkText]      = useState('')
+  const [bulkError,     setBulkError]     = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const parseBulkCSV = (text: string): string[] =>
+    text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+
+  const handleBulkFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => setBulkText(ev.target?.result as string ?? '')
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  const applyBulk = () => {
+    setBulkError(null)
+    const values = parseBulkCSV(bulkText)
+    if (!values.length) { setBulkError('No valid entries found'); return }
+    if (placeType === 'state') {
+      const valid = values.filter(v => stateList.includes(v))
+      const invalid = values.filter(v => !stateList.includes(v))
+      if (invalid.length) setBulkError(`Not recognised as states: ${invalid.join(', ')}`)
+      setSelectedStates(prev => [...new Set([...prev, ...valid])])
+    } else if (placeType === 'city') {
+      const existing = cityInput.trim()
+      setCityInput(existing ? `${existing}, ${values.join(', ')}` : values.join(', '))
+    } else {
+      const valid = values.filter(v => /^\d{4,10}$/.test(v))
+      const invalid = values.filter(v => !/^\d{4,10}$/.test(v))
+      if (invalid.length) setBulkError(`Invalid pincodes skipped: ${invalid.join(', ')}`)
+      setManualPincodes(prev => {
+        const existing = prev.filter(p => p.trim())
+        return [...new Set([...existing, ...valid])]
+      })
+    }
+    setBulkText('')
+    setInputMode('manual')
+  }
 
   const stateList     = STATES_BY_COUNTRY[place.country] ?? []
   const hasStates     = stateList.length > 0
@@ -76,13 +118,55 @@ function PlacesModal({ place, onClose, onSave }: {
           <div className="flex gap-8">
             {(hasStates ? ['state','city','pincode'] : ['city','pincode']).map(t => (
               <label key={t} className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="radio" checked={placeType === t} onChange={() => setPlaceType(t as PlaceType)} className="accent-gray-900 w-4 h-4" />
+                <input type="radio" checked={placeType === t} onChange={() => { setPlaceType(t as PlaceType); setInputMode('manual'); setBulkError(null) }} className="accent-gray-900 w-4 h-4" />
                 {t === 'pincode' ? 'Zipcode/Pincode' : t.charAt(0).toUpperCase() + t.slice(1)}
               </label>
             ))}
           </div>
 
-          {placeType === 'state' && hasStates && (
+          {/* Manual / Bulk toggle */}
+          <div className="flex gap-6">
+            {(['manual','bulk'] as const).map(m => (
+              <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="radio" checked={inputMode === m} onChange={() => { setInputMode(m); setBulkError(null) }} className="accent-gray-900 w-4 h-4" />
+                {m === 'manual' ? 'Manual' : 'Bulk Upload'}
+              </label>
+            ))}
+          </div>
+
+          {/* Bulk upload UI */}
+          {inputMode === 'bulk' && (
+            <div className="space-y-3">
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-gray-500 hover:bg-gray-50 transition-colors">
+                <p className="text-sm text-gray-500">Click here to upload the CSV file</p>
+                <p className="text-xs text-gray-400 mt-1">One value per line, or comma-separated</p>
+                <input ref={fileInputRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleBulkFile} />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Or paste values directly</label>
+                <textarea value={bulkText} onChange={e => setBulkText(e.target.value)} rows={4}
+                  placeholder={placeType === 'state' ? 'Karnataka\nTamil Nadu\nGoa' : placeType === 'city' ? 'Bengaluru\nMysuru\nMangaluru' : '560001\n560002\n560003'}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none font-mono" />
+              </div>
+              {bulkError && <p className="text-xs text-orange-600 bg-orange-50 px-3 py-2 rounded-lg">{bulkError}</p>}
+              <div className="flex items-center justify-between">
+                <button onClick={() => {
+                  const link = document.createElement('a')
+                  const sample = placeType === 'state' ? 'Karnataka\nTamil Nadu\nGoa' : placeType === 'city' ? 'Bengaluru\nMysuru\nMangaluru' : '560001\n560002\n560003'
+                  link.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(sample)
+                  link.download = `sample-${placeType}.csv`
+                  link.click()
+                }} className="text-xs text-gray-500 hover:text-gray-800 underline">Download sample CSV</button>
+                <button onClick={applyBulk}
+                  className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Apply</button>
+              </div>
+            </div>
+          )}
+
+          {/* Manual inputs */}
+          {inputMode === 'manual' && placeType === 'state' && hasStates && (
             <div className="space-y-2">
               <input type="text" value={stateSearch} onChange={e => setStateSearch(e.target.value)}
                 placeholder={`Search ${place.country} state…`} autoFocus
@@ -108,7 +192,7 @@ function PlacesModal({ place, onClose, onSave }: {
             </div>
           )}
 
-          {placeType === 'city' && (
+          {inputMode === 'manual' && placeType === 'city' && (
             <div className="space-y-1">
               <label className="block text-xs text-gray-500">Enter city names (comma separated)</label>
               <input type="text" value={cityInput} onChange={e => setCityInput(e.target.value)}
@@ -117,7 +201,7 @@ function PlacesModal({ place, onClose, onSave }: {
             </div>
           )}
 
-          {placeType === 'pincode' && (
+          {inputMode === 'manual' && placeType === 'pincode' && (
             <div className="space-y-3">
               {manualPincodes.map((pin, idx) => (
                 <div key={idx} className="flex gap-3 items-end">
@@ -141,7 +225,7 @@ function PlacesModal({ place, onClose, onSave }: {
           )}
         </div>
 
-        {placeType !== 'pincode' && (
+        {(placeType !== 'pincode' || inputMode === 'bulk') && (
           <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
             <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
             <button onClick={handleSubmit} className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Save</button>

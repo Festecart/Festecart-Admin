@@ -42,17 +42,13 @@ function fmt(n) { return '₹' + Number(n || 0).toLocaleString('en-IN', { minimu
 // ── Logo header ───────────────────────────────────────────────────
 function header(orderNum) {
   return `
-  <tr><td style="background:${BRAND_DARK};border-radius:12px 12px 0 0;padding:24px 32px;">
+  <tr><td style="background:#ffffff;border-radius:12px 12px 0 0;padding:24px 32px;border-bottom:1px solid #e2e8f0;">
     <table width="100%" cellpadding="0" cellspacing="0"><tr>
       <td>
-        <img src="${LOGO_URL}" alt="Festecart" height="40" style="display:block;height:40px;" onerror="this.style.display='none'" />
-        <div style="display:inline-block;font-family:Georgia,serif;font-size:22px;font-weight:900;">
-          <span style="color:${BRAND_ORA};">fest</span><span style="color:${BRAND_GRN};">ecart</span>
-        </div>
-        <div style="font-size:9px;color:#94a3b8;letter-spacing:2px;margin-top:2px;">LIVE DESI. BE DESI.</div>
+        <img src="${LOGO_URL}" alt="Festecart" height="56" style="display:block;height:56px;max-width:180px;" />
       </td>
-      <td align="right" style="vertical-align:top;">
-        <span style="background:#334155;color:#94a3b8;font-size:11px;padding:6px 14px;border-radius:20px;white-space:nowrap;">${orderNum}</span>
+      <td align="right" style="vertical-align:middle;">
+        <span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:6px 14px;border-radius:20px;white-space:nowrap;">${orderNum}</span>
       </td>
     </tr></table>
   </td></tr>`
@@ -61,11 +57,11 @@ function header(orderNum) {
 // ── Footer ────────────────────────────────────────────────────────
 function footer() {
   return `
-  <tr><td style="background:${BRAND_DARK};border-radius:0 0 12px 12px;padding:20px 32px;text-align:center;">
-    <img src="${LOGO_URL}" alt="Festecart" height="28" style="height:28px;margin-bottom:8px;" onerror="this.style.display='none'" />
-    <p style="color:#94a3b8;font-size:12px;margin:0;">Questions? <a href="mailto:celebrate@festecart.org" style="color:${BRAND_ORA};text-decoration:none;">celebrate@festecart.org</a></p>
-    <p style="color:#475569;font-size:10px;margin:6px 0 0;">© 2026 Festecart · No. 861, 2nd Floor, BEML Layout, Bengaluru – 560098</p>
-    <p style="color:#334155;font-size:9px;margin:4px 0 0;">This is an automated email. Please do not reply directly.</p>
+  <tr><td style="background:#f8fafc;border-radius:0 0 12px 12px;padding:20px 32px;text-align:center;border-top:1px solid #e2e8f0;">
+    <img src="${LOGO_URL}" alt="Festecart" height="36" style="height:36px;margin-bottom:10px;" />
+    <p style="color:#64748b;font-size:12px;margin:0;">Questions? <a href="mailto:celebrate@festecart.org" style="color:#e97316;text-decoration:none;">celebrate@festecart.org</a></p>
+    <p style="color:#94a3b8;font-size:10px;margin:6px 0 0;">© 2026 Festecart · No. 861, 2nd Floor, BEML Layout, Bengaluru – 560098</p>
+    <p style="color:#cbd5e1;font-size:9px;margin:4px 0 0;">This is an automated email. Please do not reply directly.</p>
   </td></tr>`
 }
 

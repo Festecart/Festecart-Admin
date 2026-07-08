@@ -127,7 +127,7 @@ export default function ShippingZones() {
                   return (
                     <tr key={zone.id} className="hover:bg-gray-50">
                       <td className="px-5 py-3">
-                        <button onClick={() => navigate(`/shipping-zones/${zone.id}/methods`)}
+                        <button onClick={() => navigate(`/shipping-zones/${zone.id}/edit`)}
                           className="font-medium text-gray-900 hover:text-gray-600 hover:underline text-left">
                           {zone.name}
                         </button>
