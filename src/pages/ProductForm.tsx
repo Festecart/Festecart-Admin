@@ -53,6 +53,7 @@ export default function ProductForm() {
   const [form, setForm] = useState<FormState>(EMPTY)
   const [uploading, setUploading] = useState(false)
   const [error, setError]   = useState<string | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [discountInput, setDiscountInput] = useState('')
   const formInit = useRef(false)
@@ -120,6 +121,15 @@ export default function ProductForm() {
   // ── Upload images to Firebase Storage ─────────────────────────────
   const uploadImages = async (files: File[]) => {
     if (!files.length) return
+    setImageError(null)
+
+    // Validate sizes before uploading
+    const oversized = files.filter(f => f.size > 2 * 1024 * 1024)
+    if (oversized.length > 0) {
+      setImageError(`${oversized.map(f => f.name).join(', ')} ${oversized.length > 1 ? 'are' : 'is'} too large. Max size is 2 MB per image.`)
+      return
+    }
+
     setUploading(true)
     const urls: string[] = []
     for (const file of files) {
@@ -133,7 +143,7 @@ export default function ProductForm() {
         const url = await getDownloadURL(storageRef)
         urls.push(url)
       } catch (e) {
-        setError(`Image upload failed: ${e instanceof Error ? e.message : String(e)}`)
+        setImageError(`Upload failed: ${e instanceof Error ? e.message : String(e)}`)
       }
     }
     if (urls.length) setForm(f => ({ ...f, images: [...f.images, ...urls] }))
@@ -347,7 +357,14 @@ export default function ProductForm() {
                   {uploading ? <span className="flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Uploading…</span> : 'Choose Files'}
                   <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileInput} disabled={uploading} />
                 </label>
+                <p className="text-xs text-gray-400 mt-2">Max 2 MB per image</p>
               </div>
+              {imageError && (
+                <div className="text-sm text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start gap-2">
+                  <X size={14} className="shrink-0 mt-0.5 text-red-500" />
+                  <span>{imageError}</span>
+                </div>
+              )}
               {form.images.length > 0 && (
                 <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
                   {form.images.map((url, i) => (
