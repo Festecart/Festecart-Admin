@@ -7,7 +7,7 @@ initializeApp()
 setGlobalOptions({ region: 'us-central1' })
 
 const FROM_EMAIL  = 'Festecart <noreply@festecart.org>'
-const LOGO_URL    = 'https://festecart.org/logo.png'
+const LOGO_URL    = 'https://admin.festecart.org/logo.png'
 const BRAND_DARK  = '#1e293b'
 const BRAND_ORA   = '#fb923c'
 const BRAND_GRN   = '#4ade80'
