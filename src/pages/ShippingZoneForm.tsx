@@ -53,31 +53,27 @@ function PlacesModal({ place, onClose, onSave }: {
   const [inputMode,     setInputMode]     = useState<'manual' | 'bulk'>('manual')
   const [bulkText,      setBulkText]      = useState('')
   const [bulkError,     setBulkError]     = useState<string | null>(null)
+  const [bulkPreview,   setBulkPreview]   = useState<{ value: string; country: string; status: 'valid' | 'invalid' }[] | null>(null)
+  const [bulkAction,    setBulkAction]    = useState<'add' | 'delete'>('add')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const parseBulkCSV = (text: string, mode: PlaceType): string[] => {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
     if (!lines.length) return []
-
-    // Detect and skip header row
     const firstLine = lines[0].toLowerCase()
     const hasHeader = firstLine.includes('pincode') || firstLine.includes('country') ||
                       firstLine.includes('state') || firstLine.includes('city')
     const dataLines = hasHeader ? lines.slice(1) : lines
-
     const result: string[] = []
     for (const line of dataLines) {
       const parts = line.split(',').map(p => p.trim().replace(/^["']|["']$/g, ''))
       if (mode === 'city') {
-        // City CSV: Country, State, City — take 3rd column; fallback to 1st
         const val = parts.length >= 3 ? parts[2] : parts[parts.length - 1]
         if (val) result.push(val)
       } else if (mode === 'pincode') {
-        // Pincode CSV: Country, Pincode — take 2nd column; fallback to 1st
         const val = parts.length >= 2 ? parts[parts.length - 1] : parts[0]
         if (val) result.push(val)
       } else {
-        // State: single column or last column
         const val = parts[parts.length - 1]
         if (val) result.push(val)
       }
@@ -94,30 +90,39 @@ function PlacesModal({ place, onClose, onSave }: {
     e.target.value = ''
   }
 
-  const applyBulk = () => {
+  const previewBulk = () => {
     setBulkError(null)
     const values = parseBulkCSV(bulkText, placeType)
-    if (!values.length) { setBulkError('No valid entries found'); return }
-    if (placeType === 'state') {
-      const valid = values.filter(v => stateList.includes(v))
-      const invalid = values.filter(v => !stateList.includes(v))
-      if (invalid.length) setBulkError(`Not recognised as states: ${invalid.join(', ')}`)
-      setSelectedStates(prev => [...new Set([...prev, ...valid])])
-    } else if (placeType === 'city') {
-      const existing = cityInput.trim()
-      setCityInput(existing ? `${existing}, ${values.join(', ')}` : values.join(', '))
+    if (!values.length) { setBulkError('No valid entries found in the file'); return }
+    const preview = values.map(v => {
+      let status: 'valid' | 'invalid' = 'valid'
+      if (placeType === 'pincode' && !/^\d{5,10}$/.test(v)) status = 'invalid'
+      if (placeType === 'state' && stateList.length > 0 && !stateList.includes(v)) status = 'invalid'
+      return { value: v, country: place.country, status }
+    })
+    setBulkPreview(preview)
+  }
+
+  const confirmBulk = () => {
+    if (!bulkPreview) return
+    const valid = bulkPreview.filter(p => p.status === 'valid').map(p => p.value)
+    if (bulkAction === 'add') {
+      if (placeType === 'state') setSelectedStates(prev => [...new Set([...prev, ...valid])])
+      else if (placeType === 'city') {
+        const existing = cityInput.trim()
+        setCityInput(existing ? `${existing}, ${valid.join(', ')}` : valid.join(', '))
+      } else setManualPincodes(prev => [...new Set([...prev.filter(p => p.trim()), ...valid])])
     } else {
-      const valid = values.filter(v => /^\d{5,10}$/.test(v))
-      const invalid = values.filter(v => !/^\d{5,10}$/.test(v))
-      if (invalid.length) setBulkError(`${invalid.length} invalid pincode(s) skipped: ${invalid.slice(0, 5).join(', ')}${invalid.length > 5 ? '…' : ''}`)
-      setManualPincodes(prev => {
-        const existing = prev.filter(p => p.trim())
-        const merged = [...new Set([...existing, ...valid])]
-        return merged
-      })
+      // delete
+      if (placeType === 'state') setSelectedStates(prev => prev.filter(s => !valid.includes(s)))
+      else if (placeType === 'city') {
+        const existing = cityInput.split(',').map(s => s.trim()).filter(Boolean)
+        setCityInput(existing.filter(c => !valid.includes(c)).join(', '))
+      } else setManualPincodes(prev => prev.filter(p => !valid.includes(p)))
     }
+    setBulkPreview(null)
     setBulkText('')
-    if (placeType !== 'pincode') setInputMode('manual')
+    setBulkError(null)
   }
 
   const stateList     = STATES_BY_COUNTRY[place.country] ?? []
@@ -163,36 +168,100 @@ function PlacesModal({ place, onClose, onSave }: {
           </div>
 
           {/* Bulk upload UI */}
-          {inputMode === 'bulk' && (
+          {inputMode === 'bulk' && !bulkPreview && (
             <div className="space-y-3">
+              {/* Add / Delete toggle */}
+              <div className="flex gap-3">
+                {(['add','delete'] as const).map(a => (
+                  <button key={a} onClick={() => setBulkAction(a)}
+                    className={`px-4 py-1.5 text-sm rounded-lg border font-medium transition-colors ${bulkAction === a ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                    Bulk {a.charAt(0).toUpperCase() + a.slice(1)}
+                  </button>
+                ))}
+              </div>
+
               <div
                 onClick={() => fileInputRef.current?.click()}
                 className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-gray-500 hover:bg-gray-50 transition-colors">
                 <p className="text-sm text-gray-500">Click here to upload the CSV file</p>
-                <p className="text-xs text-gray-400 mt-1">One value per line, or comma-separated</p>
+                <p className="text-xs text-gray-400 mt-1">Header row auto-detected and skipped</p>
                 <input ref={fileInputRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleBulkFile} />
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Or paste values directly</label>
                 <textarea value={bulkText} onChange={e => setBulkText(e.target.value)} rows={4}
-                  placeholder={placeType === 'state' ? 'Karnataka\nTamil Nadu\nGoa' : placeType === 'city' ? 'Bengaluru\nMysuru\nMangaluru' : '560001\n560002\n560003'}
+                  placeholder={placeType === 'state' ? 'Karnataka\nTamil Nadu\nGoa' : placeType === 'city' ? 'Country,State,City\nIndia,Karnataka,Bengaluru' : 'Country,Pincode\nIndia,560001\nIndia,560002'}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 resize-none font-mono" />
               </div>
-              {bulkError && <p className="text-xs text-orange-600 bg-orange-50 px-3 py-2 rounded-lg">{bulkError}</p>}
+              {bulkError && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{bulkError}</p>}
               <div className="flex items-center justify-between">
                 <button onClick={() => {
-                  const link = document.createElement('a')
                   const sample = placeType === 'state'
                     ? 'State\nKarnataka\nTamil Nadu\nGoa'
                     : placeType === 'city'
                     ? 'Country,State,City\nIndia,Karnataka,Bengaluru\nIndia,Karnataka,Mangalore\nIndia,Tamilnadu,Chennai'
                     : 'Country,Pincode\nIndia,560001\nIndia,560002\nIndia,560003'
+                  const link = document.createElement('a')
                   link.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(sample)
                   link.download = `sample-${placeType}.csv`
                   link.click()
                 }} className="text-xs text-gray-500 hover:text-gray-800 underline">Download sample CSV</button>
-                <button onClick={applyBulk}
-                  className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Apply</button>
+                <button onClick={previewBulk}
+                  className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Preview</button>
+              </div>
+            </div>
+          )}
+
+          {/* Bulk preview table */}
+          {inputMode === 'bulk' && bulkPreview && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-900">
+                  {placeType === 'pincode' ? 'Pincodes' : placeType === 'city' ? 'Cities' : 'States'} of {place.country} – Preview
+                </p>
+                <button onClick={() => setBulkPreview(null)} className="text-xs text-gray-500 hover:text-gray-800 underline">← Back</button>
+              </div>
+              <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 border-b border-gray-200 w-14">S.No.</th>
+                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 border-b border-gray-200">Country</th>
+                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 border-b border-gray-200">
+                        {placeType === 'pincode' ? 'Pincode/Zip code' : placeType === 'city' ? 'City' : 'State'}
+                      </th>
+                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 border-b border-gray-200">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {bulkPreview.map((row, i) => (
+                      <tr key={i} className={row.status === 'invalid' ? 'bg-red-50' : ''}>
+                        <td className="px-4 py-2 text-center text-gray-500">{i + 1}</td>
+                        <td className="px-4 py-2 text-center text-gray-600">{row.country}</td>
+                        <td className="px-4 py-2 text-center font-mono text-gray-800">{row.value}</td>
+                        <td className="px-4 py-2 text-center">
+                          <span className={`text-xs font-medium ${row.status === 'valid' ? 'text-green-600' : 'text-red-600'}`}>
+                            {row.status === 'valid' ? 'Valid' : 'Invalid'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setBulkPreview(null)} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                  <span className="text-xs text-gray-500">
+                    {bulkPreview.filter(r => r.status === 'invalid').length === 0
+                      ? 'No errors found !'
+                      : `${bulkPreview.filter(r => r.status === 'invalid').length} error(s) — invalid rows will be skipped`}
+                  </span>
+                </div>
+                <button onClick={confirmBulk}
+                  className={`px-4 py-2 text-white text-sm font-medium rounded-lg ${bulkAction === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-900 hover:bg-gray-800'}`}>
+                  {bulkAction === 'delete' ? 'Confirm Delete' : 'Confirm Add'}
+                </button>
               </div>
             </div>
           )}
