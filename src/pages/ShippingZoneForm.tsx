@@ -55,8 +55,35 @@ function PlacesModal({ place, onClose, onSave }: {
   const [bulkError,     setBulkError]     = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const parseBulkCSV = (text: string): string[] =>
-    text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+  const parseBulkCSV = (text: string, mode: PlaceType): string[] => {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    if (!lines.length) return []
+
+    // Detect and skip header row
+    const firstLine = lines[0].toLowerCase()
+    const hasHeader = firstLine.includes('pincode') || firstLine.includes('country') ||
+                      firstLine.includes('state') || firstLine.includes('city')
+    const dataLines = hasHeader ? lines.slice(1) : lines
+
+    const result: string[] = []
+    for (const line of dataLines) {
+      const parts = line.split(',').map(p => p.trim().replace(/^["']|["']$/g, ''))
+      if (mode === 'city') {
+        // City CSV: Country, State, City — take 3rd column; fallback to 1st
+        const val = parts.length >= 3 ? parts[2] : parts[parts.length - 1]
+        if (val) result.push(val)
+      } else if (mode === 'pincode') {
+        // Pincode CSV: Country, Pincode — take 2nd column; fallback to 1st
+        const val = parts.length >= 2 ? parts[parts.length - 1] : parts[0]
+        if (val) result.push(val)
+      } else {
+        // State: single column or last column
+        const val = parts[parts.length - 1]
+        if (val) result.push(val)
+      }
+    }
+    return [...new Set(result)]
+  }
 
   const handleBulkFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -69,7 +96,7 @@ function PlacesModal({ place, onClose, onSave }: {
 
   const applyBulk = () => {
     setBulkError(null)
-    const values = parseBulkCSV(bulkText)
+    const values = parseBulkCSV(bulkText, placeType)
     if (!values.length) { setBulkError('No valid entries found'); return }
     if (placeType === 'state') {
       const valid = values.filter(v => stateList.includes(v))
@@ -80,16 +107,17 @@ function PlacesModal({ place, onClose, onSave }: {
       const existing = cityInput.trim()
       setCityInput(existing ? `${existing}, ${values.join(', ')}` : values.join(', '))
     } else {
-      const valid = values.filter(v => /^\d{4,10}$/.test(v))
-      const invalid = values.filter(v => !/^\d{4,10}$/.test(v))
-      if (invalid.length) setBulkError(`Invalid pincodes skipped: ${invalid.join(', ')}`)
+      const valid = values.filter(v => /^\d{5,10}$/.test(v))
+      const invalid = values.filter(v => !/^\d{5,10}$/.test(v))
+      if (invalid.length) setBulkError(`${invalid.length} invalid pincode(s) skipped: ${invalid.slice(0, 5).join(', ')}${invalid.length > 5 ? '…' : ''}`)
       setManualPincodes(prev => {
         const existing = prev.filter(p => p.trim())
-        return [...new Set([...existing, ...valid])]
+        const merged = [...new Set([...existing, ...valid])]
+        return merged
       })
     }
     setBulkText('')
-    setInputMode('manual')
+    if (placeType !== 'pincode') setInputMode('manual')
   }
 
   const stateList     = STATES_BY_COUNTRY[place.country] ?? []
@@ -154,7 +182,11 @@ function PlacesModal({ place, onClose, onSave }: {
               <div className="flex items-center justify-between">
                 <button onClick={() => {
                   const link = document.createElement('a')
-                  const sample = placeType === 'state' ? 'Karnataka\nTamil Nadu\nGoa' : placeType === 'city' ? 'Bengaluru\nMysuru\nMangaluru' : '560001\n560002\n560003'
+                  const sample = placeType === 'state'
+                    ? 'State\nKarnataka\nTamil Nadu\nGoa'
+                    : placeType === 'city'
+                    ? 'Country,State,City\nIndia,Karnataka,Bengaluru\nIndia,Karnataka,Mangalore\nIndia,Tamilnadu,Chennai'
+                    : 'Country,Pincode\nIndia,560001\nIndia,560002\nIndia,560003'
                   link.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(sample)
                   link.download = `sample-${placeType}.csv`
                   link.click()
