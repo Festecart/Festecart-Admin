@@ -5,7 +5,7 @@
  * No API key is needed or exposed in the browser — the key lives server-side.
  */
 
-const CLOUD_FN = 'https://us-central1-festecart-22421.cloudfunctions.net/sendOrderEmail';
+const CLOUD_FN = 'https://sendorderemail-3mqmxql44q-uc.a.run.app';
 
 async function callEmailFunction(
   order: unknown,

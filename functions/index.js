@@ -1,15 +1,12 @@
 const { onRequest } = require('firebase-functions/v2/https')
-const { onDocumentCreated } = require('firebase-functions/v2/firestore')
 const { setGlobalOptions } = require('firebase-functions/v2')
-const { getFirestore } = require('firebase-admin/firestore')
 const { initializeApp } = require('firebase-admin/app')
 const { Resend } = require('resend')
 
 initializeApp()
 setGlobalOptions({ region: 'us-central1' })
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY || ''
-const FROM_EMAIL = process.env.FROM_EMAIL || 'Festecart <noreply@festecart.org>'
+const FROM_EMAIL = 'Festecart <noreply@festecart.org>'
 
 const SUBJECTS = {
   confirmed:           '✅ Order Confirmed — Festecart',
@@ -133,14 +130,14 @@ async function doSendEmail(order, new_status, invoice) {
   const subject     = SUBJECTS[new_status] || `Order Update — Festecart`
   const html        = buildEmail(name, orderNum, statusLabel, new_status, order, invoice)
 
-  const resend = new Resend(RESEND_API_KEY)
+  const resend = new Resend(process.env.RESEND_API_KEY)
   const result = await resend.emails.send({ from: FROM_EMAIL, to: email, subject, html })
   console.log(`[email] ${new_status} → ${email}:`, result)
   return result
 }
 
 // ── HTTP endpoint (called from admin app) ─────────────────────────
-exports.sendOrderEmail = onRequest({ cors: true }, async (req, res) => {
+exports.sendOrderEmail = onRequest({ cors: true, secrets: ['RESEND_API_KEY'] }, async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.set('Access-Control-Allow-Origin', '*')
     res.set('Access-Control-Allow-Headers', 'Content-Type')
@@ -156,24 +153,5 @@ exports.sendOrderEmail = onRequest({ cors: true }, async (req, res) => {
   } catch (e) {
     console.error('[email] HTTP error:', e)
     res.status(500).json({ ok: false, error: e.message })
-  }
-})
-
-// ── Firestore trigger (called from connect app via email_tasks) ───
-// Watches email_tasks/{taskId} — when status=pending, sends email and marks done
-exports.processEmailTask = onDocumentCreated('email_tasks/{taskId}', async (event) => {
-  const db   = getFirestore()
-  const snap = event.data
-  if (!snap) return
-
-  const data = snap.data()
-  if (data.status !== 'pending') return
-
-  try {
-    await doSendEmail(data.order, data.new_status, data.invoice || null)
-    await snap.ref.update({ status: 'sent', sent_at: new Date() })
-  } catch (e) {
-    console.error('[email] Firestore trigger error:', e)
-    await snap.ref.update({ status: 'failed', error: e.message })
   }
 })
