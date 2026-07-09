@@ -8,6 +8,7 @@ import {
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage'
 import { formatCurrency } from '@/lib/utils'
 import { Upload, X, Loader2, ChevronLeft, Star } from 'lucide-react'
+import CategoryTreeSelect from '@/components/CategoryTreeSelect'
 
 interface Category { id: string; name: string; parent_id: string | null; display_order: number }
 interface Vendor   { id: string; business_name: string; slug: string }
@@ -250,14 +251,6 @@ export default function ProductForm() {
     saveMutation.mutate()
   }
 
-  // Flat category options
-  const buildFlatOptions = (cats: Category[], parentId: string | null = null, depth = 0): { id: string; label: string }[] =>
-    cats.filter(c => (c.parent_id ?? null) === parentId)
-      .flatMap(c => [
-        { id: c.id, label: `${'  '.repeat(depth)}${depth > 0 ? '↳ ' : ''}${c.name}` },
-        ...buildFlatOptions(cats, c.id, depth + 1),
-      ])
-  const flatCategoryOptions = buildFlatOptions(categories)
 
   const discount = form.price && form.compare_at_price && parseFloat(form.compare_at_price) > parseFloat(form.price)
     ? Math.round((1 - parseFloat(form.price) / parseFloat(form.compare_at_price)) * 100) : null
@@ -541,11 +534,12 @@ export default function ProductForm() {
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
               <h2 className="font-semibold text-gray-900 text-sm">Category</h2>
-              <select value={form.category_id} onChange={e => set('category_id', e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
-                <option value="">— Select Category —</option>
-                {flatCategoryOptions.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
-              </select>
+              <CategoryTreeSelect
+                categories={categories}
+                value={form.category_id}
+                onChange={id => set('category_id', id)}
+                placeholder="— Select Category —"
+              />
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
               <h2 className="font-semibold text-gray-900 text-sm">Vendor <span className="text-gray-400 font-normal">(optional)</span></h2>

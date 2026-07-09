@@ -7,6 +7,7 @@ import {
   query, where, orderBy, Timestamp,
 } from '@/lib/firebase'
 import { X, Plus, Loader2 } from 'lucide-react'
+import CategoryTreeSelect from '@/components/CategoryTreeSelect'
 
 // ── States per country ───────────────────────────────────────────
 const STATES_BY_COUNTRY: Record<string, string[]> = {
@@ -304,23 +305,33 @@ function PlacesModal({ place, onClose, onSave }: {
 
           {inputMode === 'manual' && placeType === 'pincode' && (
             <div className="space-y-3">
-              {manualPincodes.map((pin, idx) => (
-                <div key={idx} className="flex gap-3 items-end">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Pincode</label>
-                    <input type="text" value={pin}
-                      onChange={e => setManualPincodes(p => p.map((x, i) => i === idx ? e.target.value : x))}
-                      className="w-44 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                  </div>
-                  <button onClick={() => setManualPincodes(p => p.filter((_, i) => i !== idx))}
-                    className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 mb-0.5">Delete</button>
-                </div>
-              ))}
-              <div className="flex justify-between">
-                <button onClick={() => setManualPincodes(p => [...p, ''])}
+              <div className="flex justify-between items-center">
+                <button onClick={() => {
+                  setManualPincodes(p => [...p, ''])
+                  // scroll to bottom of list after adding
+                  setTimeout(() => {
+                    const container = document.getElementById('pincode-list')
+                    if (container) container.scrollTop = container.scrollHeight
+                  }, 50)
+                }}
                   className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Add More</button>
                 <button onClick={handleSubmit}
                   className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Submit</button>
+              </div>
+              <div id="pincode-list" className="space-y-2 max-h-64 overflow-y-auto">
+                {manualPincodes.map((pin, idx) => (
+                  <div key={idx} className="flex gap-3 items-end">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Pincode</label>
+                      <input type="text" value={pin}
+                        onChange={e => setManualPincodes(p => p.map((x, i) => i === idx ? e.target.value : x))}
+                        autoFocus={idx === manualPincodes.length - 1 && idx > 0}
+                        className="w-44 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                    </div>
+                    <button onClick={() => setManualPincodes(p => p.filter((_, i) => i !== idx))}
+                      className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 mb-0.5">Delete</button>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -392,7 +403,12 @@ export default function ShippingZoneForm() {
     queryKey: ['categories-list'],
     queryFn: async () => {
       const snap = await getDocs(query(collection(db, 'categories'), orderBy('name', 'asc')))
-      return snap.docs.map(d => ({ id: d.id, name: (d.data().name as string) ?? '' }))
+      return snap.docs.map(d => ({
+        id: d.id,
+        name: (d.data().name as string) ?? '',
+        parent_id: (d.data().parent_id as string | null) ?? null,
+        display_order: (d.data().display_order as number) ?? 0,
+      }))
     },
   })
 
@@ -406,6 +422,16 @@ export default function ShippingZoneForm() {
     setCatProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductItem)))
     setLoadingCat(false)
   }
+
+  // All published products (for specific selection)
+  const { data: allProducts = [], isLoading: loadingAllProducts } = useQuery({
+    queryKey: ['all-products-published'],
+    queryFn: async () => {
+      const snap = await getDocs(query(collection(db, 'products'), where('status', '==', 'published')))
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductItem))
+    },
+    enabled: selectionType === 'specific',
+  })
 
   // Specific product search
   useEffect(() => {
@@ -547,6 +573,20 @@ export default function ShippingZoneForm() {
                     <td className="px-4 py-3 text-gray-600 text-sm">
                       <span>{placeSummary(p)}</span>
                       <button onClick={() => setEditingPlace({ ...p })} className="ml-3 text-blue-600 hover:underline text-xs font-medium">Specific Places</button>
+                      {p.placeType === 'pincode' && p.values.length > 0 && (
+                        <button
+                          onClick={() => {
+                            const csv = `Country,Pincode\n${p.values.map(v => `${p.country},${v}`).join('\n')}`
+                            const link = document.createElement('a')
+                            link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv)
+                            link.download = `pincodes-${p.country.toLowerCase().replace(/\s+/g, '-')}.csv`
+                            link.click()
+                          }}
+                          className="ml-3 text-green-600 hover:underline text-xs font-medium"
+                        >
+                          ↓ Download ({p.values.length})
+                        </button>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button onClick={() => setPlaces(prev => prev.filter(x => x.id !== p.id))} className="text-red-400 hover:text-red-600 p-1"><X size={14} /></button>
@@ -574,11 +614,13 @@ export default function ShippingZoneForm() {
 
           {selectionType === 'category' && (
             <div className="space-y-3">
-              <select value={selectedCatId} onChange={e => handleCategorySelect(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
-                <option value="">Select a category…</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <CategoryTreeSelect
+                categories={categories}
+                value={selectedCatId}
+                onChange={id => handleCategorySelect(id)}
+                placeholder="Select a category…"
+                compact
+              />
               {loadingCat && <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 size={13} className="animate-spin" /> Loading…</div>}
               {catProducts.length > 0 && (
                 <div className="space-y-2">
@@ -611,23 +653,61 @@ export default function ShippingZoneForm() {
           )}
 
           {selectionType === 'specific' && (
-            <div className="relative">
-              <input type="text" value={prodSearch} onChange={e => setProdSearch(e.target.value)} placeholder="Search and add products…"
-                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-              {searching && <Loader2 size={13} className="absolute right-3 top-3 animate-spin text-gray-400" />}
-              {prodResults.length > 0 && (
-                <div className="absolute z-10 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden max-h-52 overflow-y-auto">
-                  {prodResults.map(p => (
-                    <button key={p.id} onClick={() => { toggleProduct(p); setProdSearch(''); setProdResults([]) }}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 text-left">
-                      {p.images?.[0] ? <img src={p.images[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0 border border-gray-200" /> : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-gray-900 truncate">{p.name}</p>
-                        <p className="text-xs text-gray-400">₹{p.price}</p>
-                      </div>
-                    </button>
-                  ))}
+            <div className="space-y-3">
+              {/* Search + Select All */}
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input type="text" value={prodSearch} onChange={e => setProdSearch(e.target.value)}
+                    placeholder="Search products…"
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                  {(searching || loadingAllProducts) && <Loader2 size={13} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
                 </div>
+                <button
+                  onClick={() => {
+                    const visible = prodSearch.trim()
+                      ? allProducts.filter(p => p.name.toLowerCase().includes(prodSearch.toLowerCase()))
+                      : allProducts
+                    const newOnes = visible.filter(p => !selectedProducts.find(s => s.id === p.id))
+                    setSelectedProducts(prev => [...prev, ...newOnes.map(p => ({ id: p.id, name: p.name }))])
+                  }}
+                  className="px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium whitespace-nowrap">
+                  Select All
+                </button>
+              </div>
+
+              {/* Product list */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                {loadingAllProducts ? (
+                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-400">
+                    <Loader2 size={14} className="animate-spin" /> Loading products…
+                  </div>
+                ) : (() => {
+                  const visible = prodSearch.trim()
+                    ? allProducts.filter(p => p.name.toLowerCase().includes(prodSearch.toLowerCase()))
+                    : allProducts
+                  if (visible.length === 0) return (
+                    <p className="text-sm text-gray-400 text-center py-8">No products found</p>
+                  )
+                  return visible.map(p => {
+                    const isSel = !!selectedProducts.find(s => s.id === p.id)
+                    return (
+                      <div key={p.id} onClick={() => toggleProduct(p)}
+                        className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer border-b border-gray-100 last:border-0 transition-colors ${isSel ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}>
+                        <input type="checkbox" checked={isSel} readOnly className="accent-gray-900 shrink-0" />
+                        {p.images?.[0]
+                          ? <img src={p.images[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0 border border-gray-200" />
+                          : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${isSel ? '' : 'text-gray-900'}`}>{p.name}</p>
+                          <p className={`text-xs ${isSel ? 'text-gray-300' : 'text-gray-400'}`}>₹{p.price}</p>
+                        </div>
+                      </div>
+                    )
+                  })
+                })()}
+              </div>
+              {allProducts.length > 0 && (
+                <p className="text-xs text-gray-400">{selectedProducts.length} of {allProducts.length} selected</p>
               )}
             </div>
           )}

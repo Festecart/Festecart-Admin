@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useSiteConfig, useUpdateSiteConfig } from '@/hooks/useSiteConfig'
 import { db, collection, doc, getDocs, getDoc, query, where, orderBy } from '@/lib/firebase'
 import { Save, Check, X, Loader2, Star } from 'lucide-react'
+import CategoryTreeSelect from '@/components/CategoryTreeSelect'
 
 interface FeaturedConfig { enabled: boolean; title: string; subtitle: string; product_ids: string[] }
 interface Product { id: string; name: string; price: number; images: string[]; status: string }
@@ -55,6 +56,15 @@ export default function FeaturedProducts() {
       const snap = await getDocs(query(collection(db, 'categories'), orderBy('name', 'asc')))
       return snap.docs.map(d => ({ id: d.id, ...d.data() } as Category))
     },
+  })
+
+  const { data: allProducts = [], isLoading: loadingAllProducts } = useQuery({
+    queryKey: ['all-products-published'],
+    queryFn: async () => {
+      const snap = await getDocs(query(collection(db, 'products'), where('status', '==', 'published')))
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Product))
+    },
+    enabled: selectionType === 'specific',
   })
 
   const handleCategoryChange = async (catId: string) => {
@@ -164,11 +174,12 @@ export default function FeaturedProducts() {
 
         {selectionType === 'category' && (
           <div className="space-y-3">
-            <select value={selectedCatId} onChange={e => handleCategoryChange(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-gray-900">
-              <option value="">Select a category…</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <CategoryTreeSelect
+              categories={categories}
+              value={selectedCatId}
+              onChange={id => handleCategoryChange(id)}
+              placeholder="Select a category…"
+            />
             {loadingCat && <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 size={14} className="animate-spin" /> Loading…</div>}
             {categoryProducts.length > 0 && (
               <div className="space-y-2">
@@ -198,20 +209,61 @@ export default function FeaturedProducts() {
         )}
 
         {selectionType === 'specific' && (
-          <div className="relative">
-            <input type="text" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Search and add products…"
-              className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-            {searching && <Loader2 size={13} className="absolute right-3 top-3 animate-spin text-gray-400" />}
-            {searchResults.length > 0 && (
-              <div className="absolute z-10 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden max-h-52 overflow-y-auto">
-                {searchResults.map(p => (
-                  <button key={p.id} onClick={() => addProduct(p)}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 border-b border-gray-100 last:border-0 text-left">
-                    {p.images?.[0] ? <img src={p.images[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0 border border-gray-200" /> : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
-                    <div className="flex-1 min-w-0"><p className="font-medium text-gray-900 truncate">{p.name}</p><p className="text-xs text-gray-400">₹{p.price}</p></div>
-                  </button>
-                ))}
+          <div className="space-y-3">
+            {/* Search + Select All */}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input type="text" value={productSearch} onChange={e => setProductSearch(e.target.value)}
+                  placeholder="Search products…"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                {(searching || loadingAllProducts) && <Loader2 size={13} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
               </div>
+              <button
+                onClick={() => {
+                  const visible = productSearch.trim()
+                    ? allProducts.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()))
+                    : allProducts
+                  const newIds = visible.map(p => p.id).filter(id => !config.product_ids.includes(id))
+                  if (newIds.length) setConfig(c => ({ ...c, product_ids: [...c.product_ids, ...newIds] }))
+                }}
+                className="px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 font-medium whitespace-nowrap">
+                Select All
+              </button>
+            </div>
+
+            {/* Full product list */}
+            <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+              {loadingAllProducts ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-400">
+                  <Loader2 size={14} className="animate-spin" /> Loading products…
+                </div>
+              ) : (() => {
+                const visible = productSearch.trim()
+                  ? allProducts.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()))
+                  : allProducts
+                if (visible.length === 0) return (
+                  <p className="text-sm text-gray-400 text-center py-8">No products found</p>
+                )
+                return visible.map(p => {
+                  const isSel = config.product_ids.includes(p.id)
+                  return (
+                    <div key={p.id} onClick={() => toggleCatProduct(p)}
+                      className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer border-b border-gray-100 last:border-0 transition-colors ${isSel ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}>
+                      <input type="checkbox" checked={isSel} readOnly className="accent-gray-900 shrink-0" />
+                      {p.images?.[0]
+                        ? <img src={p.images[0]} alt={p.name} className="w-8 h-8 rounded object-cover shrink-0 border border-gray-200" />
+                        : <div className="w-8 h-8 rounded bg-gray-100 shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium truncate ${isSel ? '' : 'text-gray-900'}`}>{p.name}</p>
+                        <p className={`text-xs ${isSel ? 'text-gray-300' : 'text-gray-400'}`}>₹{p.price}</p>
+                      </div>
+                    </div>
+                  )
+                })
+              })()}
+            </div>
+            {allProducts.length > 0 && (
+              <p className="text-xs text-gray-400">{config.product_ids.length} of {allProducts.length} selected</p>
             )}
           </div>
         )}
