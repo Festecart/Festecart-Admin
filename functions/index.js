@@ -42,8 +42,8 @@ function fmt(n) { return '₹' + Number(n || 0).toLocaleString('en-IN', { minimu
 // ── Logo header ───────────────────────────────────────────────────
 function header(_orderNum) {
   return `
-  <tr><td style="background:#ffffff;border-radius:12px 12px 0 0;padding:32px;border-bottom:1px solid #e2e8f0;text-align:center;">
-    <img src="${LOGO_URL}" alt="Festecart" height="100" style="display:inline-block;height:100px;max-width:280px;" />
+  <tr><td style="background:#ffffff;border-radius:12px 12px 0 0;padding:36px 32px 28px;border-bottom:1px solid #e2e8f0;text-align:center;">
+    <img src="${LOGO_URL}" alt="Festecart" style="display:inline-block;height:120px;width:auto;max-width:300px;" />
   </td></tr>`
 }
 
