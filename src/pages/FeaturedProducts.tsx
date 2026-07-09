@@ -8,7 +8,7 @@ import CategoryTreeSelect from '@/components/CategoryTreeSelect'
 
 interface FeaturedConfig { enabled: boolean; title: string; subtitle: string; product_ids: string[] }
 interface Product { id: string; name: string; price: number; images: string[]; status: string }
-interface Category { id: string; name: string }
+interface Category { id: string; name: string; parent_id: string | null; display_order?: number }
 
 const DEFAULT_CONFIG: FeaturedConfig = {
   enabled: true, title: 'Featured Products',
@@ -25,8 +25,6 @@ export default function FeaturedProducts() {
   const [categoryProducts, setCategoryProducts] = useState<Product[]>([])
   const [loadingCat,       setLoadingCat]       = useState(false)
   const [productSearch,    setProductSearch]    = useState('')
-  const [searchResults,    setSearchResults]    = useState<Product[]>([])
-  const [searching,        setSearching]        = useState(false)
   const [saved,  setSaved]  = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -78,26 +76,9 @@ export default function FeaturedProducts() {
   }
 
   useEffect(() => {
-    if (!productSearch.trim()) { setSearchResults([]); return }
-    const t = setTimeout(async () => {
-      setSearching(true)
-      const snap = await getDocs(query(collection(db, 'products'), where('status', '==', 'published')))
-      const q = productSearch.toLowerCase()
-      const results = snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as Product))
-        .filter(p => p.name.toLowerCase().includes(q) && !config.product_ids.includes(p.id))
-        .slice(0, 8)
-      setSearchResults(results)
-      setSearching(false)
-    }, 300)
-    return () => clearTimeout(t)
-  }, [productSearch, config.product_ids])
+    // productSearch is used directly to filter allProducts — no separate search needed
+  }, [productSearch])
 
-  const addProduct = (p: Product) => {
-    if (config.product_ids.includes(p.id)) return
-    setConfig(c => ({ ...c, product_ids: [...c.product_ids, p.id] }))
-    setProductSearch(''); setSearchResults([])
-  }
   const toggleCatProduct = (p: Product) =>
     setConfig(c => ({ ...c, product_ids: c.product_ids.includes(p.id) ? c.product_ids.filter(id => id !== p.id) : [...c.product_ids, p.id] }))
   const addAllCat = () => {
@@ -216,7 +197,7 @@ export default function FeaturedProducts() {
                 <input type="text" value={productSearch} onChange={e => setProductSearch(e.target.value)}
                   placeholder="Search products…"
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                {(searching || loadingAllProducts) && <Loader2 size={13} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
+                {(loadingAllProducts) && <Loader2 size={13} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
               </div>
               <button
                 onClick={() => {

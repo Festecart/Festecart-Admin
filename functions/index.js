@@ -40,17 +40,10 @@ const STATUS_COLORS = {
 function fmt(n) { return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }) }
 
 // ── Logo header ───────────────────────────────────────────────────
-function header(orderNum) {
+function header(_orderNum) {
   return `
-  <tr><td style="background:#ffffff;border-radius:12px 12px 0 0;padding:24px 32px;border-bottom:1px solid #e2e8f0;">
-    <table width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td>
-        <img src="${LOGO_URL}" alt="Festecart" height="56" style="display:block;height:56px;max-width:180px;" />
-      </td>
-      <td align="right" style="vertical-align:middle;">
-        <span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:6px 14px;border-radius:20px;white-space:nowrap;">${orderNum}</span>
-      </td>
-    </tr></table>
+  <tr><td style="background:#ffffff;border-radius:12px 12px 0 0;padding:32px;border-bottom:1px solid #e2e8f0;text-align:center;">
+    <img src="${LOGO_URL}" alt="Festecart" height="100" style="display:inline-block;height:100px;max-width:280px;" />
   </td></tr>`
 }
 

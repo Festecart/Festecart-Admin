@@ -367,8 +367,6 @@ export default function ShippingZoneForm() {
   const [catProducts,       setCatProducts]       = useState<ProductItem[]>([])
   const [loadingCat,        setLoadingCat]        = useState(false)
   const [prodSearch,        setProdSearch]        = useState('')
-  const [prodResults,       setProdResults]       = useState<ProductItem[]>([])
-  const [searching,         setSearching]         = useState(false)
   const [saving,            setSaving]            = useState(false)
   const [error,             setError]             = useState<string | null>(null)
   const countryRef = useRef<HTMLDivElement>(null)
@@ -433,21 +431,7 @@ export default function ShippingZoneForm() {
     enabled: selectionType === 'specific',
   })
 
-  // Specific product search
-  useEffect(() => {
-    if (!prodSearch.trim()) { setProdResults([]); return }
-    const t = setTimeout(async () => {
-      setSearching(true)
-      const snap = await getDocs(query(collection(db, 'products'), where('status', '==', 'published')))
-      const q = prodSearch.toLowerCase()
-      setProdResults(snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as ProductItem))
-        .filter(p => p.name.toLowerCase().includes(q) && !selectedProducts.find(s => s.id === p.id))
-        .slice(0, 8))
-      setSearching(false)
-    }, 300)
-    return () => clearTimeout(t)
-  }, [prodSearch, selectedProducts])
+  // Specific product search — filtered from allProducts directly, no separate effect needed
 
   const toggleProduct = (p: { id: string; name: string }) =>
     setSelectedProducts(prev => prev.find(x => x.id === p.id) ? prev.filter(x => x.id !== p.id) : [...prev, { id: p.id, name: p.name }])
@@ -660,7 +644,7 @@ export default function ShippingZoneForm() {
                   <input type="text" value={prodSearch} onChange={e => setProdSearch(e.target.value)}
                     placeholder="Search products…"
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                  {(searching || loadingAllProducts) && <Loader2 size={13} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
+                  {loadingAllProducts && <Loader2 size={13} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
                 </div>
                 <button
                   onClick={() => {
