@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  db, collection, doc, getDocs, addDoc, deleteDoc,
+  db, collection, doc, getDocs, getDoc, addDoc, deleteDoc,
   query, where, Timestamp,
 } from '@/lib/firebase'
 import { formatCurrency } from '@/lib/utils'
@@ -26,10 +26,12 @@ function useCartDetail(userId: string) {
       // Get user profile
       let name: string | null = null, email: string | null = null, phone: string | null = null
       try {
-        const profSnap = await getDocs(query(collection(db, 'user_profiles'), where('user_id', '==', userId)))
-        if (!profSnap.empty) {
-          const p = profSnap.docs[0].data()
-          name = p.name ?? null; email = p.email ?? null; phone = p.phone ?? null
+        const profDoc = await getDoc(doc(db, 'user_profiles', userId))
+        if (profDoc.exists()) {
+          const p = profDoc.data() as Record<string, unknown>
+          name = (p.name as string) ?? null
+          email = (p.email as string) ?? null
+          phone = (p.phone as string) ?? null
         }
       } catch { /* no profile */ }
 

@@ -353,9 +353,11 @@ export default function ProductForm() {
                 <p className="text-xs text-gray-400 mt-2">Max 2 MB per image</p>
               </div>
               {imageError && (
-                <div className="text-sm text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start gap-2">
-                  <X size={14} className="shrink-0 mt-0.5 text-red-500" />
+                <div className="text-sm text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start justify-between gap-2">
                   <span>{imageError}</span>
+                  <button type="button" onClick={() => setImageError(null)} className="shrink-0 text-red-400 hover:text-red-700 mt-0.5">
+                    <X size={14} />
+                  </button>
                 </div>
               )}
               {form.images.length > 0 && (
