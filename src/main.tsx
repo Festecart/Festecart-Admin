@@ -4,7 +4,7 @@ import App from './App.tsx'
 import './index.css'
 
 // Prevent mouse wheel from changing number input values globally
-document.addEventListener('wheel', (e) => {
+document.addEventListener('wheel', () => {
   const el = document.activeElement as HTMLInputElement | null
   if (el && el.type === 'number') el.blur()
 }, { passive: false })
