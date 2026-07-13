@@ -247,6 +247,11 @@ export default function ProductForm() {
     if (form.compare_at_price && parseFloat(form.price) > parseFloat(form.compare_at_price)) {
       setError('Selling price cannot be greater than original price'); return
     }
+    if (form.inventory_tracking === 'track' && form.low_stock_notification &&
+        form.low_stock_threshold && form.inventory_count &&
+        parseInt(form.low_stock_threshold) > parseInt(form.inventory_count)) {
+      setError('Stock value must be less than or equal to quantity'); return
+    }
     if (statusOverride) setForm(f => ({ ...f, status: statusOverride }))
     saveMutation.mutate()
   }
@@ -461,8 +466,19 @@ export default function ProductForm() {
                           <input type="number" value={form.low_stock_threshold}
                             onChange={e => set('low_stock_threshold', e.target.value)}
                             placeholder="e.g. 10" min="1"
-                            className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                          <p className="text-xs text-gray-400 mt-1">Notify when stock drops to or below this value.</p>
+                            max={form.inventory_count || undefined}
+                            className={`w-full px-3 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900
+                              ${form.low_stock_threshold && form.inventory_count &&
+                                parseInt(form.low_stock_threshold) > parseInt(form.inventory_count)
+                                ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
+                          {form.low_stock_threshold && form.inventory_count &&
+                            parseInt(form.low_stock_threshold) > parseInt(form.inventory_count) ? (
+                            <p className="text-xs text-red-500 mt-1">
+                              Stock value must be ≤ quantity ({form.inventory_count})
+                            </p>
+                          ) : (
+                            <p className="text-xs text-gray-400 mt-1">Notify when stock drops to or below this value.</p>
+                          )}
                         </div>
                       </div>
                     )}
