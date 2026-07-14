@@ -37,13 +37,13 @@ function useCartDetail(userId: string) {
 
       const items: CartItem[] = cartSnap.docs.map(d => {
         const data = d.data()
-        const tsRaw = data.updated_at
+        const tsRaw = data.updated_at ?? data.created_at
         return {
-          product_id: data.product_id ?? '',
-          name:       data.product_name ?? '—',
-          price:      Number(data.product_price ?? 0),
+          product_id: data.product_id ?? data.id ?? '',
+          name:       data.product_name ?? data.name ?? '—',
+          price:      Number(data.product_price ?? data.price ?? 0),
           quantity:   Number(data.quantity ?? 1),
-          image:      data.product_image ?? null,
+          image:      data.product_image ?? data.image ?? null,
           updated_at: tsRaw?.toDate ? tsRaw.toDate().toISOString() : (tsRaw ?? ''),
         }
       })

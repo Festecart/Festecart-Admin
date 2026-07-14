@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { db, collection, getDocs, query, orderBy } from '@/lib/firebase'
+import { db, collection, getDocs } from '@/lib/firebase'
 import { formatCurrency } from '@/lib/utils'
 import { Search, ShoppingCart, RefreshCw } from 'lucide-react'
 
@@ -14,7 +14,8 @@ function useAbandonedCarts() {
   return useQuery({
     queryKey: ['abandoned-carts'],
     queryFn: async () => {
-      const cartSnap = await getDocs(query(collection(db, 'cart_items'), orderBy('updated_at', 'desc')))
+      // Fetch all cart items — no orderBy to avoid index requirement
+      const cartSnap = await getDocs(collection(db, 'cart_items'))
       if (cartSnap.empty) return []
 
       const userIds = [...new Set(cartSnap.docs.map(d => d.data().user_id).filter(Boolean))]
@@ -23,8 +24,8 @@ function useAbandonedCarts() {
       if (userIds.length > 0) {
         const profileSnap = await getDocs(collection(db, 'user_profiles'))
         profileSnap.docs.forEach(d => {
-          const data = d.data()
           if (userIds.includes(d.id)) {
+            const data = d.data()
             profileMap[d.id] = { name: data.name ?? null, email: data.email ?? null, phone: data.phone ?? null }
           }
         })
@@ -34,9 +35,10 @@ function useAbandonedCarts() {
       for (const d of cartSnap.docs) {
         const data = d.data()
         const uid     = data.user_id
-        const price   = Number(data.product_price ?? 0)
+        if (!uid) continue
+        const price   = Number(data.product_price ?? data.price ?? 0)
         const qty     = Number(data.quantity ?? 1)
-        const tsRaw   = data.updated_at
+        const tsRaw   = data.updated_at ?? data.created_at
         const tsStr   = tsRaw?.toDate ? tsRaw.toDate().toISOString() : (tsRaw ?? '')
         const profile = profileMap[uid] ?? { name: null, email: null, phone: null }
 
@@ -48,7 +50,9 @@ function useAbandonedCarts() {
         grouped[uid].total     += price * qty
         if (tsStr > grouped[uid].updatedAt) grouped[uid].updatedAt = tsStr
       }
-      return Object.values(grouped)
+
+      // Sort by most recently updated
+      return Object.values(grouped).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     },
     staleTime: 1000 * 60,
   })
@@ -106,9 +110,11 @@ export default function AbandonedCart() {
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center">
             <ShoppingCart size={32} className="text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 font-medium">No abandoned carts</p>
-            <p className="text-sm text-gray-400 mt-1">
-              {search ? 'No carts match your search' : 'Customers with items in cart but no order placed will appear here'}
+            <p className="text-gray-500 font-medium">No abandoned carts found</p>
+            <p className="text-sm text-gray-400 mt-1 max-w-sm mx-auto">
+              {search
+                ? 'No carts match your search'
+                : 'Carts appear here when the customer app syncs cart data to Firestore (cart_items collection). Check that the connect app writes cart items with user_id, product_id, product_name, product_price, and quantity fields.'}
             </p>
           </div>
         ) : (

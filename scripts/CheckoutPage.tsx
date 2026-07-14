@@ -16,7 +16,7 @@ import { useUserProfile } from '@/hooks/useUserProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
   collection, addDoc, serverTimestamp,
-  doc as fsDoc, getDoc,
+  doc as fsDoc, getDoc, runTransaction, increment,
 } from 'firebase/firestore';
 import { db } from '@/integrations/firebase/config';
 import { ShippingEstimate } from '@/components/ShippingEstimate';
@@ -311,6 +311,25 @@ export default function CheckoutPage() {
       };
 
       await addDoc(collection(db, 'orders'), orderPayload);
+
+      // ── Decrement inventory_count for tracked products ─────────
+      await Promise.all(
+        items.map(async (cartItem) => {
+          const snap = stockChecks.find(s => s.id === cartItem.id);
+          if (!snap || !snap.exists()) return;
+          const inv = snap.data()?.inventory_count;
+          if (inv === null || inv === undefined) return; // not tracked
+          // Use a transaction to safely decrement
+          await runTransaction(db, async (tx) => {
+            const ref = fsDoc(db, 'products', cartItem.id);
+            const fresh = await tx.get(ref);
+            if (!fresh.exists()) return;
+            const currentInv = fresh.data()?.inventory_count ?? 0;
+            const newInv = Math.max(0, currentInv - cartItem.quantity);
+            tx.update(ref, { inventory_count: newInv });
+          });
+        })
+      );
 
       // ── Send order confirmation email ─────────────────────────
       const customerEmail = user ? user.email : guestForm.email;

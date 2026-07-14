@@ -218,6 +218,20 @@ export default function AddOrder() {
         confirmed_at: now, created_at: now, updated_at: now,
       })
 
+      // ── Decrement inventory_count for tracked products ──────────
+      await Promise.all(
+        items.map(async (item) => {
+          await runTransaction(db, async (tx: Transaction) => {
+            const ref = doc(db, 'products', item.product_id)
+            const snap = await tx.get(ref)
+            if (!snap.exists()) return
+            const inv = snap.data()?.inventory_count
+            if (inv === null || inv === undefined) return
+            tx.update(ref, { inventory_count: Math.max(0, inv - item.quantity) })
+          })
+        })
+      )
+
       let currentStatus = 'confirmed'
 
       // Mark as Processing
