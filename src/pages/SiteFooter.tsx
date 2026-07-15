@@ -3,7 +3,7 @@ import { useSiteConfig, useUpdateSiteConfig } from '@/hooks/useSiteConfig'
 import { Plus, Trash2, Check, Save, Loader2, GripVertical } from 'lucide-react'
 
 interface FooterContact { address: string; phone: string; email: string }
-interface FooterSocial  { facebook: string; instagram: string; twitter: string; whatsapp: string }
+interface FooterSocial  { facebook: string; instagram: string; twitter: string; whatsapp: string; linkedin: string; youtube: string }
 interface FooterLink    { label: string; href: string; enabled: boolean }
 interface FooterBottom  { copyright_text: string; privacy_policy_url: string; terms_url: string }
 interface FooterBrand   { tagline: string }
@@ -119,7 +119,7 @@ export default function SiteFooter() {
   const { data: columnsRaw } = useSiteConfig('footer_columns')
 
   const [contact, setContact] = useState<FooterContact>({ address: '', phone: '', email: '' })
-  const [social,  setSocial]  = useState<FooterSocial>({ facebook: '', instagram: '', twitter: '', whatsapp: '' })
+  const [social,  setSocial]  = useState<FooterSocial>({ facebook: '', instagram: '', twitter: '', whatsapp: '', linkedin: '', youtube: '' })
   const [links,   setLinks]   = useState<FooterLink[]>([])
   const [bottom,  setBottom]  = useState<FooterBottom>({ copyright_text: '', privacy_policy_url: '/privacy', terms_url: '/terms' })
   const [brand,   setBrand]   = useState<FooterBrand>({ tagline: '' })
@@ -175,6 +175,8 @@ export default function SiteFooter() {
           <Field label="Instagram URL" value={social.instagram} onChange={v => setSocial(s => ({ ...s, instagram: v }))} placeholder="https://instagram.com/festecart" />
           <Field label="Twitter / X"   value={social.twitter}   onChange={v => setSocial(s => ({ ...s, twitter: v }))}   placeholder="https://twitter.com/festecart" />
           <Field label="WhatsApp URL"  value={social.whatsapp}  onChange={v => setSocial(s => ({ ...s, whatsapp: v }))}  placeholder="https://wa.me/919876543210" />
+          <Field label="LinkedIn URL"  value={social.linkedin ?? ''}  onChange={v => setSocial(s => ({ ...s, linkedin: v }))}  placeholder="https://linkedin.com/company/festecart" />
+          <Field label="YouTube URL"   value={social.youtube ?? ''}   onChange={v => setSocial(s => ({ ...s, youtube: v }))}   placeholder="https://youtube.com/@festecart" />
         </div>
         <SaveBtn onClick={() => save('footer_social', social)} saving={update.isPending} saved={!!saved.footer_social} error={errors.footer_social ?? null} />
       </div>
