@@ -57,7 +57,7 @@ export default function ProductForm() {
   const [imageError, setImageError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [discountInput, setDiscountInput] = useState('')
-  const formInit = useRef(false)
+  const lastLoadedId = useRef<string | undefined>(undefined)
 
   const { data: existing } = useQuery({
     queryKey: ['product', id],
@@ -67,6 +67,8 @@ export default function ProductForm() {
       return { id: snap.id, ...snap.data() }
     },
     enabled: !!id,
+    staleTime: 0,        // always fetch fresh
+    refetchOnMount: true,
   })
 
   const { data: categories = [] } = useQuery({
@@ -86,8 +88,9 @@ export default function ProductForm() {
   })
 
   useEffect(() => {
-    if (existing && !formInit.current) {
+    if (existing && (existing as Record<string, unknown>).id !== lastLoadedId.current) {
       const d = existing as Record<string, unknown>
+      lastLoadedId.current = d.id as string
       setForm({
         name:              String(d.name ?? ''),
         slug:              String(d.slug ?? ''),
@@ -102,7 +105,6 @@ export default function ProductForm() {
         is_featured:       Boolean(d.is_featured),
         display_order:     String(d.display_order ?? 0),
         images:            (d.images as string[]) ?? [],
-        // Inventory
         inventory_tracking:     (d.inventory_count != null || d.inventory_tracking === 'track') ? 'track' : 'none',
         inventory_count:        d.inventory_count != null ? String(d.inventory_count) : '',
         allow_backorder:        Boolean(d.allow_backorder),
@@ -112,7 +114,6 @@ export default function ProductForm() {
         max_qty_per_user:       d.max_qty_per_user != null ? String(d.max_qty_per_user) : '',
         low_stock_message:      String(d.low_stock_message ?? ''),
       })
-      formInit.current = true
     }
   }, [existing])
 
