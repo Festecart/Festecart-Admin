@@ -57,6 +57,7 @@ export default function ProductForm() {
   const [imageError, setImageError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [discountInput, setDiscountInput] = useState('')
+  const [isDirty, setIsDirty] = useState(false) // true once user edits anything
   const lastLoadedId = useRef<string | undefined>(undefined)
 
   const { data: existing } = useQuery({
@@ -88,9 +89,14 @@ export default function ProductForm() {
   })
 
   useEffect(() => {
-    if (existing && (existing as Record<string, unknown>).id !== lastLoadedId.current) {
-      const d = existing as Record<string, unknown>
-      lastLoadedId.current = d.id as string
+    if (!existing) return
+    const d = existing as Record<string, unknown>
+    const incomingId = d.id as string
+
+    // Always populate on first load or product switch; skip if user has unsaved edits
+    if (incomingId !== lastLoadedId.current || !isDirty) {
+      lastLoadedId.current = incomingId
+      setIsDirty(false)
       setForm({
         name:              String(d.name ?? ''),
         slug:              String(d.slug ?? ''),
@@ -117,8 +123,10 @@ export default function ProductForm() {
     }
   }, [existing])
 
-  const set = <K extends keyof FormState>(field: K, value: FormState[K]) =>
+  const set = <K extends keyof FormState>(field: K, value: FormState[K]) => {
+    setIsDirty(true)
     setForm(f => ({ ...f, [field]: value }))
+  }
 
   // ── Upload images to Firebase Storage ─────────────────────────────
   const uploadImages = async (files: File[]) => {
@@ -234,6 +242,8 @@ export default function ProductForm() {
       }
     },
     onSuccess: () => {
+      setIsDirty(false)
+      lastLoadedId.current = undefined // force re-init on next fetch
       qc.invalidateQueries({ queryKey: ['admin-products'] })
       qc.invalidateQueries({ queryKey: ['site_config', 'featured_products'] })
       navigate('/catalog/products')
