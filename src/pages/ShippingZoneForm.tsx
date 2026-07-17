@@ -43,10 +43,19 @@ interface ProductItem { id: string; name: string; price: number; images: string[
 function PlacesModal({ place, onClose, onSave }: {
   place: ZonePlace; onClose: () => void; onSave: (p: ZonePlace) => void
 }) {
+  // City rows: each row is { id, state (dropdown value), input (raw typed text), tags (committed chips) }
+  type CityRow = { id: string; state: string; input: string; tags: string[] }
+  const initCityRows = (): CityRow[] => {
+    if (place.placeType === 'city' && place.values.length) {
+      return [{ id: crypto.randomUUID(), state: '', input: '', tags: place.values }]
+    }
+    return [{ id: crypto.randomUUID(), state: '', input: '', tags: [] }]
+  }
+
   const [placeType,      setPlaceType]      = useState<PlaceType>(place.placeType)
   const [selectedStates, setSelectedStates] = useState<string[]>(place.placeType === 'state' ? place.values : [])
   const [stateSearch,    setStateSearch]    = useState('')
-  const [cityInput,      setCityInput]      = useState(place.placeType === 'city' ? place.values.join(', ') : '')
+  const [cityRows,       setCityRows]       = useState<CityRow[]>(initCityRows)
   const [manualPincodes, setManualPincodes] = useState<string[]>(
     place.placeType === 'pincode' && place.values.length ? place.values : ['']
   )
@@ -110,15 +119,17 @@ function PlacesModal({ place, onClose, onSave }: {
     if (bulkAction === 'add') {
       if (placeType === 'state') setSelectedStates(prev => [...new Set([...prev, ...valid])])
       else if (placeType === 'city') {
-        const existing = cityInput.trim()
-        setCityInput(existing ? `${existing}, ${valid.join(', ')}` : valid.join(', '))
+        setCityRows(rows => {
+          const updated = [...rows]
+          updated[0] = { ...updated[0], tags: [...new Set([...updated[0].tags, ...valid])] }
+          return updated
+        })
       } else setManualPincodes(prev => [...new Set([...prev.filter(p => p.trim()), ...valid])])
     } else {
       // delete
       if (placeType === 'state') setSelectedStates(prev => prev.filter(s => !valid.includes(s)))
       else if (placeType === 'city') {
-        const existing = cityInput.split(',').map(s => s.trim()).filter(Boolean)
-        setCityInput(existing.filter(c => !valid.includes(c)).join(', '))
+        setCityRows(rows => rows.map(r => ({ ...r, tags: r.tags.filter(t => !valid.includes(t)) })))
       } else setManualPincodes(prev => prev.filter(p => !valid.includes(p)))
     }
     setBulkPreview(null)
@@ -133,11 +144,34 @@ function PlacesModal({ place, onClose, onSave }: {
     setSelectedStates(v => v.includes(s) ? v.filter(x => x !== s) : [...v, s])
 
   const handleSubmit = () => {
-    if (placeType === 'state')   onSave({ ...place, placeType, values: selectedStates })
-    else if (placeType === 'city') onSave({ ...place, placeType, values: cityInput.split(',').map(s => s.trim()).filter(Boolean) })
-    else                         onSave({ ...place, placeType, values: manualPincodes.filter(s => s.trim() !== '') })
+    if (placeType === 'state') {
+      onSave({ ...place, placeType, values: selectedStates })
+    } else if (placeType === 'city') {
+      const allCities = cityRows.flatMap(r => {
+        const fromInput = r.input.split(',').map(s => s.trim()).filter(Boolean)
+        return [...r.tags, ...fromInput]
+      })
+      onSave({ ...place, placeType, values: [...new Set(allCities)] })
+    } else {
+      onSave({ ...place, placeType, values: manualPincodes.filter(s => s.trim() !== '') })
+    }
     onClose()
   }
+
+  // City row helpers
+  const addCityRow = () => setCityRows(rows => [...rows, { id: crypto.randomUUID(), state: '', input: '', tags: [] }])
+  const removeCityRow = (id: string) => setCityRows(rows => rows.filter(r => r.id !== id))
+  const updateCityRow = (id: string, patch: Partial<{ state: string; input: string; tags: string[] }>) =>
+    setCityRows(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
+  const commitCityInput = (id: string, raw: string) => {
+    const newTags = raw.split(',').map(s => s.trim()).filter(Boolean)
+    if (!newTags.length) return
+    setCityRows(rows => rows.map(r =>
+      r.id === id ? { ...r, tags: [...new Set([...r.tags, ...newTags])], input: '' } : r
+    ))
+  }
+  const removeCityTag = (rowId: string, tag: string) =>
+    setCityRows(rows => rows.map(r => r.id === rowId ? { ...r, tags: r.tags.filter(t => t !== tag) } : r))
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-12 bg-black/50"
@@ -295,11 +329,83 @@ function PlacesModal({ place, onClose, onSave }: {
           )}
 
           {inputMode === 'manual' && placeType === 'city' && (
-            <div className="space-y-1">
-              <label className="block text-xs text-gray-500">Enter city names (comma separated)</label>
-              <input type="text" value={cityInput} onChange={e => setCityInput(e.target.value)}
-                placeholder="e.g. Bengaluru, Mysuru, Mangaluru" autoFocus
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+            <div className="space-y-3">
+              <div className="max-h-72 overflow-y-auto space-y-3 pr-1">
+                {cityRows.map((row, idx) => (
+                  <div key={row.id} className="space-y-2">
+                    <div className="flex gap-3 items-start">
+                      {/* State dropdown */}
+                      <div className="w-44 shrink-0">
+                        <label className="block text-xs text-gray-500 mb-1">State</label>
+                        {stateList.length > 0 ? (
+                          <select
+                            value={row.state}
+                            onChange={e => updateCityRow(row.id, { state: e.target.value })}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
+                          >
+                            <option value="">Select state</option>
+                            {stateList.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        ) : (
+                          <input type="text" value={row.state}
+                            onChange={e => updateCityRow(row.id, { state: e.target.value })}
+                            placeholder="State"
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                        )}
+                      </div>
+
+                      {/* City tag input */}
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-500 mb-1">City (use comma for multiple cities)</label>
+                        <div className="min-h-[38px] px-3 py-1.5 border border-gray-300 rounded-lg flex flex-wrap gap-1.5 items-center focus-within:ring-2 focus-within:ring-gray-900">
+                          {row.tags.map(tag => (
+                            <span key={tag} className="flex items-center gap-1 bg-gray-900 text-white text-xs px-2 py-0.5 rounded-full shrink-0">
+                              {tag}
+                              <button type="button" onClick={() => removeCityTag(row.id, tag)} className="opacity-70 hover:opacity-100 ml-0.5">
+                                <X size={9} />
+                              </button>
+                            </span>
+                          ))}
+                          <input
+                            type="text"
+                            value={row.input}
+                            autoFocus={idx === 0}
+                            onChange={e => updateCityRow(row.id, { input: e.target.value })}
+                            onKeyDown={e => {
+                              if ((e.key === 'Enter' || e.key === ',') && row.input.trim()) {
+                                e.preventDefault()
+                                commitCityInput(row.id, row.input)
+                              }
+                              if (e.key === 'Backspace' && !row.input && row.tags.length) {
+                                removeCityTag(row.id, row.tags[row.tags.length - 1])
+                              }
+                            }}
+                            onBlur={() => { if (row.input.trim()) commitCityInput(row.id, row.input) }}
+                            placeholder={row.tags.length === 0 ? 'e.g. Bengaluru, Mysuru' : ''}
+                            className="flex-1 min-w-[80px] text-sm outline-none bg-transparent py-0.5"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Delete row */}
+                      <div className="pt-5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => removeCityRow(row.id)}
+                          disabled={cityRows.length === 1}
+                          className="px-3 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                        >Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <button type="button" onClick={addCityRow}
+                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Add More</button>
+                <button type="button" onClick={handleSubmit}
+                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Submit</button>
+              </div>
             </div>
           )}
 
@@ -337,7 +443,7 @@ function PlacesModal({ place, onClose, onSave }: {
           )}
         </div>
 
-        {(placeType !== 'pincode' || inputMode === 'bulk') && (
+        {(placeType === 'state' || inputMode === 'bulk') && (
           <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
             <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
             <button onClick={handleSubmit} className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Save</button>

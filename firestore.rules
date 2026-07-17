@@ -140,6 +140,14 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
+    // ── delivery_zones (hierarchical: state / city / pincode) ─────────
+    // Public read so guest checkout can resolve zones without being signed in.
+    // Write restricted to admin / super_admin.
+    match /delivery_zones/{id} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
     // ── shipping_zones ────────────────────────────────────────────────
     match /shipping_zones/{id} {
       allow read:  if true;

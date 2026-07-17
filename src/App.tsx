@@ -59,6 +59,8 @@ export default function App() {
             <Route path="orders/add" element={<AddOrder />} />
             <Route path="shipments" element={<Shipments />} />
             <Route path="delivery-zones" element={<DeliveryZones />} />
+            <Route path="delivery-zones/add" element={<DeliveryZones />} />
+            <Route path="delivery-zones/:zoneId/edit" element={<DeliveryZones />} />
             <Route path="shipping-zones" element={<ShippingZones />} />
             <Route path="shipping-zones/vendors" element={<CourierVendors />} />
             <Route path="shipping-zones/add" element={<ShippingZoneForm />} />
