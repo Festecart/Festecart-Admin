@@ -174,15 +174,15 @@ function PlacesModal({ place, onClose, onSave }: {
     setCityRows(rows => rows.map(r => r.id === rowId ? { ...r, tags: r.tags.filter(t => t !== tag) } : r))
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-12 bg-black/50"
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl mx-4 max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-900 text-base">Places in {place.country}</h3>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-6 max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between px-8 py-5 border-b border-gray-200">
+          <h3 className="font-semibold text-gray-900 text-lg">Places in {place.country}</h3>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-100 text-gray-500"><X size={16} /></button>
         </div>
 
-        <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
+        <div className="px-8 py-6 overflow-y-auto flex-1 space-y-6">
           {/* Type radio */}
           <div className="flex gap-8">
             {(hasStates ? ['state','city','pincode'] : ['city','pincode']).map(t => (
@@ -332,7 +332,7 @@ function PlacesModal({ place, onClose, onSave }: {
                   <div key={row.id} className="space-y-2">
                     <div className="flex gap-3 items-start">
                       {/* State dropdown */}
-                      <div className="w-44 shrink-0">
+                      <div className="w-56 shrink-0">
                         <label className="block text-xs text-gray-500 mb-1">State</label>
                         {stateList.length > 0 ? (
                           <select
@@ -354,7 +354,7 @@ function PlacesModal({ place, onClose, onSave }: {
                       {/* City input + tags */}
                       <div className="flex-1">
                         <label className="block text-xs text-gray-500 mb-1">City (use comma for multiple cities)</label>
-                        <div className="min-h-[38px] px-3 py-1.5 border border-gray-300 rounded-lg flex flex-wrap gap-1.5 items-center focus-within:ring-2 focus-within:ring-gray-900">
+                        <div className="min-h-[56px] px-3 py-2 border border-gray-300 rounded-lg flex flex-wrap gap-1.5 items-start focus-within:ring-2 focus-within:ring-gray-900">
                           {row.tags.map(tag => (
                             <span key={tag} className="flex items-center gap-1 bg-gray-900 text-white text-xs px-2 py-0.5 rounded-full shrink-0">
                               {tag}
@@ -384,15 +384,7 @@ function PlacesModal({ place, onClose, onSave }: {
                         </div>
                       </div>
 
-                      {/* Delete row */}
-                      <div className="pt-5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => removeCityRow(row.id)}
-                          disabled={cityRows.length === 1}
-                          className="px-3 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
-                        >Delete</button>
-                      </div>
+
                     </div>
                   </div>
                 ))}
@@ -426,8 +418,6 @@ function PlacesModal({ place, onClose, onSave }: {
                         autoFocus={idx === manualPincodes.length - 1 && idx > 0}
                         className="w-44 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
                     </div>
-                    <button onClick={() => setManualPincodes(p => p.filter((_, i) => i !== idx))}
-                      className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 mb-0.5">Delete</button>
                   </div>
                 ))}
               </div>
@@ -436,7 +426,7 @@ function PlacesModal({ place, onClose, onSave }: {
         </div>
 
         {(placeType === 'state' || inputMode === 'bulk') && (
-          <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
+          <div className="flex justify-end gap-3 px-8 py-5 border-t border-gray-100">
             <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
             <button onClick={handleSubmit} className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Submit</button>
           </div>
