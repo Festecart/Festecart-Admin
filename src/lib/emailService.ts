@@ -44,6 +44,7 @@ export interface OrderForEmail {
 }
 
 export interface OrderConfirmationData {
+  orderId?: string;
   orderNumber: string;
   customerName: string;
   customerEmail: string;
@@ -83,6 +84,7 @@ export async function sendOrderStatusEmail(
 export async function sendOrderConfirmationEmail(data: OrderConfirmationData): Promise<void> {
   // Map to the shape the Cloud Function expects
   const order = {
+    id:              data.orderId ?? null,
     order_number:    data.orderNumber,
     customer_email:  data.customerEmail,
     guest_email:     null,

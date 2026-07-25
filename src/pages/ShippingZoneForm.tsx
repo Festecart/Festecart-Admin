@@ -174,18 +174,18 @@ function PlacesModal({ place, onClose, onSave }: {
     setCityRows(rows => rows.map(r => r.id === rowId ? { ...r, tags: r.tags.filter(t => t !== tag) } : r))
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-12 bg-black/50"
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl mx-4 max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-900 text-base">Places in {place.country}</h3>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-gray-100 text-gray-500"><X size={16} /></button>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col">
+        <div className="flex items-center justify-between px-7 py-4 border-b border-gray-200">
+          <h3 className="font-semibold text-gray-900 text-lg">Places in {place.country}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"><X size={16} /></button>
         </div>
-        <div className="px-6 py-5 overflow-y-auto flex-1 space-y-5">
+        <div className="px-7 py-5 overflow-y-auto flex-1 space-y-5">
           {/* Type radio */}
-          <div className="flex gap-8">
+          <div className="flex gap-7 flex-wrap">
             {(hasStates ? ['state','city','pincode'] : ['city','pincode']).map(t => (
-              <label key={t} className="flex items-center gap-2 text-sm cursor-pointer">
+              <label key={t} className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
                 <input type="radio" checked={placeType === t} onChange={() => { setPlaceType(t as PlaceType); setInputMode('manual'); setBulkError(null) }} className="accent-gray-900 w-4 h-4" />
                 {t === 'pincode' ? 'Zipcode/Pincode' : t.charAt(0).toUpperCase() + t.slice(1)}
               </label>
@@ -193,9 +193,9 @@ function PlacesModal({ place, onClose, onSave }: {
           </div>
 
           {/* Manual / Bulk toggle */}
-          <div className="flex gap-6">
+          <div className="flex gap-7 flex-wrap">
             {(['manual','bulk'] as const).map(m => (
-              <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
+              <label key={m} className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
                 <input type="radio" checked={inputMode === m} onChange={() => { setInputMode(m); setBulkError(null) }} className="accent-gray-900 w-4 h-4" />
                 {m === 'manual' ? 'Manual' : 'Bulk Upload'}
               </label>
@@ -303,10 +303,10 @@ function PlacesModal({ place, onClose, onSave }: {
 
           {/* Manual inputs */}
           {inputMode === 'manual' && placeType === 'state' && hasStates && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <input type="text" value={stateSearch} onChange={e => setStateSearch(e.target.value)}
                 placeholder={`Search ${place.country} state…`} autoFocus
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
               <div className="border border-gray-200 rounded-lg overflow-hidden max-h-56 overflow-y-auto">
                 {filteredStates.map(s => (
                   <div key={s} onClick={() => toggleState(s)}
@@ -330,123 +330,127 @@ function PlacesModal({ place, onClose, onSave }: {
 
           {inputMode === 'manual' && placeType === 'city' && (
             <div className="space-y-3">
-              <div className="max-h-72 overflow-y-auto space-y-3 pr-1">
+              <div className="max-h-64 overflow-y-auto space-y-3 pr-1">
                 {cityRows.map((row, idx) => (
-                  <div key={row.id} className="space-y-2">
-                    <div className="flex gap-3 items-start">
-                      {/* State dropdown */}
-                      <div className="w-44 shrink-0">
-                        <label className="block text-xs text-gray-500 mb-1">State</label>
-                        {stateList.length > 0 ? (
-                          <select
-                            value={row.state}
-                            onChange={e => updateCityRow(row.id, { state: e.target.value })}
-                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
-                          >
-                            <option value="">Select state</option>
-                            {stateList.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        ) : (
-                          <input type="text" value={row.state}
-                            onChange={e => updateCityRow(row.id, { state: e.target.value })}
-                            placeholder="State"
-                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                        )}
-                      </div>
+                  <div key={row.id} className="grid grid-cols-[200px_1fr_auto] gap-3 items-start">
+                    {/* State dropdown */}
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">State</label>
+                      {stateList.length > 0 ? (
+                        <select
+                          value={row.state}
+                          onChange={e => updateCityRow(row.id, { state: e.target.value })}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 bg-white"
+                        >
+                          <option value="">Select state</option>
+                          {stateList.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : (
+                        <input type="text" value={row.state}
+                          onChange={e => updateCityRow(row.id, { state: e.target.value })}
+                          placeholder="State"
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                      )}
+                    </div>
 
-                      {/* City tag input */}
-                      <div className="flex-1">
-                        <label className="block text-xs text-gray-500 mb-1">City (use comma for multiple cities)</label>
-                        <div className="min-h-[38px] px-3 py-1.5 border border-gray-300 rounded-lg flex flex-wrap gap-1.5 items-center focus-within:ring-2 focus-within:ring-gray-900">
-                          {row.tags.map(tag => (
-                            <span key={tag} className="flex items-center gap-1 bg-gray-900 text-white text-xs px-2 py-0.5 rounded-full shrink-0">
-                              {tag}
-                              <button type="button" onClick={() => removeCityTag(row.id, tag)} className="opacity-70 hover:opacity-100 ml-0.5">
-                                <X size={9} />
-                              </button>
-                            </span>
-                          ))}
-                          <input
-                            type="text"
-                            value={row.input}
-                            autoFocus={idx === 0}
-                            onChange={e => updateCityRow(row.id, { input: e.target.value })}
-                            onKeyDown={e => {
-                              if ((e.key === 'Enter' || e.key === ',') && row.input.trim()) {
-                                e.preventDefault()
-                                commitCityInput(row.id, row.input)
-                              }
-                              if (e.key === 'Backspace' && !row.input && row.tags.length) {
-                                removeCityTag(row.id, row.tags[row.tags.length - 1])
-                              }
-                            }}
-                            onBlur={() => { if (row.input.trim()) commitCityInput(row.id, row.input) }}
-                            placeholder={row.tags.length === 0 ? 'e.g. Bengaluru, Mysuru' : ''}
-                            className="flex-1 min-w-[80px] text-sm outline-none bg-transparent py-0.5"
-                          />
-                        </div>
+                    {/* City tag input */}
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">City <span className="text-gray-400">(comma for multiple)</span></label>
+                      <div className="min-h-[38px] px-3 py-1.5 border border-gray-300 rounded-lg flex flex-wrap gap-1.5 items-center focus-within:ring-2 focus-within:ring-gray-900 cursor-text">
+                        {row.tags.map(tag => (
+                          <span key={tag} className="flex items-center gap-1 bg-gray-900 text-white text-xs px-2 py-0.5 rounded-full shrink-0">
+                            {tag}
+                            <button type="button" onClick={() => removeCityTag(row.id, tag)} className="opacity-70 hover:opacity-100 ml-0.5">
+                              <X size={9} />
+                            </button>
+                          </span>
+                        ))}
+                        <input
+                          type="text"
+                          value={row.input}
+                          autoFocus={idx === 0}
+                          onChange={e => updateCityRow(row.id, { input: e.target.value })}
+                          onKeyDown={e => {
+                            if ((e.key === 'Enter' || e.key === ',') && row.input.trim()) {
+                              e.preventDefault()
+                              commitCityInput(row.id, row.input)
+                            }
+                            if (e.key === 'Backspace' && !row.input && row.tags.length) {
+                              removeCityTag(row.id, row.tags[row.tags.length - 1])
+                            }
+                          }}
+                          onBlur={() => { if (row.input.trim()) commitCityInput(row.id, row.input) }}
+                          placeholder={row.tags.length === 0 ? 'e.g. Bengaluru, Mysuru' : ''}
+                          className="flex-1 min-w-[80px] text-sm outline-none bg-transparent py-0.5"
+                        />
                       </div>
+                    </div>
 
-                      {/* Delete row */}
-                      <div className="pt-5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => removeCityRow(row.id)}
-                          disabled={cityRows.length === 1}
-                          className="px-3 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
-                        >Delete</button>
-                      </div>
+                    {/* Delete row */}
+                    <div className="pt-5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => removeCityRow(row.id)}
+                        disabled={cityRows.length === 1}
+                        className="px-3 py-2 bg-gray-100 text-gray-700 text-xs rounded-lg hover:bg-red-50 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors border border-gray-200"
+                      >Delete</button>
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="flex items-center justify-between pt-1">
+              <div className="flex items-center justify-between pt-2 border-t border-gray-100">
                 <button type="button" onClick={addCityRow}
-                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Add More</button>
+                  className="flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors">
+                  <Plus size={14} /> Add More
+                </button>
                 <button type="button" onClick={handleSubmit}
-                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Submit</button>
+                  className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors">Submit</button>
               </div>
             </div>
           )}
 
           {inputMode === 'manual' && placeType === 'pincode' && (
             <div className="space-y-3">
-              <div className="flex justify-between items-center">
+              <div id="pincode-list" className="space-y-2.5 max-h-60 overflow-y-auto">
+                {manualPincodes.map((pin, idx) => (
+                  <div key={idx} className="flex gap-3 items-end">
+                    <div className="flex-1 max-w-xs">
+                      <label className="block text-xs text-gray-500 mb-1">Pincode</label>
+                      <input type="text" value={pin}
+                        onChange={e => setManualPincodes(p => p.map((x, i) => i === idx ? e.target.value : x))}
+                        autoFocus={idx === manualPincodes.length - 1 && idx > 0}
+                        placeholder="e.g. 560001"
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                    </div>
+                    {manualPincodes.length > 1 && (
+                      <button onClick={() => setManualPincodes(p => p.filter((_, i) => i !== idx))}
+                        className="px-3 py-2 bg-gray-100 text-gray-700 text-xs rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors border border-gray-200 mb-0.5">Delete</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-gray-100">
                 <button onClick={() => {
                   setManualPincodes(p => [...p, ''])
-                  // scroll to bottom of list after adding
                   setTimeout(() => {
                     const container = document.getElementById('pincode-list')
                     if (container) container.scrollTop = container.scrollHeight
                   }, 50)
                 }}
-                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Add More</button>
+                  className="flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors">
+                  <Plus size={14} /> Add More
+                </button>
                 <button onClick={handleSubmit}
-                  className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700">Submit</button>
-              </div>
-              <div id="pincode-list" className="space-y-2 max-h-64 overflow-y-auto">
-                {manualPincodes.map((pin, idx) => (
-                  <div key={idx} className="flex gap-3 items-end">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Pincode</label>
-                      <input type="text" value={pin}
-                        onChange={e => setManualPincodes(p => p.map((x, i) => i === idx ? e.target.value : x))}
-                        autoFocus={idx === manualPincodes.length - 1 && idx > 0}
-                        className="w-44 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
-                    </div>
-                    <button onClick={() => setManualPincodes(p => p.filter((_, i) => i !== idx))}
-                      className="px-4 py-2 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-700 mb-0.5">Delete</button>
-                  </div>
-                ))}
+                  className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors">Submit</button>
               </div>
             </div>
           )}
         </div>
 
         {(placeType === 'state' || inputMode === 'bulk') && (
-          <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100">
-            <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
-            <button onClick={handleSubmit} className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800">Save</button>
+          <div className="flex justify-end gap-3 px-7 py-4 border-t border-gray-100">
+            <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors">Cancel</button>
+            <button onClick={handleSubmit} className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800 transition-colors">Save</button>
           </div>
         )}
       </div>

@@ -310,7 +310,7 @@ export default function CheckoutPage() {
         updated_at:   serverTimestamp(),
       };
 
-      await addDoc(collection(db, 'orders'), orderPayload);
+      const orderDocRef = await addDoc(collection(db, 'orders'), orderPayload);
 
       // ── Decrement inventory_count for tracked products ─────────
       await Promise.all(
@@ -339,6 +339,7 @@ export default function CheckoutPage() {
 
       if (customerEmail) {
         sendOrderConfirmationEmail({
+          orderId:         orderDocRef.id,
           orderNumber:     orderNumber,
           customerName:    customerName,
           customerEmail:   customerEmail,

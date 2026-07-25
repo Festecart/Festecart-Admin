@@ -170,5 +170,12 @@ service cloud.firestore {
       allow read, create, delete: if isSuperAdmin();
       allow update:               if isSignedIn();
     }
+
+    // ── email_sent_log ────────────────────────────────────────────────
+    // Internal idempotency log written only by Cloud Functions (Admin SDK).
+    // No client-side access allowed.
+    match /email_sent_log/{docId} {
+      allow read, write: if false;
+    }
   }
 }
