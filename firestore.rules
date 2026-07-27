@@ -177,5 +177,20 @@ service cloud.firestore {
     match /email_sent_log/{docId} {
       allow read, write: if false;
     }
+
+    // ── coupons ───────────────────────────────────────────────────────
+    // Public read so guests can validate coupons at checkout.
+    // Admin-only writes.
+    match /coupons/{couponId} {
+      allow read:           if true;
+      allow write:          if isAdmin();
+
+      // Per-user usage subcollection — readable by owner or admin,
+      // writable by anyone (needed for guest checkout usage recording).
+      match /user_usage/{userId} {
+        allow read:           if isOwner(userId) || isAdmin();
+        allow create, update: if true;
+      }
+    }
   }
 }

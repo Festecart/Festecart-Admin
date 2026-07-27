@@ -16,6 +16,7 @@ const PAGE_TYPES: { label: string; href: string; group: string }[] = [
   { label: 'Categories',       href: '/categories',    group: 'Main'   },
   { label: 'About',            href: '/about',         group: 'Main'   },
   { label: 'Contact',          href: '/contact',       group: 'Main'   },
+  { label: 'Track Your Order', href: '/track-order',  group: 'Main'   },
   { label: 'Privacy Policy',   href: '/privacy',       group: 'Legal'  },
   { label: 'Terms of Service', href: '/terms',         group: 'Legal'  },
   { label: 'Custom URL',       href: '',               group: 'Custom' },

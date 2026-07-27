@@ -25,6 +25,10 @@ import FeaturedProducts from '@/pages/FeaturedProducts'
 import Testimonials from '@/pages/Testimonials'
 import WhyPackages from '@/pages/WhyPackages'
 
+import Coupons from '@/pages/Coupons'
+import CouponForm from '@/pages/CouponForm'
+import Analytics from '@/pages/Analytics'
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -80,6 +84,10 @@ export default function App() {
             <Route path="site/featured-products" element={<FeaturedProducts />} />
             <Route path="site/testimonials" element={<Testimonials />} />
             <Route path="site/why-packages" element={<WhyPackages />} />
+            <Route path="coupons" element={<Coupons />} />
+            <Route path="coupons/add" element={<CouponForm />} />
+            <Route path="coupons/:id/edit" element={<CouponForm />} />
+            <Route path="analytics" element={<Analytics />} />
           </Route>
 
           {/* Fallback */}
