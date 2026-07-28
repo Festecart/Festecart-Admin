@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { ShoppingBag, Truck, LogOut, ChevronUp, ChevronDown, Package, Globe, Layout, Tag, BarChart2 } from 'lucide-react'
+import { ShoppingBag, Truck, LogOut, ChevronUp, ChevronDown, Package, Globe, Layout, BarChart2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {

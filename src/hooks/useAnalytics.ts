@@ -39,7 +39,6 @@ export function aggregateOrders(
   const byCoupon   = new Map<string, CouponUsageSummary>()
 
   const customerSet     = new Set<string>()       // uid or guest_email
-  const allCustomerSet  = new Set<string>()       // all-time unique customers (within fetched orders)
   const firstOrderMap   = new Map<string, number>() // customer → earliest order ts
 
   for (const order of orders) {
@@ -140,7 +139,7 @@ export function aggregateOrders(
   // aggregated order set (we can only classify within the fetched window)
   const rangeStart = orders.length ? (orders[orders.length - 1]?.created_at?.toMillis?.() ?? 0) : 0
   let newCustomers = 0, returningCustomers = 0
-  for (const [cid, firstTs] of firstOrderMap.entries()) {
+  for (const [, firstTs] of firstOrderMap.entries()) {
     if (firstTs >= rangeStart) newCustomers++
     else returningCustomers++
   }

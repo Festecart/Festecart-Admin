@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
   BarChart2, RefreshCw, Download, IndianRupee, ShoppingBag,
@@ -33,8 +33,6 @@ const STATUS_COLOR: Record<string, string> = {
   delivered:        C.green,
   cancelled:        C.red,
 }
-
-const CHART_COLORS = [C.indigo, C.blue, C.green, C.amber, C.red, C.purple, C.orange, C.teal, C.sky]
 
 // ── Formatters ────────────────────────────────────────────────────
 
@@ -285,7 +283,7 @@ function KPISkel() {
 
 function RevenueChart({ data }: { data: AnalyticsData }) {
   const [view, setView] = useState<'daily' | 'monthly'>('daily')
-  const chartData = view === 'daily' ? data.revenueByDay : data.revenueByMonth
+  const chartData: Record<string, unknown>[] = view === 'daily' ? data.revenueByDay : data.revenueByMonth
   const empty = chartData.length === 0
 
   return (
@@ -365,7 +363,7 @@ function StatusChart({ data }: { data: AnalyticsData }) {
                 cx="50%" cy="50%" outerRadius={72} innerRadius={44} paddingAngle={2}>
                 {items.map((it, i) => <Cell key={i} fill={it.color} />)}
               </Pie>
-              <Tooltip formatter={(v: number, name: string) => [v.toLocaleString('en-IN'), name]} />
+              <Tooltip formatter={((v: number, name: string) => [v.toLocaleString('en-IN'), name]) as any} />
             </PieChart>
           </ResponsiveContainer>
           <DonutLegend items={items} />
@@ -379,7 +377,7 @@ function StatusChart({ data }: { data: AnalyticsData }) {
 
 function PaymentChart({ data }: { data: AnalyticsData }) {
   const total  = data.codOrders + data.prepaidOrders
-  const items  = data.paymentBreakdown.map((p, i) => ({
+  const items  = data.paymentBreakdown.map((p) => ({
     label: p.method === 'cod' ? 'Cash on Delivery' : p.method.toUpperCase(),
     value: p.count,
     color: p.method === 'cod' ? C.amber : C.green,
@@ -396,7 +394,7 @@ function PaymentChart({ data }: { data: AnalyticsData }) {
                 cx="50%" cy="50%" outerRadius={72} innerRadius={44} paddingAngle={2}>
                 {items.map((it, i) => <Cell key={i} fill={it.color} />)}
               </Pie>
-              <Tooltip formatter={(v: number, name: string) => [v.toLocaleString('en-IN'), name]} />
+              <Tooltip formatter={((v: number, name: string) => [v.toLocaleString('en-IN'), name]) as any} />
             </PieChart>
           </ResponsiveContainer>
           <DonutLegend items={items} />
@@ -409,8 +407,6 @@ function PaymentChart({ data }: { data: AnalyticsData }) {
 // ── Geographic section ────────────────────────────────────────────
 
 function GeoSection({ data }: { data: AnalyticsData }) {
-  const maxRev = Math.max(1, ...data.salesByState.map(s => s.revenue))
-
   return (
     <div className="space-y-4">
       <div className="grid lg:grid-cols-2 gap-4">
@@ -485,7 +481,6 @@ function GeoSection({ data }: { data: AnalyticsData }) {
 // ── Catalog section ───────────────────────────────────────────────
 
 function CatalogSection({ data }: { data: AnalyticsData }) {
-  const maxRev = Math.max(1, ...data.salesByCategory.map(c => c.revenue))
   const maxUnits = Math.max(1, ...data.topProducts.map(p => p.units))
 
   return (
@@ -571,7 +566,7 @@ function CouponSection({ data }: { data: AnalyticsData }) {
                   cx="50%" cy="50%" outerRadius={65} innerRadius={40} paddingAngle={2}>
                   {pieData.map((it, i) => <Cell key={i} fill={it.color} />)}
                 </Pie>
-                <Tooltip formatter={(v: number, name: string) => [v.toLocaleString('en-IN'), name]} />
+                <Tooltip formatter={((v: number, name: string) => [v.toLocaleString('en-IN'), name]) as any} />
               </PieChart>
             </ResponsiveContainer>
             <DonutLegend items={pieData.map(d => ({
@@ -615,7 +610,7 @@ function CustomerSection({ data }: { data: AnalyticsData }) {
                   cx="50%" cy="50%" outerRadius={65} innerRadius={40} paddingAngle={2}>
                   {pieData.map((it, i) => <Cell key={i} fill={it.color} />)}
                 </Pie>
-                <Tooltip formatter={(v: number, name: string) => [v.toLocaleString('en-IN'), name]} />
+                <Tooltip formatter={((v: number, name: string) => [v.toLocaleString('en-IN'), name]) as any} />
               </PieChart>
             </ResponsiveContainer>
             <DonutLegend items={pieData.map(d => ({
