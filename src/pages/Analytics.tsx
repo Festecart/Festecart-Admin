@@ -283,8 +283,9 @@ function KPISkel() {
 
 function RevenueChart({ data }: { data: AnalyticsData }) {
   const [view, setView] = useState<'daily' | 'monthly'>('daily')
-  const chartData: Record<string, unknown>[] = view === 'daily' ? data.revenueByDay : data.revenueByMonth
+  const chartData = view === 'daily' ? data.revenueByDay : data.revenueByMonth
   const empty = chartData.length === 0
+  const areaData = chartData as Array<AnalyticsData['revenueByDay'][number] | AnalyticsData['revenueByMonth'][number]>
 
   return (
     <ChartCard
@@ -302,7 +303,7 @@ function RevenueChart({ data }: { data: AnalyticsData }) {
     >
       {empty ? <Empty /> : (
         <ResponsiveContainer width="100%" height={260}>
-          <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+          <AreaChart data={areaData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor={C.indigo} stopOpacity={0.15} />

@@ -283,14 +283,6 @@ export default function CouponForm() {
 
   const isMutating = createMutation.isPending || updateMutation.isPending
 
-  const toggleId = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
-
   // Toggle a category node — selects/deselects all items inside it
   const toggleCatNode = (node: CategoryNode) => {
     setSelectedIds(prev => {
