@@ -24,6 +24,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Validate FTP deploy secrets
+        run: |
+          missing=false
+          if [ -z "${{ secrets.FTP_SERVER }}" ]; then echo "Missing secret: FTP_SERVER"; missing=true; fi
+          if [ -z "${{ secrets.FTP_USERNAME }}" ]; then echo "Missing secret: FTP_USERNAME"; missing=true; fi
+          if [ -z "${{ secrets.FTP_PASSWORD }}" ]; then echo "Missing secret: FTP_PASSWORD"; missing=true; fi
+          if [ -z "${{ secrets.FTP_SERVER_DIR }}" ]; then echo "Missing secret: FTP_SERVER_DIR"; missing=true; fi
+          if [ "$missing" = true ]; then exit 1; fi
+
       - name: Deploy to Hostinger via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
