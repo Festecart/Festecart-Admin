@@ -1,4 +1,4 @@
-name: Build & Deploy to Firebase Hosting
+name: Build & Deploy to GitHub Pages
 
 on:
   push:
@@ -24,13 +24,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Deploy to Firebase Hosting
-        if: secrets.FIREBASE_TOKEN != ''
-        run: |
-          npx firebase deploy --only hosting --token "$FIREBASE_TOKEN"
-
-      - name: Skip deploy when Firebase token is missing
-        if: secrets.FIREBASE_TOKEN == ''
-        run: |
-          echo "FIREBASE_TOKEN is not configured. Deployment skipped."
-          echo "Add a repository secret named FIREBASE_TOKEN and push again."
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          keep_files: false
+          allow_empty_commit: false
