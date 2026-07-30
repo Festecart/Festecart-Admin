@@ -1,4 +1,4 @@
-name: Build & Deploy to Hostinger
+name: Build & Deploy to Firebase Hosting
 
 on:
   push:
@@ -24,21 +24,13 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Validate FTP deploy secrets
+      - name: Deploy to Firebase Hosting
+        if: secrets.FIREBASE_TOKEN != ''
         run: |
-          missing=false
-          if [ -z "${{ secrets.FTP_SERVER }}" ]; then echo "Missing secret: FTP_SERVER"; missing=true; fi
-          if [ -z "${{ secrets.FTP_USERNAME }}" ]; then echo "Missing secret: FTP_USERNAME"; missing=true; fi
-          if [ -z "${{ secrets.FTP_PASSWORD }}" ]; then echo "Missing secret: FTP_PASSWORD"; missing=true; fi
-          if [ -z "${{ secrets.FTP_SERVER_DIR }}" ]; then echo "Missing secret: FTP_SERVER_DIR"; missing=true; fi
-          if [ "$missing" = true ]; then exit 1; fi
+          npx firebase deploy --only hosting --token "$FIREBASE_TOKEN"
 
-      - name: Deploy to Hostinger via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server:      ${{ secrets.FTP_SERVER }}
-          username:    ${{ secrets.FTP_USERNAME }}
-          password:    ${{ secrets.FTP_PASSWORD }}
-          local-dir:   ./dist/
-          server-dir:  ${{ secrets.FTP_SERVER_DIR }}
-          dangerous-clean-slate: false
+      - name: Skip deploy when Firebase token is missing
+        if: secrets.FIREBASE_TOKEN == ''
+        run: |
+          echo "FIREBASE_TOKEN is not configured. Deployment skipped."
+          echo "Add a repository secret named FIREBASE_TOKEN and push again."
