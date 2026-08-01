@@ -61,6 +61,8 @@ function generateInvoicePdf(order, logoImageBuffer) {
     var total     = Number(order.total || 0)
     var shipping  = Number(order.shipping_charge || 0)
     var subtotal  = items.reduce(function(s, i) { return s + Number(i.price || 0) * (i.quantity || 1) }, 0)
+    var couponCode     = order.coupon_code || null
+    var couponDiscount = Number(order.coupon_discount || 0)
     var custEmail = order.customer_email || order.guest_email || ''
     var payment   = order.payment_method === 'cod' ? 'Cash on Delivery'
                   : order.payment_method === 'self_pickup' ? 'Self Pickup'
@@ -182,6 +184,15 @@ function generateInvoicePdf(order, logoImageBuffer) {
     doc.moveTo(40, y).lineTo(555, y).strokeColor('#ddd').stroke()
     y += 8
 
+    // Coupon discount row
+    if (couponCode && couponDiscount > 0) {
+      doc.rect(40, y, W, rowH).fillAndStroke('#f0fff4', '#ddd')
+      doc.fillColor('#16a34a').fontSize(8).font('Helvetica-Bold').text('Coupon (' + couponCode + '):', 390, y + 3)
+      doc.font('Helvetica').text('-' + couponDiscount.toFixed(2), col.total, y + 3)
+      doc.fillColor('#000')
+      y += rowH
+    }
+
     // In words
     doc.fontSize(8).font('Helvetica-Bold').text('In words: ', 40, y, { continued: true })
     doc.font('Helvetica').fillColor('#333').text(numToWords(total))
@@ -221,6 +232,8 @@ function buildAdminOrderEmail(order, linkHref) {
   var payment   = order.payment_method === 'self_pickup' ? 'Self Pickup'
                 : order.payment_method === 'cod' ? 'Cash on Delivery'
                 : (order.payment_method || '').toUpperCase()
+  var couponCode     = order.coupon_code || null
+  var couponDiscount = Number(order.coupon_discount || 0)
   var addrName   = (addr && addr.name) || custName
   var addrStreet = (addr && addr.address) || ''
   var addrCity   = (addr && addr.city) || ''
@@ -288,6 +301,10 @@ function buildAdminOrderEmail(order, linkHref) {
     + '<tr><td colspan="3" style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#111;">'
     + 'Shipping<br/><span style="font-size:11px;font-weight:normal;color:#888;">(' + (shipping === 0 ? 'Self Pickup' : payment) + ')</span>'
     + '</td><td style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;color:#444;">' + (shipping === 0 ? '-' : fmtInr(shipping)) + '</td></tr>'
+    + (couponCode && couponDiscount > 0
+        ? '<tr><td colspan="3" style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#16a34a;">Coupon (' + couponCode + ')</td>'
+          + '<td style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#16a34a;">-&#8377; ' + couponDiscount.toLocaleString('en-IN') + '</td></tr>'
+        : '')
     + '<tr><td colspan="3" style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#111;">Grand Total</td>'
     + '<td style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#111;">&#8377;<br/>' + total.toLocaleString('en-IN') + '</td></tr>'
     + '</tbody></table>'
@@ -309,7 +326,9 @@ function buildCustomerConfirmationEmail(order) {
   var payment   = order.payment_method === 'self_pickup' ? 'Self Pickup'
                 : order.payment_method === 'cod' ? 'Cash on Delivery'
                 : (order.payment_method || '').toUpperCase()
-  var items     = order.items || []
+  var items          = order.items || []
+  var couponCode     = order.coupon_code || null
+  var couponDiscount = Number(order.coupon_discount || 0)
 
   var itemRows = items.map(function(i) {
     var qty  = i.quantity || 1
@@ -351,6 +370,9 @@ function buildCustomerConfirmationEmail(order) {
     + (shipping > 0
         ? '<tr><td style="padding:5px 0;color:#555;">Shipping</td><td style="text-align:right;color:#111;">&#8377; ' + shipping.toLocaleString('en-IN') + '</td></tr>'
         : '<tr><td style="padding:5px 0;color:#555;">Shipping</td><td style="text-align:right;color:#16a34a;font-weight:600;">Free</td></tr>')
+    + (couponCode && couponDiscount > 0
+        ? '<tr><td style="padding:5px 0;color:#16a34a;">Coupon (' + couponCode + ')</td><td style="text-align:right;color:#16a34a;font-weight:600;">-&#8377; ' + couponDiscount.toLocaleString('en-IN') + '</td></tr>'
+        : '')
     + '<tr><td style="padding:5px 0;font-weight:bold;font-size:15px;color:#1a1a2e;">Grand Total</td>'
     + '<td style="text-align:right;font-weight:bold;font-size:15px;color:#1a1a2e;">&#8377; ' + total.toLocaleString('en-IN') + '</td></tr>'
     + '</table>'

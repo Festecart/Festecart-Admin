@@ -37,6 +37,8 @@ export interface OrderForEmail {
   items: { name: string; price: number; quantity: number; image?: string | null }[];
   subtotal: number;
   shipping_charge: number;
+  coupon_code?: string | null;
+  coupon_discount?: number | null;
   total: number;
   payment_method: string;
   tracking_number?: string | null;

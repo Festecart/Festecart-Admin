@@ -65,6 +65,7 @@ function toOrder(id: string, data: Record<string, unknown>): Order {
     total:               Number(data.total ?? 0),
     note:                (data.note as string | null) ?? null,
     coupon_code:         (data.coupon_code as string | null) ?? null,
+    coupon_discount:     (data.coupon_discount as number | null) ?? null,
     shipping_address:    (data.shipping_address as Order['shipping_address']) ?? null,
     items:               (data.items as Order['items']) ?? [],
     tracking_number:     (data.tracking_number as string | null) ?? null,
@@ -191,6 +192,8 @@ async function sendStatusEmail(order: Order, newStatus: string, invoice?: Partia
     items:            order.items ?? [],
     subtotal:         order.subtotal,
     shipping_charge:  order.shipping_charge,
+    coupon_code:      order.coupon_code ?? null,
+    coupon_discount:  order.coupon_discount ?? null,
     total:            order.total,
     payment_method:   order.payment_method,
     tracking_number:  order.tracking_number,
@@ -517,6 +520,9 @@ function downloadInvoicePdf(invoice: Invoice, order: Order) {
     .toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
   const ordDate   = new Date(order.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
 
+  const couponCode     = order.coupon_code ?? null
+  const couponDiscount = order.coupon_discount ?? 0
+
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invoice.invoice_number}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:12px;padding:32px;}
 h1{text-align:center;font-size:17px;margin-bottom:20px;letter-spacing:2px;}
@@ -551,7 +557,11 @@ td{padding:7px 9px;border:1px solid #ddd;}
 <hr/>
 <table><thead><tr><th>Item</th><th class="tc">Qty</th><th class="tr">Price</th><th class="tr">Total</th></tr></thead>
 <tbody>${items.map(i=>`<tr><td><strong>${i.product_name}</strong></td><td class="tc">${i.fulfilled_qty}</td><td class="tr">₹${i.price.toFixed(2)}</td><td class="tr">₹${(i.price*i.fulfilled_qty).toFixed(2)}</td></tr>`).join('')}</tbody>
-<tfoot><tr class="total-row"><td colspan="3" class="tr">Total:</td><td class="tr">₹${total.toFixed(2)}</td></tr></tfoot></table>
+<tfoot>
+  <tr><td colspan="3" class="tr">Subtotal:</td><td class="tr">₹${total.toFixed(2)}</td></tr>
+  ${couponCode && couponDiscount > 0 ? `<tr><td colspan="3" class="tr" style="color:#16a34a;">Coupon (${couponCode}):</td><td class="tr" style="color:#16a34a;">-₹${couponDiscount.toFixed(2)}</td></tr>` : ''}
+  <tr class="total-row"><td colspan="3" class="tr">Grand Total:</td><td class="tr">₹${order.total.toFixed(2)}</td></tr>
+</tfoot></table>
 <p style="font-size:11px;margin:6px 0;"><strong>Mode of Payment:</strong> ${payMode}</p>
 ${invoice.notes ? `<p style="font-size:11px;margin:4px 0;"><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
 </body></html>`
