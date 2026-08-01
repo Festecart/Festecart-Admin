@@ -5,7 +5,7 @@ import {
 import type {
   DateRange, AnalyticsData,
   RevenueByDay, RevenueByMonth, SalesByGeo, SalesByCategory, TopProduct,
-  StatusCount, PaymentCount, CouponUsageSummary,
+  StatusCount, PaymentCount, CouponUsageSummary, CustomerDetail,
 } from '@/types/analytics'
 
 // ── Normalize geo strings ─────────────────────────────────────────
@@ -40,6 +40,9 @@ export function aggregateOrders(
 
   const customerSet     = new Set<string>()       // uid or guest_email
   const firstOrderMap   = new Map<string, number>() // customer → earliest order ts
+  // customer detail accumulator
+  type CustAcc = { name: string; email: string; orders: number; spent: number; lastTs: number }
+  const customerMap = new Map<string, CustAcc>()
 
   for (const order of orders) {
     const status = order.status ?? 'pending'
@@ -76,6 +79,14 @@ export function aggregateOrders(
       if (existing === undefined || orderTs < existing) {
         firstOrderMap.set(customerId, orderTs)
       }
+      // Build customer detail
+      const name  = order.customer_name  ?? order.shipping_address?.name ?? 'Guest'
+      const email = order.guest_email    ?? order.customer_email          ?? ''
+      const acc   = customerMap.get(customerId) ?? { name, email, orders: 0, spent: 0, lastTs: 0 }
+      acc.orders++
+      acc.spent   += total
+      if (orderTs > acc.lastTs) { acc.lastTs = orderTs; acc.name = name || acc.name; acc.email = email || acc.email }
+      customerMap.set(customerId, acc)
     }
 
     // Time series
@@ -144,6 +155,20 @@ export function aggregateOrders(
     else returningCustomers++
   }
 
+  // Build customer list with new/returning flag
+  const customerList: CustomerDetail[] = Array.from(customerMap.entries()).map(([cid, acc]) => {
+    const firstTs = firstOrderMap.get(cid) ?? 0
+    return {
+      id: cid,
+      name:  acc.name  || 'Guest',
+      email: acc.email || '—',
+      orders: acc.orders,
+      totalSpent: acc.spent,
+      isNew: firstTs >= rangeStart,
+      lastOrderDate: acc.lastTs ? new Date(acc.lastTs).toISOString().slice(0, 10) : '',
+    }
+  }).sort((a, b) => b.totalSpent - a.totalSpent)
+
   const totalCustomers = customerSet.size
   const averageOrderValue = (totalOrders - cancelledOrders) > 0
     ? Math.round(totalRevenue / (totalOrders - cancelledOrders))
@@ -173,6 +198,7 @@ export function aggregateOrders(
     statusBreakdown:  Array.from(byStatus.values()),
     paymentBreakdown: Array.from(byPayment.values()),
     couponUsage:      Array.from(byCoupon.values()).sort((a, b) => b.uses - a.uses),
+    customerList,
   }
 }
 

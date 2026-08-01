@@ -52,6 +52,16 @@ export interface CouponUsageSummary {
   totalDiscount: number;
 }
 
+export interface CustomerDetail {
+  id: string;           // uid or guest_email
+  name: string;
+  email: string;
+  orders: number;
+  totalSpent: number;
+  isNew: boolean;       // first order within the selected range
+  lastOrderDate: string // yyyy-MM-dd
+}
+
 export interface AnalyticsData {
   // KPIs
   totalRevenue: number;
@@ -82,6 +92,9 @@ export interface AnalyticsData {
   statusBreakdown: StatusCount[];
   paymentBreakdown: PaymentCount[];
   couponUsage: CouponUsageSummary[];
+
+  // Customers
+  customerList: CustomerDetail[];
 }
 
 export interface KPICardProps {

@@ -5,8 +5,8 @@ import {
 } from 'recharts'
 import {
   BarChart2, RefreshCw, Download, IndianRupee, ShoppingBag,
-  TrendingUp, Users, XCircle, Truck, CreditCard, Tag,
-  Package, MapPin, AlertCircle,
+  TrendingUp, Users, XCircle, Truck, CreditCard,
+  MapPin, AlertCircle,
 } from 'lucide-react'
 import { useAnalytics } from '@/hooks/useAnalytics'
 import type { DateRange, AnalyticsData } from '@/types/analytics'
@@ -479,53 +479,102 @@ function GeoSection({ data }: { data: AnalyticsData }) {
   )
 }
 
-// ── Catalog section ───────────────────────────────────────────────
+// ── Customer section ──────────────────────────────────────────────
 
-function CatalogSection({ data }: { data: AnalyticsData }) {
-  const maxUnits = Math.max(1, ...data.topProducts.map(p => p.units))
+function CustomerSection({ data }: { data: AnalyticsData }) {
+  const [filter, setFilter] = useState<'all' | 'new' | 'returning'>('all')
+  const total = data.newCustomers + data.returningCustomers || 1
+
+  const pieData = [
+    { name: 'New',       value: data.newCustomers,       color: C.indigo },
+    { name: 'Returning', value: data.returningCustomers, color: C.blue   },
+  ].filter(d => d.value > 0)
+
+  const filtered = data.customerList.filter(c =>
+    filter === 'all' ? true : filter === 'new' ? c.isNew : !c.isNew
+  )
 
   return (
     <div className="space-y-4">
-      <ChartCard title="Sales by Category">
-        {data.salesByCategory.length === 0 ? <Empty /> : (
-          <ResponsiveContainer width="100%" height={Math.max(160, data.salesByCategory.length * 32)}>
-            <BarChart data={data.salesByCategory} layout="vertical" margin={{ left: 0, right: 12 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 10, fill: '#9ca3af' }}
-                tickFormatter={fmtCompact} tickLine={false} axisLine={false} />
-              <YAxis type="category" dataKey="category" tick={{ fontSize: 10, fill: '#6b7280' }}
-                width={110} tickLine={false} axisLine={false} />
-              <Tooltip content={<AnaTooltip currency />} />
-              <Bar dataKey="revenue" name="Revenue" fill={C.purple} radius={[0, 3, 3, 0]} maxBarSize={18} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </ChartCard>
+      {/* KPIs + donut */}
+      <div className="grid sm:grid-cols-2 gap-4">
+        <ChartCard title="Customer Segments">
+          {pieData.length === 0 ? <Empty /> : (
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                  <Pie data={pieData} dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" outerRadius={65} innerRadius={40} paddingAngle={2}>
+                    {pieData.map((it, i) => <Cell key={i} fill={it.color} />)}
+                  </Pie>
+                  <Tooltip formatter={((v: number, name: string) => [v.toLocaleString('en-IN'), name]) as any} />
+                </PieChart>
+              </ResponsiveContainer>
+              <DonutLegend items={pieData.map(d => ({
+                label: d.name, value: d.value, color: d.color,
+                pct: total > 0 ? (d.value / total) * 100 : 0,
+              }))} />
+            </>
+          )}
+        </ChartCard>
+        <div className="space-y-3">
+          {[
+            { label: 'Total Customers', value: data.totalCustomers,      icon: Users, color: C.indigo },
+            { label: 'New Customers',   value: data.newCustomers,        icon: Users, color: C.green },
+            { label: 'Returning',       value: data.returningCustomers,  icon: Users, color: C.blue },
+          ].map(kpi => (
+            <KPI key={kpi.label} label={kpi.label} value={kpi.value.toLocaleString('en-IN')} icon={kpi.icon} color={kpi.color} />
+          ))}
+        </div>
+      </div>
 
-      <ChartCard title="Top 10 Products by Units Sold">
-        {data.topProducts.length === 0 ? <Empty /> : (
+      {/* Customer list table */}
+      <ChartCard
+        title="Customer Activity"
+        action={
+          <div className="flex rounded-lg overflow-hidden border border-gray-200 text-xs">
+            {([['all','All'], ['new','New'], ['returning','Returning']] as const).map(([v, l]) => (
+              <button key={v} onClick={() => setFilter(v)}
+                className={`px-2.5 py-1 transition-colors ${filter === v ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        {filtered.length === 0 ? <Empty msg="No customers for the selected filter." /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
                   <th className="py-2 px-3 text-left text-xs font-semibold text-gray-500">#</th>
-                  <th className="py-2 px-3 text-left text-xs font-semibold text-gray-500">Product</th>
-                  <th className="py-2 px-3 text-right text-xs font-semibold text-gray-500">Units</th>
-                  <th className="py-2 px-3 text-right text-xs font-semibold text-gray-500">Revenue</th>
-                  <th className="py-2 px-3 text-left text-xs font-semibold text-gray-500 w-24 hidden sm:table-cell">Share</th>
+                  <th className="py-2 px-3 text-left text-xs font-semibold text-gray-500">Name</th>
+                  <th className="py-2 px-3 text-left text-xs font-semibold text-gray-500">Email</th>
+                  <th className="py-2 px-3 text-center text-xs font-semibold text-gray-500">Type</th>
+                  <th className="py-2 px-3 text-right text-xs font-semibold text-gray-500">Orders</th>
+                  <th className="py-2 px-3 text-right text-xs font-semibold text-gray-500">Total Spent</th>
+                  <th className="py-2 px-3 text-right text-xs font-semibold text-gray-500">Last Order</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {data.topProducts.map((p, i) => (
-                  <tr key={p.productId} className="hover:bg-gray-50">
-                    <td className="py-2.5 px-3 text-xs text-gray-400">{i + 1}</td>
-                    <td className="py-2.5 px-3 font-medium text-gray-900 max-w-[200px] truncate">{p.name || p.productId}</td>
-                    <td className="py-2.5 px-3 text-right text-gray-700">{p.units.toLocaleString('en-IN')}</td>
-                    <td className="py-2.5 px-3 text-right font-semibold text-gray-900">{fmtINR(p.revenue)}</td>
-                    <td className="py-2.5 px-3 hidden sm:table-cell">
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-20">
-                        <div className="h-full rounded-full" style={{ width: `${(p.units / maxUnits) * 100}%`, background: C.indigo }} />
-                      </div>
+                {filtered.map((c, i) => (
+                  <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="py-2 px-3 text-xs text-gray-400">{i + 1}</td>
+                    <td className="py-2 px-3 font-medium text-gray-900 max-w-[140px] truncate">{c.name}</td>
+                    <td className="py-2 px-3 text-gray-500 text-xs max-w-[180px] truncate">{c.email}</td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                        c.isNew
+                          ? 'bg-indigo-50 text-indigo-700'
+                          : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        {c.isNew ? 'New' : 'Returning'}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-right text-gray-700">{c.orders}</td>
+                    <td className="py-2 px-3 text-right font-semibold text-gray-900">{fmtINR(c.totalSpent)}</td>
+                    <td className="py-2 px-3 text-right text-xs text-gray-500">
+                      {c.lastOrderDate ? fmtDate(c.lastOrderDate) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -537,7 +586,6 @@ function CatalogSection({ data }: { data: AnalyticsData }) {
     </div>
   )
 }
-
 // ── Coupon section ────────────────────────────────────────────────
 
 function CouponSection({ data }: { data: AnalyticsData }) {
@@ -588,49 +636,6 @@ function CouponSection({ data }: { data: AnalyticsData }) {
         </div>
       )}
     </ChartCard>
-  )
-}
-
-// ── Customer section ──────────────────────────────────────────────
-
-function CustomerSection({ data }: { data: AnalyticsData }) {
-  const total = data.newCustomers + data.returningCustomers || 1
-  const pieData = [
-    { name: 'New',       value: data.newCustomers,       color: C.indigo },
-    { name: 'Returning', value: data.returningCustomers, color: C.blue   },
-  ].filter(d => d.value > 0)
-
-  return (
-    <div className="grid sm:grid-cols-2 gap-4">
-      <ChartCard title="Customer Segments">
-        {pieData.length === 0 ? <Empty /> : (
-          <>
-            <ResponsiveContainer width="100%" height={160}>
-              <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name"
-                  cx="50%" cy="50%" outerRadius={65} innerRadius={40} paddingAngle={2}>
-                  {pieData.map((it, i) => <Cell key={i} fill={it.color} />)}
-                </Pie>
-                <Tooltip formatter={((v: number, name: string) => [v.toLocaleString('en-IN'), name]) as any} />
-              </PieChart>
-            </ResponsiveContainer>
-            <DonutLegend items={pieData.map(d => ({
-              label: d.name, value: d.value, color: d.color,
-              pct: total > 0 ? (d.value / total) * 100 : 0,
-            }))} />
-          </>
-        )}
-      </ChartCard>
-      <div className="space-y-3">
-        {[
-          { label: 'Total Customers', value: data.totalCustomers, icon: Users, color: C.indigo },
-          { label: 'New Customers',   value: data.newCustomers,   icon: Users, color: C.green },
-          { label: 'Returning',       value: data.returningCustomers, icon: Users, color: C.blue },
-        ].map(kpi => (
-          <KPI key={kpi.label} label={kpi.label} value={kpi.value.toLocaleString('en-IN')} icon={kpi.icon} color={kpi.color} />
-        ))}
-      </div>
-    </div>
   )
 }
 
@@ -737,7 +742,12 @@ export default function Analytics() {
       )}
 
       {/* ── Customers ── */}
-      {isLoading && !data ? <Sk className="h-48" /> : data && <CustomerSection data={data} />}
+      <div>
+        <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+          <Users size={14} /> Customer Activity
+        </h2>
+        {isLoading && !data ? <Sk className="h-48" /> : data && <CustomerSection data={data} />}
+      </div>
 
       {/* ── Geographic ── */}
       <div>
@@ -747,18 +757,10 @@ export default function Analytics() {
         {isLoading && !data ? <Sk className="h-64" /> : data && <GeoSection data={data} />}
       </div>
 
-      {/* ── Catalog ── */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-          <Package size={14} /> Catalog Performance
-        </h2>
-        {isLoading && !data ? <Sk className="h-64" /> : data && <CatalogSection data={data} />}
-      </div>
-
       {/* ── Coupons ── */}
       <div>
         <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-          <Tag size={14} /> Coupon Analytics
+          <Download size={14} /> Coupon Analytics
         </h2>
         {isLoading && !data ? <Sk className="h-40" /> : data && <CouponSection data={data} />}
       </div>
