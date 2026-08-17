@@ -2,7 +2,6 @@
 const { onRequest } = require('firebase-functions/v2/https')
 const { setGlobalOptions } = require('firebase-functions/v2')
 const { initializeApp } = require('firebase-admin/app')
-const { getFirestore, FieldValue } = require('firebase-admin/firestore')
 const { Resend } = require('resend')
 const PDFDocument = require('pdfkit')
 
@@ -395,60 +394,41 @@ function buildCustomerConfirmationEmail(order) {
 
 
 // ── doSendEmail ──────────────────────────────────────────────────
-// Only sends emails for 'confirmed' status.
-// All other statuses (processing, shipped, delivered, etc.) are silently ignored.
-// Uses Firestore-based idempotency to prevent duplicate emails when the function
-// is called more than once for the same order (e.g. from both the storefront and
-// the admin panel). The lock document is written atomically before sending;
-// a second call that finds the document already present exits early.
+// Sends two emails on every confirmed order:
+//   1. Admin notification  → festecartdesi@gmail.com (admin template)
+//   2. Customer confirmation → customer email (customer template + PDF invoice)
+// Only fires for 'confirmed' status — all other statuses are ignored.
 async function doSendEmail(order, new_status) {
   if (new_status !== 'confirmed') {
     console.log('[email] status "' + new_status + '" — no email sent (only confirmed triggers emails)')
     return { skipped: true }
   }
 
-  var email  = order.customer_email || order.guest_email
-  if (!email) { throw new Error('No email found on order') }
+  var orderId      = order.id || null
+  var orderNum     = order.order_number || '—'
+  var customerEmail = order.customer_email || order.guest_email || null
+  var resend       = new Resend(process.env.RESEND_API_KEY)
 
-  // ── Idempotency check ────────────────────────────────────────
-  // Key: order_number (most reliable — always present and consistent across
-  // both the storefront call and the admin call for the same order).
-  // Falls back to orderId then email if order_number is missing.
-  var db       = getFirestore()
-  var lockKey  = (order.order_number || order.id || email).replace(/[^a-zA-Z0-9_-]/g, '_') + '__confirmed'
-  var lockRef  = db.collection('email_sent_log').doc(lockKey)
-  var alreadySent = false
+  // ── 1. Admin notification ────────────────────────────────────
+  var adminLink    = orderId ? (ADMIN_URL + '/orders/' + orderId) : (ADMIN_URL + '/orders')
+  var adminHtml    = buildAdminOrderEmail(order, adminLink)
+  var adminSubject = 'New Order ' + orderNum + ' — Festecart'
+
   try {
-    await db.runTransaction(async function(tx) {
-      var snap = await tx.get(lockRef)
-      if (snap.exists) {
-        alreadySent = true
-        return
-      }
-      tx.set(lockRef, {
-        order_id:     order.id || null,
-        order_number: order.order_number || null,
-        status:       'confirmed',
-        sent_at:      FieldValue.serverTimestamp(),
-      })
+    var adminResult = await resend.emails.send({
+      from:    FROM_EMAIL,
+      to:      ADMIN_EMAIL,
+      subject: adminSubject,
+      html:    adminHtml,
     })
-  } catch (lockErr) {
-    // If the transaction fails for any reason, log and continue — better to
-    // risk a duplicate than to silently drop a confirmation email.
-    console.warn('[email] idempotency lock failed, proceeding anyway:', lockErr.message)
-  }
-  if (alreadySent) {
-    console.log('[email] duplicate call detected for order ' + (order.order_number || order.id) + ' — skipping')
-    return { skipped: true, reason: 'already_sent' }
+    console.log('[email] admin notification ' + orderNum + ' -> ' + ADMIN_EMAIL + ':', adminResult)
+  } catch (adminErr) {
+    console.error('[email] admin notification failed:', adminErr)
   }
 
-  var orderId  = order.id || null
-  var orderNum = order.order_number || '—'
-  var resend   = new Resend(process.env.RESEND_API_KEY)
-
-  // 1. Fetch logo image for PDF embedding (only needed for customer email)
-  var pdfBase64 = null
-  if (ADMIN_EMAIL.toLowerCase() !== email.toLowerCase()) {
+  // ── 2. Customer confirmation (with PDF invoice) ──────────────
+  if (customerEmail && customerEmail.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+    // Fetch logo for PDF
     var logoImageBuffer = null
     try {
       var logoRes = await fetch(LOGO_URL)
@@ -459,52 +439,39 @@ async function doSendEmail(order, new_status) {
     } catch (logoErr) {
       console.warn('[email] could not fetch logo for PDF:', logoErr.message)
     }
-    // 2. Generate PDF invoice
-    var pdfBuffer = await generateInvoicePdf(order, logoImageBuffer)
-    pdfBase64 = pdfBuffer.toString('base64')
+
+    // Generate PDF invoice
+    var pdfBase64 = null
+    try {
+      var pdfBuffer = await generateInvoicePdf(order, logoImageBuffer)
+      pdfBase64 = pdfBuffer.toString('base64')
+    } catch (pdfErr) {
+      console.warn('[email] PDF generation failed:', pdfErr.message)
+    }
+
+    var customerHtml    = buildCustomerConfirmationEmail(order)
+    var customerSubject = 'Order Confirmed — Festecart (#' + orderNum + ')'
+
+    try {
+      var custResult = await resend.emails.send({
+        from:        FROM_EMAIL,
+        to:          customerEmail,
+        subject:     customerSubject,
+        html:        customerHtml,
+        attachments: pdfBase64 ? [{
+          filename:    'Invoice-' + orderNum + '.pdf',
+          content:     pdfBase64,
+          contentType: 'application/pdf',
+        }] : [],
+      })
+      console.log('[email] customer confirmation ' + orderNum + ' -> ' + customerEmail + ':', custResult)
+      return custResult
+    } catch (custErr) {
+      console.error('[email] customer confirmation failed:', custErr)
+    }
   }
 
-  // 3. Send customer email with PDF attached
-  var customerHtml    = buildCustomerConfirmationEmail(order)
-  var customerSubject = 'Order Confirmed — Festecart (#' + orderNum + ')'
-
-  // If the customer is the admin, skip the separate customer confirmation email —
-  // the admin notification (sent below) already contains full order details.
-  if (ADMIN_EMAIL.toLowerCase() !== email.toLowerCase()) {
-    var custResult = await resend.emails.send({
-      from:        FROM_EMAIL,
-      to:          email,
-      subject:     customerSubject,
-      html:        customerHtml,
-      attachments: [{
-        filename:    'Invoice-' + orderNum + '.pdf',
-        content:     pdfBase64,
-        contentType: 'application/pdf',
-      }],
-    })
-    console.log('[email] confirmed -> ' + email + ':', custResult)
-  } else {
-    console.log('[email] customer email is admin email — skipping customer email, sending only admin notification')
-    var custResult = { skipped: 'customer_is_admin' }
-  }
-
-  // 3. Send admin notification (HTML only, no PDF — admin uses the admin panel for invoice)
-  var adminLink    = orderId ? (ADMIN_URL + '/orders/' + orderId) : (ADMIN_URL + '/orders')
-  var adminHtml    = buildAdminOrderEmail(order, adminLink)
-  var adminSubject = 'New Order ' + orderNum + ' — Festecart'
-  try {
-    var adminResult = await resend.emails.send({
-      from:    FROM_EMAIL,
-      to:      ADMIN_EMAIL,
-      subject: adminSubject,
-      html:    adminHtml,
-    })
-    console.log('[email] admin -> ' + ADMIN_EMAIL + ':', adminResult)
-  } catch (adminErr) {
-    console.error('[email] admin notify failed:', adminErr)
-  }
-
-  return custResult
+  return { ok: true }
 }
 
 // ── HTTP endpoint ────────────────────────────────────────────────

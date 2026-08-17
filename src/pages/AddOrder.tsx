@@ -264,7 +264,10 @@ export default function AddOrder() {
         currentStatus = 'delivered'
       }
 
-      // Send confirmation email
+      // Send order confirmation email — always 'confirmed' because this is a genuine new order.
+      // The Cloud Function's idempotency lock (email_sent_log) prevents duplicates if called twice.
+      // Admin workflow steps (processing/invoice/delivered) applied above are NOT re-orderings;
+      // the email must only reflect that a new order was placed.
       try {
         const freshSnap = await getDoc(doc(db, 'orders', orderRef.id))
         if (freshSnap.exists()) {
@@ -286,7 +289,8 @@ export default function AddOrder() {
               tracking_number:  freshOrder.tracking_number ?? null,
               courier_name:     freshOrder.courier_name ?? null,
             }
-            await sendOrderStatusEmail(emailOrder, currentStatus)
+            // Always send with 'confirmed' — this is a new order regardless of workflow
+            await sendOrderStatusEmail(emailOrder, 'confirmed')
           }
         }
       } catch { /* email non-critical */ }

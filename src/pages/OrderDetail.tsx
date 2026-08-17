@@ -270,12 +270,7 @@ function GenerateInvoiceModal({ order, invoices, onClose, onSuccess }: {
         updated_at: Timestamp.now(),
       })
       await logHistory(order.id, 'Invoice Generated', order.status, newStatus, `Invoice ${invoice_number}`)
-
-      const freshSnap = await getDoc(doc(db, 'orders', order.id))
-      if (freshSnap.exists()) {
-        sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), newStatus)
-          .catch(e => console.warn('[Email] Invoice status email failed:', e instanceof Error ? e.message : e))
-      }
+      // Invoice generation is not a new order — no order-creation email sent
 
       qc.invalidateQueries({ queryKey: ['orders', order.id] })
       qc.invalidateQueries({ queryKey: ['invoices', order.id] })
@@ -372,20 +367,15 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
         status: 'shipped',
         updated_at: Timestamp.now(),
       })
+      // Tracking saved → order moves to "Out for Delivery" (not "Shipped")
+      // No order-creation email is sent — this is a shipping update, not a new order
       await updateDoc(doc(db, 'orders', invoice.order_id), {
-        status: 'shipped',
+        status: 'out_for_delivery',
         fulfillment_status: 'shipped',
+        out_for_delivery_at: Timestamp.now(),
         shipped_at: Timestamp.now(),
         updated_at: Timestamp.now(),
       })
-
-      const freshSnap = await getDoc(doc(db, 'orders', invoice.order_id))
-      if (freshSnap.exists()) {
-        sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'shipped', {
-          ...invoice, courier: form.courier,
-          tracking_number: form.tracking_number || null, sent_at: sentAt, estimated_delivery: estDelivery,
-        }).catch(e => console.warn('[Email] Shipped email failed:', e instanceof Error ? e.message : e))
-      }
       qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
       qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
       onSuccess()
@@ -674,14 +664,8 @@ export default function OrderDetail() {
     try {
       await updateDoc(doc(db, 'orders', order.id), { ...updates, updated_at: Timestamp.now() })
       await logHistory(order.id, action, order.status, newStatus ?? null)
-      const freshSnap = await getDoc(doc(db, 'orders', order.id))
-      if (newStatus && freshSnap.exists()) {
-        const freshOrder = toOrder(freshSnap.id, freshSnap.data() as Record<string, unknown>)
-        if (freshOrder.customer_email || freshOrder.guest_email) {
-          sendStatusEmail(freshOrder, newStatus)
-            .catch(e => console.warn('[Email] Status email failed:', e instanceof Error ? e.message : e))
-        }
-      }
+      // Admin status updates (processing, cancel, markpaid, etc.) are NOT new orders.
+      // No order-creation email is sent here. Email is only sent once on order creation.
       qc.invalidateQueries({ queryKey: ['orders', order.id] })
       qc.invalidateQueries({ queryKey: ['orders'] })
     } catch (e) {
