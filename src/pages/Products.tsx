@@ -5,12 +5,13 @@ import {
   db, collection, doc, getDocs, deleteDoc,
   query, where, orderBy,
 } from '@/lib/firebase'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, getProductStockStatusText } from '@/lib/utils'
 import { Search, Plus, MoreVertical, Pencil, Trash2 } from 'lucide-react'
 
 interface Product {
   id: string; name: string; slug: string; price: number
   compare_at_price: number | null; inventory_count: number | null
+  low_stock_threshold?: number | null; low_stock_message?: string | null
   sku: string | null; images: string[]; status: string
   is_featured: boolean; display_order: number
   category_id: string | null; vendor_id: string | null; created_at: string
@@ -151,7 +152,18 @@ export default function Products() {
                     <td className="px-2 py-3"><p className="font-medium text-gray-900 text-sm">{product.name}</p></td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{product.sku || '—'}</td>
                     <td className="px-4 py-3 font-medium">{formatCurrency(product.price)}</td>
-                    <td className="px-4 py-3 text-gray-500">{product.inventory_count ?? '—'}</td>
+                    <td className="px-4 py-3 text-gray-500">
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={product.inventory_count !== null && product.inventory_count <= 0 ? 'text-red-600 font-medium' : 'text-gray-700'}>
+                          {product.inventory_count ?? '—'}
+                        </span>
+                        {product.inventory_count !== null && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${product.inventory_count <= 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {getProductStockStatusText({ inventoryCount: product.inventory_count, lowStockThreshold: product.low_stock_threshold ?? null, lowStockMessage: product.low_stock_message ?? 'Order soon' })}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-gray-600 text-xs">{catMap[product.category_id ?? ''] || '—'}</td>
                     <td className="px-4 py-3">
                       <span className={`flex items-center gap-1 text-xs font-medium ${STATUS_BADGE[product.status] ?? 'text-gray-500'}`}>

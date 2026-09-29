@@ -6,7 +6,7 @@ import {
   query, orderBy, where, Timestamp,
 } from '@/lib/firebase'
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, getProductStockStatusText } from '@/lib/utils'
 import { Upload, X, Loader2, ChevronLeft, Star } from 'lucide-react'
 import CategoryTreeSelect from '@/components/CategoryTreeSelect'
 
@@ -78,6 +78,12 @@ export default function ProductForm() {
       const snap = await getDocs(query(collection(db, 'categories'), orderBy('display_order', 'asc')))
       return snap.docs.map(d => ({ id: d.id, ...d.data() } as Category))
     },
+  })
+
+  const stockStatusText = getProductStockStatusText({
+    inventoryCount: form.inventory_tracking === 'track' ? Number(form.inventory_count || 0) : 0,
+    lowStockThreshold: form.low_stock_notification ? Number(form.low_stock_threshold || 0) : null,
+    lowStockMessage: form.low_stock_message,
   })
 
   const { data: vendors = [] } = useQuery({
@@ -506,6 +512,11 @@ export default function ProductForm() {
                       <p className="text-xs text-gray-400 mt-1">
                         Optional — shown alongside the "Only X left!" message. Example: "Order soon before it's gone!"
                       </p>
+                      {form.inventory_tracking === 'track' && (
+                        <p className="mt-2 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                          Preview: {stockStatusText}
+                        </p>
+                      )}
                     </div>
                   </div>
 

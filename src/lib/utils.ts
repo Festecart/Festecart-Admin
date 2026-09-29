@@ -34,3 +34,28 @@ export function formatDateShort(dateStr: string | null): string {
     year: 'numeric',
   }).format(new Date(dateStr))
 }
+
+export function getProductStockStatusText({
+  inventoryCount,
+  lowStockThreshold,
+  lowStockMessage,
+}: {
+  inventoryCount: number | null | undefined
+  lowStockThreshold?: number | null
+  lowStockMessage?: string | null
+}): string {
+  const stock = Number(inventoryCount ?? 0)
+
+  if (!Number.isFinite(stock) || stock <= 0) {
+    return 'Out of stock'
+  }
+
+  const threshold = Number(lowStockThreshold ?? 0)
+  const message = (lowStockMessage ?? 'Order soon').trim() || 'Order soon'
+
+  if (threshold > 0 && stock <= threshold) {
+    return `${stock} ${stock === 1 ? 'product' : 'products'} left ${message}`
+  }
+
+  return `${stock} ${stock === 1 ? 'product' : 'products'} left`
+}

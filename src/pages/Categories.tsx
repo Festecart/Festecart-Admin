@@ -27,11 +27,19 @@ function useCategories() {
 function buildTree(flat: Category[]): CategoryNode[] {
   const map: Record<string, CategoryNode> = {}
   const roots: CategoryNode[] = []
+
   for (const c of flat) map[c.id] = { ...c, children: [] }
   for (const c of flat) {
     if (c.parent_id && map[c.parent_id]) map[c.parent_id].children.push(map[c.id])
     else roots.push(map[c.id])
   }
+
+  const sortNodes = (nodes: CategoryNode[]) => {
+    nodes.sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0) || a.name.localeCompare(b.name))
+    nodes.forEach(node => sortNodes(node.children))
+  }
+
+  sortNodes(roots)
   return roots
 }
 
@@ -39,9 +47,9 @@ function slugify(name: string) { return name.toLowerCase().replace(/[^a-z0-9]+/g
 
 interface FormState {
   name: string; slug: string; description: string; icon: string
-  is_active: boolean; parent_id: string; image_url: string
+  is_active: boolean; parent_id: string; image_url: string; display_order: number
 }
-const EMPTY: FormState = { name: '', slug: '', description: '', icon: '', is_active: true, parent_id: '', image_url: '' }
+const EMPTY: FormState = { name: '', slug: '', description: '', icon: '', is_active: true, parent_id: '', image_url: '', display_order: 0 }
 
 function CategoryRow({ node, depth, allCategories, onEdit, onDelete, onToggle, onAddChild, deleteId, setDeleteId, deleteMutation }: {
   node: CategoryNode; depth: number; allCategories: Category[]
@@ -63,6 +71,11 @@ function CategoryRow({ node, depth, allCategories, onEdit, onDelete, onToggle, o
           </button>
           <div className="min-w-0">
             <span className="text-sm font-medium text-gray-900">{node.name}</span>
+            {node.display_order > 0 && (
+              <span className="ml-2 text-[10px] font-medium text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded-full">
+                Order {node.display_order}
+              </span>
+            )}
             {hasChildren && <span className="ml-2 text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{node.children.length}</span>}
             <span className="ml-2 text-xs text-gray-300 font-mono hidden sm:inline">{node.slug}</span>
           </div>
@@ -124,21 +137,27 @@ export default function Categories() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const displayOrder = Number.isFinite(form.display_order) ? Math.max(0, form.display_order) : 0
       const payload = {
-        name:        form.name.trim(),
-        slug:        form.slug.trim() || slugify(form.name),
-        description: form.description.trim() || null,
-        icon:        form.icon.trim() || null,
-        is_active:   form.is_active,
-        parent_id:   form.parent_id || null,
-        image_url:   form.image_url.trim() || null,
-        updated_at:  Timestamp.now(),
+        name:          form.name.trim(),
+        slug:          form.slug.trim() || slugify(form.name),
+        description:   form.description.trim() || null,
+        icon:          form.icon.trim() || null,
+        is_active:     form.is_active,
+        parent_id:     form.parent_id || null,
+        image_url:     form.image_url.trim() || null,
+        display_order: displayOrder,
+        updated_at:    Timestamp.now(),
       }
       if (editId) {
         await updateDoc(doc(db, 'categories', editId), payload)
       } else {
         const maxOrder = Math.max(0, ...flat.map(c => c.display_order))
-        await addDoc(collection(db, 'categories'), { ...payload, display_order: maxOrder + 1, created_at: Timestamp.now() })
+        await addDoc(collection(db, 'categories'), {
+          ...payload,
+          display_order: displayOrder || maxOrder + 1,
+          created_at: Timestamp.now(),
+        })
       }
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['categories'] }); closeForm() },
@@ -164,7 +183,8 @@ export default function Categories() {
   const openEdit = (cat: Category) => {
     setForm({
       name: cat.name, slug: cat.slug, description: cat.description ?? '',
-      icon: cat.icon ?? '', is_active: cat.is_active, parent_id: cat.parent_id ?? '', image_url: cat.image_url ?? '',
+      icon: cat.icon ?? '', is_active: cat.is_active, parent_id: cat.parent_id ?? '',
+      image_url: cat.image_url ?? '', display_order: cat.display_order ?? 0,
     })
     setFormError(null); setEditId(cat.id); setShowForm(true)
   }
@@ -222,6 +242,17 @@ export default function Categories() {
                 <option value="">— None (top level) —</option>
                 {parentOptions.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
               </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Display Order</label>
+              <input
+                type="number"
+                min={0}
+                value={form.display_order}
+                onChange={e => setForm(f => ({ ...f, display_order: Number(e.target.value) || 0 }))}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                placeholder="0"
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Status</label>
