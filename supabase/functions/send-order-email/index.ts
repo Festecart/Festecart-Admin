@@ -1,8 +1,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!
-const FROM_EMAIL = Deno.env.get('FROM_EMAIL') ?? 'Festecart <orders@festecart.org>'
+const GOOGLE_APPS_SCRIPT_URL = Deno.env.get('GOOGLE_APPS_SCRIPT_URL') ?? ''
+const GOOGLE_APPS_SCRIPT_TOKEN = Deno.env.get('GOOGLE_APPS_SCRIPT_TOKEN') ?? ''
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
@@ -376,17 +376,27 @@ serve(async (req: Request) => {
   const subject = SUBJECTS[new_status] ?? `Order Update — Festecart`
   const html = buildEmail(name, orderNum, statusLabel, new_status, od, invoice)
 
-  const res = await fetch('https://api.resend.com/emails', {
+  if (!GOOGLE_APPS_SCRIPT_URL || !GOOGLE_APPS_SCRIPT_TOKEN) {
+    return new Response(JSON.stringify({ ok: false, error: 'Google Apps Script email settings are missing' }), {
+      status: 500, headers: { ...cors, 'Content-Type': 'application/json' },
+    })
+  }
+
+  const res = await fetch(GOOGLE_APPS_SCRIPT_URL, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: FROM_EMAIL, to: email, subject, html }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: GOOGLE_APPS_SCRIPT_TOKEN,
+      order: od,
+      emails: [{ to: email, subject, html, kind: 'customer' }],
+    }),
   })
 
-  const result = await res.json()
+  const result = await res.json().catch(() => null)
   console.log(`[email] ${new_status} → ${email}:`, result)
 
-  return new Response(JSON.stringify({ ok: res.ok, result, email }), {
-    status: 200,
+  return new Response(JSON.stringify({ ok: res.ok && result?.ok === true, result, email }), {
+    status: res.ok && result?.ok === true ? 200 : 502,
     headers: { ...cors, 'Content-Type': 'application/json' },
   })
 })

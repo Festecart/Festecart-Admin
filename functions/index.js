@@ -2,16 +2,15 @@
 const { onRequest } = require('firebase-functions/v2/https')
 const { setGlobalOptions } = require('firebase-functions/v2')
 const { initializeApp } = require('firebase-admin/app')
-const { Resend } = require('resend')
 const PDFDocument = require('pdfkit')
 
 initializeApp()
 setGlobalOptions({ region: 'us-central1' })
 
-const FROM_EMAIL = 'Festecart <noreply@festecart.org>'
 const LOGO_URL   = 'https://admin.festecart.org/logo.png'
 const ADMIN_URL  = 'https://admin.festecart.org'
 const ADMIN_EMAIL = 'festecartdesi@gmail.com'
+const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxnq3FedbLxZ1ficbJTFD1kEOufULtvDX8SaXes8uzzCuvPSsJETUCvKunPVaAgQ-4m/exec'
 
 const STORE_NAME    = 'festecart'
 const STORE_ADDRESS = 'No-204 , 2nd Floor, Surya Prema Building, 1st Cross Rd, Manjunatha nagar, Raghuvanahalli, Bengaluru, Karnataka 560109'
@@ -393,6 +392,25 @@ function buildCustomerConfirmationEmail(order) {
 }
 
 
+async function sendEmailsViaAppsScript(order, invoicePdfBase64) {
+  var token = process.env.GOOGLE_APPS_SCRIPT_TOKEN
+  if (!token) {
+    throw new Error('Google Apps Script email token is missing. Configure the GOOGLE_APPS_SCRIPT_TOKEN secret.')
+  }
+
+  var response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: token, order: order, invoicePdfBase64: invoicePdfBase64 }),
+  })
+  var result = await response.json().catch(function() { return null })
+  if (!response.ok || !result || result.ok !== true) {
+    throw new Error('Google Apps Script email delivery failed: ' + (result && result.error || response.statusText || 'Invalid response'))
+  }
+  return result
+}
+
+
 // ── doSendEmail ──────────────────────────────────────────────────
 // Sends two emails on every confirmed order:
 //   1. Admin notification  → festecartdesi@gmail.com (admin template)
@@ -404,27 +422,8 @@ async function doSendEmail(order, new_status) {
     return { skipped: true }
   }
 
-  var orderId      = order.id || null
-  var orderNum     = order.order_number || '—'
   var customerEmail = order.customer_email || order.guest_email || null
-  var resend       = new Resend(process.env.RESEND_API_KEY)
-
-  // ── 1. Admin notification ────────────────────────────────────
-  var adminLink    = orderId ? (ADMIN_URL + '/orders/' + orderId) : (ADMIN_URL + '/orders')
-  var adminHtml    = buildAdminOrderEmail(order, adminLink)
-  var adminSubject = 'New Order ' + orderNum + ' — Festecart'
-
-  try {
-    var adminResult = await resend.emails.send({
-      from:    FROM_EMAIL,
-      to:      ADMIN_EMAIL,
-      subject: adminSubject,
-      html:    adminHtml,
-    })
-    console.log('[email] admin notification ' + orderNum + ' -> ' + ADMIN_EMAIL + ':', adminResult)
-  } catch (adminErr) {
-    console.error('[email] admin notification failed:', adminErr)
-  }
+  var invoicePdfBase64 = null
 
   // ── 2. Customer confirmation (with PDF invoice) ──────────────
   if (customerEmail && customerEmail.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
@@ -449,33 +448,14 @@ async function doSendEmail(order, new_status) {
       console.warn('[email] PDF generation failed:', pdfErr.message)
     }
 
-    var customerHtml    = buildCustomerConfirmationEmail(order)
-    var customerSubject = 'Order Confirmed — Festecart (#' + orderNum + ')'
-
-    try {
-      var custResult = await resend.emails.send({
-        from:        FROM_EMAIL,
-        to:          customerEmail,
-        subject:     customerSubject,
-        html:        customerHtml,
-        attachments: pdfBase64 ? [{
-          filename:    'Invoice-' + orderNum + '.pdf',
-          content:     pdfBase64,
-          contentType: 'application/pdf',
-        }] : [],
-      })
-      console.log('[email] customer confirmation ' + orderNum + ' -> ' + customerEmail + ':', custResult)
-      return custResult
-    } catch (custErr) {
-      console.error('[email] customer confirmation failed:', custErr)
-    }
+    invoicePdfBase64 = pdfBase64
   }
 
-  return { ok: true }
+  return await sendEmailsViaAppsScript(order, invoicePdfBase64)
 }
 
 // ── HTTP endpoint ────────────────────────────────────────────────
-exports.sendOrderEmail = onRequest({ cors: true, secrets: ['RESEND_API_KEY'] }, async function(req, res) {
+exports.sendOrderEmail = onRequest({ cors: true, secrets: ['GOOGLE_APPS_SCRIPT_TOKEN'] }, async function(req, res) {
   if (req.method === 'OPTIONS') {
     res.set('Access-Control-Allow-Origin', '*')
     res.set('Access-Control-Allow-Headers', 'Content-Type')

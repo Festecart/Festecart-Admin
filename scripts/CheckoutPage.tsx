@@ -312,6 +312,30 @@ export default function CheckoutPage() {
 
       const orderDocRef = await addDoc(collection(db, 'orders'), orderPayload);
 
+      // Email is sent after the order is persisted; keep the request alive before navigation.
+      const customerEmail = user ? user.email : guestForm.email;
+      const customerName  = user
+        ? (profile?.name || user.email?.split('@')[0] || 'Customer')
+        : `${guestForm.firstName} ${guestForm.lastName}`.trim() || 'Customer';
+      let emailFailed = false;
+      try {
+        await sendOrderConfirmationEmail({
+          orderId:         orderDocRef.id,
+          orderNumber:     orderNumber,
+          customerName:    customerName,
+          customerEmail:   customerEmail || '',
+          items:           items.map(i => ({ name: i.name, price: i.price, quantity: i.quantity, image: i.image ?? null })),
+          subtotal,
+          shippingCharge:  shippingCharge,
+          total:           totalPayable,
+          paymentMethod:   paymentMethod,
+          shippingAddress: shippingAddr,
+        });
+      } catch (emailError) {
+        emailFailed = true;
+        console.error('[Checkout] Confirmation email failed:', emailError);
+      }
+
       // ── Decrement inventory_count for tracked products ─────────
       await Promise.all(
         items.map(async (cartItem) => {
@@ -331,29 +355,14 @@ export default function CheckoutPage() {
         })
       );
 
-      // ── Send order confirmation email ─────────────────────────
-      const customerEmail = user ? user.email : guestForm.email;
-      const customerName  = user
-        ? (profile?.name || user.email?.split('@')[0] || 'Customer')
-        : `${guestForm.firstName} ${guestForm.lastName}`.trim() || 'Customer';
-
-      if (customerEmail) {
-        sendOrderConfirmationEmail({
-          orderId:         orderDocRef.id,
-          orderNumber:     orderNumber,
-          customerName:    customerName,
-          customerEmail:   customerEmail,
-          items:           items.map(i => ({ name: i.name, price: i.price, quantity: i.quantity, image: i.image ?? null })),
-          subtotal,
-          shippingCharge:  shippingCharge,
-          total:           totalPayable,
-          paymentMethod:   paymentMethod,
-          shippingAddress: shippingAddr,
-        }).catch(err => console.error('[Checkout] Confirmation email failed:', err));
-      }
-
       clearCart();
-      toast({ title: 'Order placed successfully! 🎉', description: 'We will contact you shortly.' });
+      toast({
+        title: emailFailed ? 'Order placed, but email could not be sent' : 'Order placed successfully! 🎉',
+        description: emailFailed
+          ? 'Your order is saved. Please contact us if you need confirmation.'
+          : 'We will contact you shortly.',
+        variant: emailFailed ? 'destructive' : undefined,
+      });
       navigate('/user/dashboard');
     } catch (err: any) {
       console.error('[Checkout] Place order error:', err);
