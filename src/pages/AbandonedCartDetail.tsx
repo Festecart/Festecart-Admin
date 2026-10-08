@@ -12,8 +12,147 @@ interface CartItem {
   product_id: string; name: string; price: number; quantity: number
   image: string | null; updated_at: string
 }
+
+interface CartAddress {
+  name: string | null
+  phone: string | null
+  address: string | null
+  city: string | null
+  state: string | null
+  pincode: string | null
+}
+
 interface CartDetail {
-  user_id: string; name: string | null; email: string | null; phone: string | null; items: CartItem[]
+  user_id: string; name: string | null; email: string | null; phone: string | null
+  address: CartAddress | null; items: CartItem[]
+}
+
+function coerceNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+function coerceString(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  const str = String(value).trim()
+  return str || null
+}
+
+function normalizeAddress(raw: unknown, fallback?: Partial<CartAddress>): CartAddress | null {
+  const base: CartAddress = {
+    name: fallback?.name ?? null,
+    phone: fallback?.phone ?? null,
+    address: fallback?.address ?? null,
+    city: fallback?.city ?? null,
+    state: fallback?.state ?? null,
+    pincode: fallback?.pincode ?? null,
+  }
+
+  if (!raw) return base.address || base.city || base.state || base.pincode || base.name || base.phone ? base : null
+
+  if (typeof raw === 'string') {
+    const val = raw.trim()
+    return val ? { ...base, address: val || base.address } : base.address || base.city || base.state || base.pincode || base.name || base.phone ? base : null
+  }
+
+  const record = raw as Record<string, unknown>
+  const candidateObjects = [
+    record,
+    record.shipping_address,
+    record.shippingAddress,
+    record.address,
+    record.delivery_address,
+    record.default_address,
+    record.customer_address,
+    record.location,
+  ].filter(Boolean)
+
+  for (const item of candidateObjects) {
+    if (!item || typeof item !== 'object') continue
+    const current = item as Record<string, unknown>
+    const name = coerceString(current.name ?? current.customer_name ?? current.full_name ?? current.user_name ?? base.name)
+    const phone = coerceString(current.phone ?? current.mobile ?? current.contact_number ?? current.contact ?? base.phone)
+    const address = coerceString(current.address ?? current.street ?? current.line1 ?? current.line2 ?? current.street_address ?? current.house_no ?? base.address)
+    const city = coerceString(current.city ?? current.customer_city ?? current.town ?? base.city)
+    const state = coerceString(current.state ?? current.customer_state ?? current.region ?? base.state)
+    const pincode = coerceString(current.pincode ?? current.pin_code ?? current.postal_code ?? current.zip ?? current.customer_pincode ?? base.pincode)
+
+    if (name || phone || address || city || state || pincode) {
+      return { name, phone, address, city, state, pincode }
+    }
+  }
+
+  const name = coerceString(record.name ?? record.customer_name ?? record.full_name ?? record.user_name ?? base.name)
+  const phone = coerceString(record.phone ?? record.mobile ?? record.contact_number ?? record.contact ?? base.phone)
+  const address = coerceString(record.address ?? record.street ?? record.line1 ?? record.line2 ?? record.street_address ?? record.house_no ?? base.address)
+  const city = coerceString(record.city ?? record.customer_city ?? record.town ?? base.city)
+  const state = coerceString(record.state ?? record.customer_state ?? record.region ?? base.state)
+  const pincode = coerceString(record.pincode ?? record.pin_code ?? record.postal_code ?? record.zip ?? record.customer_pincode ?? base.pincode)
+
+  if (!name && !phone && !address && !city && !state && !pincode) return null
+  return { name, phone, address, city, state, pincode }
+}
+
+function extractCartItems(data: Record<string, unknown>) {
+  const candidateArrays = [
+    data.items,
+    data.products,
+    data.cart_items,
+    data.line_items,
+    data.cart,
+    data.product_list,
+  ]
+
+  const items: Array<{ product_id: string; name: string; price: number; quantity: number; image: string | null; updated_at: string }> = []
+
+  for (const candidate of candidateArrays) {
+    if (!Array.isArray(candidate)) continue
+    for (const raw of candidate) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as Record<string, unknown>
+      const product = (item.product as Record<string, unknown> | undefined) ?? (item.item as Record<string, unknown> | undefined) ?? (item.product_details as Record<string, unknown> | undefined) ?? {}
+      const name = coerceString(item.product_name ?? item.productName ?? item.name ?? item.title ?? product.name ?? product.title ?? product.product_name ?? product.productName) ?? 'Product'
+      const productId = coerceString(item.product_id ?? item.productId ?? item.id ?? product.id ?? product.product_id ?? product.productId) ?? name
+      const price = coerceNumber(item.product_price ?? item.price ?? item.unit_price ?? product.price ?? product.unit_price ?? product.amount ?? item.amount)
+      const quantity = Math.max(1, Math.round(coerceNumber(item.quantity ?? item.qty ?? item.item_quantity ?? item.count ?? product.quantity ?? product.qty ?? 1)))
+      const image = coerceString(item.product_image ?? item.image ?? item.image_url ?? item.productImage ?? product.image ?? product.image_url ?? (Array.isArray(product.images) ? product.images[0] : undefined)) ?? null
+      const updatedAt = item.updated_at ?? item.created_at ?? product.updated_at ?? product.created_at ?? new Date().toISOString()
+      const ts = updatedAt && typeof updatedAt === 'object' && 'toDate' in updatedAt ? (updatedAt as { toDate: () => Date }).toDate().toISOString() : String(updatedAt)
+      items.push({ product_id: productId, name, price, quantity, image, updated_at: ts })
+    }
+  }
+
+  const direct = data.product_id || data.productId || data.name || data.product_name || data.productName || data.price || data.product_price || data.quantity || data.qty
+  if (direct) {
+    const product = (data.product as Record<string, unknown> | undefined) ?? {}
+    const name = coerceString(data.product_name ?? data.productName ?? data.name ?? data.title ?? product.name ?? product.title ?? product.product_name ?? product.productName) ?? 'Product'
+    const productId = coerceString(data.product_id ?? data.productId ?? data.id ?? product.id ?? product.product_id ?? product.productId) ?? name
+    const price = coerceNumber(data.product_price ?? data.price ?? data.unit_price ?? product.price ?? product.unit_price ?? product.amount ?? data.amount)
+    const quantity = Math.max(1, Math.round(coerceNumber(data.quantity ?? data.qty ?? data.item_quantity ?? data.count ?? product.quantity ?? product.qty ?? 1)))
+    const image = coerceString(data.product_image ?? data.image ?? data.image_url ?? data.productImage ?? product.image ?? product.image_url ?? (Array.isArray(product.images) ? product.images[0] : undefined)) ?? null
+    const updatedAt = data.updated_at ?? data.created_at ?? product.updated_at ?? product.created_at ?? new Date().toISOString()
+    const ts = updatedAt && typeof updatedAt === 'object' && 'toDate' in updatedAt ? (updatedAt as { toDate: () => Date }).toDate().toISOString() : String(updatedAt)
+    items.push({ product_id: productId, name, price, quantity, image, updated_at: ts })
+  }
+
+  const unique = new Map<string, { product_id: string; name: string; price: number; quantity: number; image: string | null; updated_at: string }>()
+  for (const item of items) {
+    const key = `${item.product_id}-${item.name}`
+    const existing = unique.get(key)
+    if (existing) {
+      existing.quantity += item.quantity
+      existing.price = item.price || existing.price
+      if (!existing.image && item.image) existing.image = item.image
+    } else {
+      unique.set(key, item)
+    }
+  }
+
+  return Array.from(unique.values())
 }
 
 function useCartDetail(userId: string) {
@@ -23,31 +162,70 @@ function useCartDetail(userId: string) {
       const cartSnap = await getDocs(query(collection(db, 'cart_items'), where('user_id', '==', userId)))
       if (cartSnap.empty) throw new Error('Cart not found')
 
-      // Get user profile
       let name: string | null = null, email: string | null = null, phone: string | null = null
+      let resolvedAddress: CartAddress | null = null
+
       try {
         const profDoc = await getDoc(doc(db, 'user_profiles', userId))
         if (profDoc.exists()) {
           const p = profDoc.data() as Record<string, unknown>
-          name = (p.name as string) ?? null
-          email = (p.email as string) ?? null
-          phone = (p.phone as string) ?? null
+          name = coerceString(p.name ?? p.customer_name) ?? name
+          email = coerceString(p.email) ?? email
+          phone = coerceString(p.phone ?? p.mobile) ?? phone
+          const fromProfile = normalizeAddress(
+            p.shipping_address ?? p.shippingAddress ?? p.address ?? p.delivery_address ?? p.default_address ?? p.customer_address ?? p.location,
+            { name: coerceString(p.name ?? p.customer_name), phone: coerceString(p.phone ?? p.mobile), address: coerceString(p.address ?? p.street), city: coerceString(p.city), state: coerceString(p.state), pincode: coerceString(p.pincode ?? p.pin_code) }
+          )
+          if (fromProfile) resolvedAddress = fromProfile
         }
       } catch { /* no profile */ }
 
-      const items: CartItem[] = cartSnap.docs.map(d => {
-        const data = d.data()
-        const tsRaw = data.updated_at ?? data.created_at
-        return {
-          product_id: data.product_id ?? data.id ?? '',
-          name:       data.product_name ?? data.name ?? '—',
-          price:      Number(data.product_price ?? data.price ?? 0),
-          quantity:   Number(data.quantity ?? 1),
-          image:      data.product_image ?? data.image ?? null,
-          updated_at: tsRaw?.toDate ? tsRaw.toDate().toISOString() : (tsRaw ?? ''),
+      const allItems: CartItem[] = []
+      for (const docSnap of cartSnap.docs) {
+        const data = docSnap.data() as Record<string, unknown>
+        const itemList = extractCartItems(data)
+        if (!name) name = coerceString(data.customer_name ?? data.name)
+        if (!email) email = coerceString(data.customer_email ?? data.email)
+        if (!phone) phone = coerceString(data.customer_phone ?? data.phone)
+
+        const itemAddress = normalizeAddress(
+          data.shipping_address ?? data.shippingAddress ?? data.address ?? data.delivery_address ?? data.customer_address ?? data.location,
+          { name: coerceString(data.customer_name ?? data.name), phone: coerceString(data.customer_phone ?? data.phone), address: coerceString(data.address ?? data.street), city: coerceString(data.city), state: coerceString(data.state), pincode: coerceString(data.pincode ?? data.pin_code) }
+        )
+        if (!resolvedAddress && itemAddress) resolvedAddress = itemAddress
+
+        if (itemList.length > 0) {
+          allItems.push(...itemList.map(item => ({
+            product_id: item.product_id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+            image: item.image,
+            updated_at: item.updated_at,
+          })))
         }
-      })
-      return { user_id: userId, name, email, phone, items } as CartDetail
+      }
+
+      const firstRecord = cartSnap.docs[0]?.data() as Record<string, unknown> | undefined
+      const cartAddress = normalizeAddress(
+        firstRecord?.shipping_address ??
+        firstRecord?.shippingAddress ??
+        firstRecord?.address ??
+        firstRecord?.delivery_address ??
+        firstRecord?.customer_address ??
+        firstRecord?.location ??
+        {
+          name: coerceString(firstRecord?.customer_name ?? firstRecord?.name ?? name),
+          phone: coerceString(firstRecord?.customer_phone ?? firstRecord?.phone ?? phone),
+          address: coerceString(firstRecord?.address ?? firstRecord?.street),
+          city: coerceString(firstRecord?.city),
+          state: coerceString(firstRecord?.state),
+          pincode: coerceString(firstRecord?.pincode ?? firstRecord?.pin_code),
+        },
+        { name, phone, address: resolvedAddress?.address ?? null, city: resolvedAddress?.city ?? null, state: resolvedAddress?.state ?? null, pincode: resolvedAddress?.pincode ?? null }
+      )
+
+      return { user_id: userId, name, email, phone, address: cartAddress ?? resolvedAddress, items: allItems } as CartDetail
     },
     enabled: !!userId,
   })
@@ -76,6 +254,15 @@ export default function AbandonedCartDetail() {
         product_id: i.product_id, name: i.name, price: i.price, quantity: i.quantity, image: i.image,
       }))
 
+      const shippingAddress = c.address ? {
+        name: c.address.name ?? c.name ?? '',
+        phone: c.address.phone ?? c.phone ?? '',
+        address: c.address.address ?? '',
+        city: c.address.city ?? '',
+        state: c.address.state ?? '',
+        pincode: c.address.pincode ?? '',
+      } : null
+
       // Generate order number
       const ordSnap = await getDocs(collection(db, 'orders'))
       const nextNum = ordSnap.docs.length + 1
@@ -86,6 +273,7 @@ export default function AbandonedCartDetail() {
         user_id: c.user_id, guest_name: c.name, guest_email: c.email, guest_phone: c.phone,
         order_number, status: 'confirmed', payment_method: 'cod',
         subtotal, shipping_charge: 0, total: subtotal,
+        shipping_address: shippingAddress,
         items: orderItems, note: 'Converted from abandoned cart by admin',
         confirmed_at: now, created_at: now, updated_at: now,
       })
@@ -146,11 +334,24 @@ export default function AbandonedCartDetail() {
           </div>
         )}
 
-        <div className="bg-white rounded-xl border border-gray-200 p-5 max-w-sm">
-          <div className="space-y-3 text-sm text-gray-700">
-            <div><p className="text-xs text-gray-400 mb-0.5">Full Name</p><p className="font-bold text-gray-900 text-base">{cart.name || '—'}</p></div>
-            <div className="flex items-center gap-2"><Mail size={13} className="text-gray-400" /><span>{cart.email || '—'}</span></div>
-            <div className="flex items-center gap-2"><Phone size={13} className="text-gray-400" /><span>{cart.phone || '—'}</span></div>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div className="bg-white rounded-xl border border-gray-200 p-5 max-w-sm">
+            <div className="space-y-3 text-sm text-gray-700">
+              <div><p className="text-xs text-gray-400 mb-0.5">Full Name</p><p className="font-bold text-gray-900 text-base">{cart.name || '—'}</p></div>
+              <div className="flex items-center gap-2"><Mail size={13} className="text-gray-400" /><span>{cart.email || '—'}</span></div>
+              <div className="flex items-center gap-2"><Phone size={13} className="text-gray-400" /><span>{cart.phone || '—'}</span></div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-5 max-w-md">
+            <p className="text-xs text-gray-400 mb-2 uppercase tracking-wide">Shipping Address</p>
+            <div className="space-y-1 text-sm text-gray-700">
+              <p className="font-semibold text-gray-900">{cart.address?.name || cart.name || '—'}</p>
+              <p>{cart.address?.address || 'No address available'}</p>
+              <p>{[cart.address?.city, cart.address?.state].filter(Boolean).join(', ') || '—'}</p>
+              <p>{cart.address?.pincode ? `PIN: ${cart.address.pincode}` : 'PIN: —'}</p>
+              <div className="flex items-center gap-2 pt-2"><Phone size={13} className="text-gray-400" /><span>{cart.address?.phone || cart.phone || '—'}</span></div>
+            </div>
           </div>
         </div>
 

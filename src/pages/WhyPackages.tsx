@@ -64,7 +64,7 @@ export default function WhyPackages() {
     <div className="p-6 space-y-5 max-w-3xl">
       <p className="text-xs text-gray-400"><Link to="/site/navbar" className="hover:underline">Website</Link> / Why Packages</p>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Package size={20} /> Why Packages</h1>
+        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Package size={20} /> Why Packages</h1>   
         <button onClick={handleSave} disabled={saving}
           className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-60">
           {saving ? <Loader2 size={13} className="animate-spin" /> : saved ? <Check size={13} /> : <Save size={13} />}
