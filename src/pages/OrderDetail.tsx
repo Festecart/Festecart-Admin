@@ -5,6 +5,7 @@ import {
   db, doc, getDoc, updateDoc, collection, addDoc, getDocs, query, where, orderBy, Timestamp,
 } from '@/lib/firebase'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { isOrderPaid } from '@/hooks/useOrders'
 import type { Order, Invoice, OrderItem } from '@/types'
 import { sendOrderStatusEmail, type OrderForEmail } from '@/lib/emailService'
 import {
@@ -17,7 +18,6 @@ import {
 function customerName(o: Order)  { return o.guest_name?.trim()  || o.shipping_address?.name?.trim()  || '—' }
 function customerPhone(o: Order) { return o.guest_phone?.trim() || o.shipping_address?.phone?.trim() || '—' }
 function customerEmail(o: Order) { return o.customer_email?.trim() || o.guest_email?.trim() || '—' }
-function isOrderPaid(o: Order)   { return o.payment_method !== 'cod' || o.payment_status === 'paid' }
 
 const STATUS_DOT: Record<string, string> = {
   confirmed: 'bg-gray-400', processing: 'bg-blue-500',
@@ -872,7 +872,7 @@ export default function OrderDetail() {
                   <FileText size={14} /> Generate Invoice
                 </button>
               )}
-              {!paid && order.payment_method === 'cod' && (
+              {!paid && (
                 <button onClick={() => setModal('markpaid')}
                   className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium">
                   <IndianRupee size={14} /> Mark as Paid

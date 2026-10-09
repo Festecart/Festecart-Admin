@@ -197,7 +197,6 @@ export function useMarkPaid() {
 }
 
 export function isOrderPaid(order: { payment_method: string; payment_status?: string | null }): boolean {
-  if (order.payment_method !== 'cod') return true
   return order.payment_status === 'paid'
 }
 
