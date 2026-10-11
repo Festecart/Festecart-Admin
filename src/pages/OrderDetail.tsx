@@ -532,7 +532,7 @@ td{padding:7px 9px;border:1px solid #ddd;}
 <h1>INVOICE</h1>
 <div class="top">
   <div><img src="/logo.png" alt="Logo" style="height:80px;"/></div>
-  <div style="text-align:right;font-size:11px;line-height:1.8;"><strong>Invoice Date:</strong> ${invDate}<br/><strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-','')}<br/><strong>GSTIN:</strong> 29AFFFS9227M1Z7</div>
+  <div style="text-align:right;font-size:11px;line-height:1.8;"><strong>Invoice Date:</strong> ${invDate}<br/><strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-','')}<br/></div>
 </div>
 <div style="font-size:11px;line-height:1.6;margin-bottom:14px;"><strong>Festecart,</strong><br/>No. 46/1, 1st Floor, Near Silk Institute Metro Station, Kanakapura Road, Bengaluru, Karnataka, India – 560109</div>
 <hr/>
