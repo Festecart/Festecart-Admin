@@ -502,6 +502,7 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
 function downloadInvoicePdf(invoice: Invoice, order: Order) {
   const items = invoice.invoice_items ?? []
   const total = items.reduce((s, i) => s + i.price * i.fulfilled_qty, 0)
+  const shippingCharge = order.shipping_charge ?? 0
   const addr = order.shipping_address
   const custName  = order.guest_name  || addr?.name  || '—'
   const custEmail = order.customer_email || order.guest_email || '—'
@@ -530,10 +531,10 @@ td{padding:7px 9px;border:1px solid #ddd;}
 <body>
 <h1>INVOICE</h1>
 <div class="top">
-  <div class="logo"><span class="fest">fest</span><span class="ecart">ecart</span></div>
+  <div><img src="/logo.png" alt="Logo" style="height:80px;"/></div>
   <div style="text-align:right;font-size:11px;line-height:1.8;"><strong>Invoice Date:</strong> ${invDate}<br/><strong>Invoice No:</strong> ${invoice.invoice_number.replace('INV-','')}<br/><strong>GSTIN:</strong> 29AFFFS9227M1Z7</div>
 </div>
-<div style="font-size:11px;line-height:1.6;margin-bottom:14px;"><strong>festecart,</strong><br/>No 861, 2nd floor, 5th Main, Near Hopcoms, BEML Layout, Rajarajeshwari Nagar, Bengaluru — 560098</div>
+<div style="font-size:11px;line-height:1.6;margin-bottom:14px;"><strong>Festecart,</strong><br/>No. 46/1, 1st Floor, Near Silk Institute Metro Station, Kanakapura Road, Bengaluru, Karnataka, India – 560109</div>
 <hr/>
 <div class="addr">
   <div class="addr-col"><h4 style="font-size:10px;font-weight:bold;margin-bottom:4px;text-transform:uppercase;">Shipping Address</h4>
@@ -549,6 +550,7 @@ td{padding:7px 9px;border:1px solid #ddd;}
 <tbody>${items.map(i=>`<tr><td><strong>${i.product_name}</strong></td><td class="tc">${i.fulfilled_qty}</td><td class="tr">₹${i.price.toFixed(2)}</td><td class="tr">₹${(i.price*i.fulfilled_qty).toFixed(2)}</td></tr>`).join('')}</tbody>
 <tfoot>
   <tr><td colspan="3" class="tr">Subtotal:</td><td class="tr">₹${total.toFixed(2)}</td></tr>
+  <tr><td colspan="3" class="tr">Shipping Charge:</td><td class="tr">₹${shippingCharge.toFixed(2)}</td></tr>
   ${couponCode && couponDiscount > 0 ? `<tr><td colspan="3" class="tr" style="color:#16a34a;">Coupon (${couponCode}):</td><td class="tr" style="color:#16a34a;">-₹${couponDiscount.toFixed(2)}</td></tr>` : ''}
   <tr class="total-row"><td colspan="3" class="tr">Grand Total:</td><td class="tr">₹${order.total.toFixed(2)}</td></tr>
 </tfoot></table>
