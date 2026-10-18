@@ -585,7 +585,7 @@ export default function ShippingZoneForm() {
       if (isEdit) {
         await updateDoc(doc(db, 'shipping_zones', zoneId!), payload)
       } else {
-        await addDoc(collection(db, 'shipping_zones'), { ...payload, created_at: Timestamp.now() })
+        await addDoc(collection(db, 'shipping_zones'), { ...payload, is_active: true, created_at: Timestamp.now() })
       }
       qc.invalidateQueries({ queryKey: ['shipping-zones'] })
       navigate('/shipping-zones')

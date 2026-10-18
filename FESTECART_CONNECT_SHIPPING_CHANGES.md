@@ -17,6 +17,7 @@ create table if not exists public.shipping_zones (
   places            jsonb not null default '[]'::jsonb,
   product_type      text,           -- 'category' | 'product_group' | 'specific' | null
   selected_products jsonb,          -- [{ id, name }]
+  is_active         boolean not null default true,
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now()
 );
@@ -55,7 +56,8 @@ create table if not exists public.courier_vendors (
 -- Add missing columns if tables already existed
 alter table public.shipping_zones
   add column if not exists product_type      text,
-  add column if not exists selected_products jsonb;
+  add column if not exists selected_products jsonb,
+  add column if not exists is_active         boolean not null default true;
 
 alter table public.shipping_methods
   add column if not exists is_active boolean not null default true;
@@ -230,9 +232,11 @@ export async function getShippingRate(
   // 1. Fetch all zones
   const { data: zones } = await supabase
     .from('shipping_zones')
-    .select('id, name, places, product_type, selected_products')
+    .select('id, name, places, product_type, selected_products, is_active')
 
   for (const zone of zones ?? []) {
+    if (zone.is_active === false) continue
+
     // 2. Check pincode matches this zone
     const places: Array<{ placeType: string; values: string[] }> = zone.places ?? []
     const pincodeMatches = places.some(

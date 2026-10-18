@@ -2,10 +2,10 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { db, collection, doc, getDocs, deleteDoc, query, orderBy } from '@/lib/firebase'
+import { db, collection, doc, getDocs, deleteDoc, updateDoc, query, orderBy, Timestamp } from '@/lib/firebase'
 import { MoreVertical, Plus, Loader2 } from 'lucide-react'
 
-interface ShippingZone { id: string; name: string; location: string | null; created_at: string }
+interface ShippingZone { id: string; name: string; location: string | null; is_active?: boolean; created_at: string }
 interface ShippingMethod { id: string; zone_id: string; name: string }
 
 function useShippingZones() {
@@ -36,6 +36,16 @@ function useDeleteZone() {
       qc.invalidateQueries({ queryKey: ['shipping-zones'] })
       qc.invalidateQueries({ queryKey: ['shipping-methods-all'] })
     },
+  })
+}
+
+function useToggleZoneActive() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
+      await updateDoc(doc(db, 'shipping_zones', id), { is_active, updated_at: Timestamp.now() })
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['shipping-zones'] }),
   })
 }
 
@@ -78,6 +88,7 @@ export default function ShippingZones() {
   const navigate = useNavigate()
   const { data: zones = [], isLoading } = useShippingZones()
   const { data: methods = [] }          = useShippingMethods()
+  const toggleZoneActive = useToggleZoneActive()
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const PER_PAGE = 8
@@ -118,12 +129,14 @@ export default function ShippingZones() {
                   <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Zone</th>
                   <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Location</th>
                   <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Shipping Methods</th>
+                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Status</th>
                   <th className="text-right px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {paged.map(zone => {
                   const count = methodCount(zone.id)
+                  const isActive = zone.is_active !== false
                   return (
                     <tr key={zone.id} className="hover:bg-gray-50">
                       <td className="px-5 py-3">
@@ -146,6 +159,28 @@ export default function ShippingZones() {
                           </button>
                         )}
                       </td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={isActive}
+                            aria-label={`${isActive ? 'Disable' : 'Enable'} ${zone.name}`}
+                            title={`${isActive ? 'Disable' : 'Enable'} ${zone.name}`}
+                            disabled={toggleZoneActive.isPending && toggleZoneActive.variables?.id === zone.id}
+                            onClick={() => {
+                              toggleZoneActive.reset()
+                              toggleZoneActive.mutate({ id: zone.id, is_active: !isActive })
+                            }}
+                            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${isActive ? 'bg-green-500' : 'bg-gray-300'}`}
+                          >
+                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${isActive ? 'translate-x-5' : 'translate-x-1'}`} />
+                          </button>
+                          <span className={`text-xs font-medium ${isActive ? 'text-green-700' : 'text-gray-500'}`}>
+                            {isActive ? 'Enabled' : 'Disabled'}
+                          </span>
+                        </div>
+                      </td>
                       <td className="px-5 py-3 text-right">
                         <button ref={el => { btnRefs.current[zone.id] = el }}
                           onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === zone.id ? null : zone.id) }}
@@ -160,8 +195,15 @@ export default function ShippingZones() {
                     </tr>
                   )
                 })}
+                {toggleZoneActive.isError && (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-3 text-sm text-red-700 bg-red-50" role="alert">
+                      Could not update shipping zone status: {(toggleZoneActive.error as Error).message}
+                    </td>
+                  </tr>
+                )}
                 {paged.length === 0 && (
-                  <tr><td colSpan={4} className="px-5 py-10 text-center text-gray-400">No shipping zones yet</td></tr>
+                  <tr><td colSpan={5} className="px-5 py-10 text-center text-gray-400">No shipping zones yet</td></tr>
                 )}
               </tbody>
             </table>
