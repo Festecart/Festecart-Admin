@@ -12,26 +12,26 @@ import CategoryTreeSelect from '@/components/CategoryTreeSelect'
 // ── States per country ───────────────────────────────────────────
 const STATES_BY_COUNTRY: Record<string, string[]> = {
   'India': [
-    'Andaman & Nicobar Islands','Andhra Pradesh','Arunachal Pradesh','Assam','Bihar',
-    'Chandigarh','Chhattisgarh','Dadra & Nagar Haveli','Daman & Diu','Delhi',
-    'Goa','Gujarat','Haryana','Himachal Pradesh','Jammu & Kashmir','Jharkhand',
-    'Karnataka','Kerala','Ladakh','Lakshadweep','Madhya Pradesh','Maharashtra',
-    'Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Puducherry','Punjab',
-    'Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh',
-    'Uttarakhand','West Bengal',
+    'Andaman & Nicobar Islands', 'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar',
+    'Chandigarh', 'Chhattisgarh', 'Dadra & Nagar Haveli', 'Daman & Diu', 'Delhi',
+    'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jammu & Kashmir', 'Jharkhand',
+    'Karnataka', 'Kerala', 'Ladakh', 'Lakshadweep', 'Madhya Pradesh', 'Maharashtra',
+    'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Puducherry', 'Punjab',
+    'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh',
+    'Uttarakhand', 'West Bengal',
   ],
-  'United States': ['Alabama','Alaska','Arizona','Arkansas','California','Colorado',
-    'Connecticut','Delaware','Florida','Georgia','Hawaii','Idaho','Illinois',
-    'Indiana','Iowa','Kansas','Kentucky','Louisiana','Maine','Maryland',
-    'Massachusetts','Michigan','Minnesota','Mississippi','Missouri','Montana',
-    'Nebraska','Nevada','New Hampshire','New Jersey','New Mexico','New York',
-    'North Carolina','North Dakota','Ohio','Oklahoma','Oregon','Pennsylvania',
-    'Rhode Island','South Carolina','South Dakota','Tennessee','Texas','Utah',
-    'Vermont','Virginia','Washington','West Virginia','Wisconsin','Wyoming',
+  'United States': ['Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado',
+    'Connecticut', 'Delaware', 'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois',
+    'Indiana', 'Iowa', 'Kansas', 'Kentucky', 'Louisiana', 'Maine', 'Maryland',
+    'Massachusetts', 'Michigan', 'Minnesota', 'Mississippi', 'Missouri', 'Montana',
+    'Nebraska', 'Nevada', 'New Hampshire', 'New Jersey', 'New Mexico', 'New York',
+    'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon', 'Pennsylvania',
+    'Rhode Island', 'South Carolina', 'South Dakota', 'Tennessee', 'Texas', 'Utah',
+    'Vermont', 'Virginia', 'Washington', 'West Virginia', 'Wisconsin', 'Wyoming',
   ],
 }
 
-const COUNTRIES = ['India','United States','United Kingdom','Australia','Canada','Rest of the World']
+const COUNTRIES = ['India', 'United States', 'United Kingdom', 'Australia', 'Canada', 'Rest of the World']
 
 type PlaceType = 'state' | 'city' | 'pincode'
 
@@ -52,19 +52,19 @@ function PlacesModal({ place, onClose, onSave }: {
     return [{ id: crypto.randomUUID(), state: '', input: '', tags: [] }]
   }
 
-  const [placeType,      setPlaceType]      = useState<PlaceType>(place.placeType)
+  const [placeType, setPlaceType] = useState<PlaceType>(place.placeType)
   const [selectedStates, setSelectedStates] = useState<string[]>(place.placeType === 'state' ? place.values : [])
-  const [stateSearch,    setStateSearch]    = useState('')
-  const [cityRows,       setCityRows]       = useState<CityRow[]>(initCityRows)
+  const [stateSearch, setStateSearch] = useState('')
+  const [cityRows, setCityRows] = useState<CityRow[]>(initCityRows)
   const [manualPincodes, setManualPincodes] = useState<string[]>(
     place.placeType === 'pincode' && place.values.length ? place.values : ['']
   )
   // Bulk upload state (all three modes)
-  const [inputMode,     setInputMode]     = useState<'manual' | 'bulk'>('manual')
-  const [bulkText,      setBulkText]      = useState('')
-  const [bulkError,     setBulkError]     = useState<string | null>(null)
-  const [bulkPreview,   setBulkPreview]   = useState<{ value: string; country: string; status: 'valid' | 'invalid' }[] | null>(null)
-  const [bulkAction,    setBulkAction]    = useState<'add' | 'delete'>('add')
+  const [inputMode, setInputMode] = useState<'manual' | 'bulk'>('manual')
+  const [bulkText, setBulkText] = useState('')
+  const [bulkError, setBulkError] = useState<string | null>(null)
+  const [bulkPreview, setBulkPreview] = useState<{ value: string; country: string; status: 'valid' | 'invalid' }[] | null>(null)
+  const [bulkAction, setBulkAction] = useState<'add' | 'delete'>('add')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const parseBulkCSV = (text: string, mode: PlaceType): string[] => {
@@ -72,7 +72,7 @@ function PlacesModal({ place, onClose, onSave }: {
     if (!lines.length) return []
     const firstLine = lines[0].toLowerCase()
     const hasHeader = firstLine.includes('pincode') || firstLine.includes('country') ||
-                      firstLine.includes('state') || firstLine.includes('city')
+      firstLine.includes('state') || firstLine.includes('city')
     const dataLines = hasHeader ? lines.slice(1) : lines
     const result: string[] = []
     for (const line of dataLines) {
@@ -137,10 +137,10 @@ function PlacesModal({ place, onClose, onSave }: {
     setBulkError(null)
   }
 
-  const stateList     = STATES_BY_COUNTRY[place.country] ?? []
-  const hasStates     = stateList.length > 0
+  const stateList = STATES_BY_COUNTRY[place.country] ?? []
+  const hasStates = stateList.length > 0
   const filteredStates = stateList.filter(s => s.toLowerCase().includes(stateSearch.toLowerCase()))
-  const toggleState   = (s: string) =>
+  const toggleState = (s: string) =>
     setSelectedStates(v => v.includes(s) ? v.filter(x => x !== s) : [...v, s])
 
   const handleSubmit = () => {
@@ -184,7 +184,7 @@ function PlacesModal({ place, onClose, onSave }: {
         <div className="px-7 py-5 overflow-y-auto flex-1 space-y-5">
           {/* Type radio */}
           <div className="flex gap-7 flex-wrap">
-            {(hasStates ? ['state','city','pincode'] : ['city','pincode']).map(t => (
+            {(hasStates ? ['state', 'city', 'pincode'] : ['city', 'pincode']).map(t => (
               <label key={t} className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
                 <input type="radio" checked={placeType === t} onChange={() => { setPlaceType(t as PlaceType); setInputMode('manual'); setBulkError(null) }} className="accent-gray-900 w-4 h-4" />
                 {t === 'pincode' ? 'Zipcode/Pincode' : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -194,7 +194,7 @@ function PlacesModal({ place, onClose, onSave }: {
 
           {/* Manual / Bulk toggle */}
           <div className="flex gap-7 flex-wrap">
-            {(['manual','bulk'] as const).map(m => (
+            {(['manual', 'bulk'] as const).map(m => (
               <label key={m} className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
                 <input type="radio" checked={inputMode === m} onChange={() => { setInputMode(m); setBulkError(null) }} className="accent-gray-900 w-4 h-4" />
                 {m === 'manual' ? 'Manual' : 'Bulk Upload'}
@@ -207,7 +207,7 @@ function PlacesModal({ place, onClose, onSave }: {
             <div className="space-y-3">
               {/* Add / Delete toggle */}
               <div className="flex gap-3">
-                {(['add','delete'] as const).map(a => (
+                {(['add', 'delete'] as const).map(a => (
                   <button key={a} onClick={() => setBulkAction(a)}
                     className={`px-4 py-1.5 text-sm rounded-lg border font-medium transition-colors ${bulkAction === a ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
                     Bulk {a.charAt(0).toUpperCase() + a.slice(1)}
@@ -234,8 +234,8 @@ function PlacesModal({ place, onClose, onSave }: {
                   const sample = placeType === 'state'
                     ? 'State\nKarnataka\nTamil Nadu\nGoa'
                     : placeType === 'city'
-                    ? 'Country,State,City\nIndia,Karnataka,Bengaluru\nIndia,Karnataka,Mangalore\nIndia,Tamilnadu,Chennai'
-                    : 'Country,Pincode\nIndia,560001\nIndia,560002\nIndia,560003'
+                      ? 'Country,State,City\nIndia,Karnataka,Bengaluru\nIndia,Karnataka,Mangalore\nIndia,Tamilnadu,Chennai'
+                      : 'Country,Pincode\nIndia,560001\nIndia,560002\nIndia,560003'
                   const link = document.createElement('a')
                   link.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(sample)
                   link.download = `sample-${placeType}.csv`
@@ -466,19 +466,19 @@ export default function ShippingZoneForm() {
   const isEdit = !!zoneId
   const qc = useQueryClient()
 
-  const [zoneName,          setZoneName]          = useState('')
-  const [countrySearch,     setCountrySearch]     = useState('')
-  const [showCountryDrop,   setShowCountryDrop]   = useState(false)
-  const [places,            setPlaces]            = useState<ZonePlace[]>([])
-  const [editingPlace,      setEditingPlace]      = useState<ZonePlace | null>(null)
-  const [selectedProducts,  setSelectedProducts]  = useState<{ id: string; name: string }[]>([])
-  const [selectionType,     setSelectionType]     = useState<'category' | 'specific'>('specific')
-  const [selectedCatId,     setSelectedCatId]     = useState('')
-  const [catProducts,       setCatProducts]       = useState<ProductItem[]>([])
-  const [loadingCat,        setLoadingCat]        = useState(false)
-  const [prodSearch,        setProdSearch]        = useState('')
-  const [saving,            setSaving]            = useState(false)
-  const [error,             setError]             = useState<string | null>(null)
+  const [zoneName, setZoneName] = useState('')
+  const [countrySearch, setCountrySearch] = useState('')
+  const [showCountryDrop, setShowCountryDrop] = useState(false)
+  const [places, setPlaces] = useState<ZonePlace[]>([])
+  const [editingPlace, setEditingPlace] = useState<ZonePlace | null>(null)
+  const [selectedProducts, setSelectedProducts] = useState<{ id: string; name: string }[]>([])
+  const [selectionType, setSelectionType] = useState<'category' | 'specific'>('specific')
+  const [selectedCatId, setSelectedCatId] = useState('')
+  const [catProducts, setCatProducts] = useState<ProductItem[]>([])
+  const [loadingCat, setLoadingCat] = useState(false)
+  const [prodSearch, setProdSearch] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const countryRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -546,10 +546,10 @@ export default function ShippingZoneForm() {
   const toggleProduct = (p: { id: string; name: string }) =>
     setSelectedProducts(prev => prev.find(x => x.id === p.id) ? prev.filter(x => x.id !== p.id) : [...prev, { id: p.id, name: p.name }])
   const removeProduct = (id: string) => setSelectedProducts(prev => prev.filter(x => x.id !== id))
-  const moveProduct   = (idx: number, dir: -1 | 1) => {
+  const moveProduct = (idx: number, dir: -1 | 1) => {
     const arr = [...selectedProducts]; const swap = idx + dir
     if (swap < 0 || swap >= arr.length) return
-    ;[arr[idx], arr[swap]] = [arr[swap], arr[idx]]
+      ;[arr[idx], arr[swap]] = [arr[swap], arr[idx]]
     setSelectedProducts(arr)
   }
 
