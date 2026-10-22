@@ -535,22 +535,22 @@ export default function ShippingZones() {
                                 })
                               }}
                               className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-60 ${isActive
-                                  ? 'bg-green-500'
-                                  : 'bg-gray-300'
+                                ? 'bg-green-500'
+                                : 'bg-gray-300'
                                 }`}
                             >
                               <span
                                 className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${isActive
-                                    ? 'translate-x-5'
-                                    : 'translate-x-1'
+                                  ? 'translate-x-5'
+                                  : 'translate-x-1'
                                   }`}
                               />
                             </button>
 
                             <span
                               className={`text-xs font-medium ${isActive
-                                  ? 'text-green-700'
-                                  : 'text-gray-500'
+                                ? 'text-green-700'
+                                : 'text-gray-500'
                                 }`}
                             >
                               {isActive ? 'Enabled' : 'Disabled'}
