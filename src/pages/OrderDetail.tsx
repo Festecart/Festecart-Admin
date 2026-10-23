@@ -691,6 +691,9 @@ export default function OrderDetail() {
 
   const addr = order.shipping_address
   const paid = isOrderPaid(order)
+  const couponCode = order.coupon_code?.trim() || null
+  const couponDiscount = order.coupon_discount == null ? Number.NaN : Number(order.coupon_discount)
+  const hasCouponDiscount = Number.isFinite(couponDiscount)
 
   const fulfilledQtyMap: Record<string, number> = {}
   invoices.forEach(inv => {
@@ -825,6 +828,18 @@ export default function OrderDetail() {
               <div className="flex justify-between text-gray-600">
                 <span>Shipping {order.shipping_charge === 0 && <span className="text-xs text-green-600 ml-1">[Free]</span>}</span>
                 <span>{order.shipping_charge > 0 ? formatCurrency(order.shipping_charge) : '₹0.00'}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Coupon Name</span>
+                <span>{couponCode || '- Nil'}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Coupon Discount</span>
+                <span className={couponCode && hasCouponDiscount && couponDiscount > 0 ? 'text-green-600' : ''}>
+                  {couponCode
+                    ? hasCouponDiscount ? `-${formatCurrency(couponDiscount)}` : '—'
+                    : '- Nil'}
+                </span>
               </div>
               <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-900">
                 <span>Total</span><span>{formatCurrency(order.total)}</span>

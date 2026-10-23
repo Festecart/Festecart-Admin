@@ -33,6 +33,7 @@ function toOrder(id: string, data: Record<string, unknown>): Order {
     total:                Number(data.total ?? 0),
     note:                 (data.note as string | null) ?? null,
     coupon_code:          (data.coupon_code as string | null) ?? null,
+    coupon_discount:      data.coupon_discount == null ? null : Number(data.coupon_discount),
     shipping_address:     (data.shipping_address as Order['shipping_address']) ?? null,
     items:                (data.items as Order['items']) ?? [],
     tracking_number:      (data.tracking_number as string | null) ?? null,
