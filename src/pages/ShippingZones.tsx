@@ -37,7 +37,6 @@ interface ShippingMethod {
 
 const EMPTY_ZONES: ShippingZone[] = []
 const EMPTY_METHODS: ShippingMethod[] = []
-const PER_PAGE = 8
 
 function useShippingZones() {
   return useQuery({
@@ -226,7 +225,6 @@ export default function ShippingZones() {
   const toggleZoneActive = useToggleZoneActive()
 
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
 
   const [remarksDrafts, setRemarksDrafts] = useState<
     Record<string, string>
@@ -251,21 +249,6 @@ export default function ShippingZones() {
   const btnRefs = useRef<
     Record<string, HTMLButtonElement | null>
   >({})
-
-  const total = zones.length
-  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE))
-  const currentPage = Math.min(page, totalPages)
-
-  const paged = zones.slice(
-    (currentPage - 1) * PER_PAGE,
-    currentPage * PER_PAGE
-  )
-
-  useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages)
-    }
-  }, [page, totalPages])
 
   const methodCount = useCallback(
     (zoneId: string) =>
@@ -449,7 +432,7 @@ export default function ShippingZones() {
                 </thead>
 
                 <tbody className="divide-y divide-gray-100">
-                  {paged.map(zone => {
+                  {zones.map(zone => {
                     const count = methodCount(zone.id)
                     const isActive = zone.is_active !== false
 
@@ -535,22 +518,22 @@ export default function ShippingZones() {
                                 })
                               }}
                               className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-60 ${isActive
-                                ? 'bg-green-500'
-                                : 'bg-gray-300'
+                                  ? 'bg-green-500'
+                                  : 'bg-gray-300'
                                 }`}
                             >
                               <span
                                 className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${isActive
-                                  ? 'translate-x-5'
-                                  : 'translate-x-1'
+                                    ? 'translate-x-5'
+                                    : 'translate-x-1'
                                   }`}
                               />
                             </button>
 
                             <span
                               className={`text-xs font-medium ${isActive
-                                ? 'text-green-700'
-                                : 'text-gray-500'
+                                  ? 'text-green-700'
+                                  : 'text-gray-500'
                                 }`}
                             >
                               {isActive ? 'Enabled' : 'Disabled'}
@@ -722,7 +705,7 @@ export default function ShippingZones() {
                     </tr>
                   )}
 
-                  {paged.length === 0 && (
+                  {zones.length === 0 && (
                     <tr>
                       <td
                         colSpan={6}
@@ -735,36 +718,6 @@ export default function ShippingZones() {
                 </tbody>
               </table>
             </div>
-
-            {total > PER_PAGE && (
-              <div className="px-5 py-3 border-t border-gray-100 text-xs text-gray-400 text-right">
-                {(currentPage - 1) * PER_PAGE + 1}
-                {'–'}
-                {Math.min(currentPage * PER_PAGE, total)}
-                {' of '}
-                {total}
-
-                <button
-                  disabled={currentPage === 1}
-                  onClick={() =>
-                    setPage(p => Math.max(1, p - 1))
-                  }
-                  className="ml-3 px-2 py-1 border rounded disabled:opacity-40"
-                >
-                  Prev
-                </button>
-
-                <button
-                  disabled={currentPage >= totalPages}
-                  onClick={() =>
-                    setPage(p => Math.min(totalPages, p + 1))
-                  }
-                  className="ml-1 px-2 py-1 border rounded disabled:opacity-40"
-                >
-                  Next
-                </button>
-              </div>
-            )}
           </>
         )}
       </div>
