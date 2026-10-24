@@ -30,9 +30,17 @@ function productCost(order: Order): number {
 }
 
 function totalPayable(order: Order): number {
-  const products = productCost(order)
-  const shipment = order.shipping_charge || 0
-  return products + shipment
+  return order.total
+}
+
+function couponAmount(order: Order): number | null {
+  if (order.coupon_discount != null) return order.coupon_discount
+  return order.coupon_code ? null : 0
+}
+
+function couponAmountLabel(order: Order): string {
+  const amount = couponAmount(order)
+  return amount == null ? '—' : formatCurrency(amount)
 }
 
 function csvCell(value: string | number | null | undefined): string {
@@ -88,7 +96,8 @@ export default function Orders() {
 
     const headers = [
       'Order Number', 'Order Date', 'Customer Name', 'Customer Email', 'Phone',
-      'Item Count', 'Items', 'Product Cost', 'Shipment Cost', 'Total Payable',
+      'Item Count', 'Items', 'Product Cost', 'Coupon Name', 'Coupon Amount',
+      'Shipment Cost', 'Total Payable',
       'Paid to Logistics', 'Actual Paid', 'Earned Value',
       'Payment Method', 'Payment Status', 'Order Status', 'Address', 'City',
       'State', 'Postal Code', 'Courier', 'Tracking Number', 'Notes',
@@ -102,6 +111,8 @@ export default function Orders() {
       order.items?.length ?? 0,
       (order.items ?? []).map(item => `${item.name} x ${item.quantity}`).join('; '),
       productCost(order),
+      order.coupon_code ?? '',
+      couponAmount(order) ?? '',
       order.shipping_charge,
       totalPayable(order),
       order.logistics_cost ?? 0,
@@ -211,7 +222,7 @@ export default function Orders() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Order No','Order Date','Customer Name','Phone','Items','Product Cost','Shipment Cost','Total Payable','Paid to Logistics','Actual Paid','Earned Value','Payment Method','Payment Status','Order Status'].map(h => (
+                  {['Order No','Order Date','Customer Name','Phone','Items','Product Cost','Coupon Name','Coupon Amount','Shipment Cost','Total Payable','Paid to Logistics','Actual Paid','Earned Value','Payment Method','Payment Status','Order Status'].map(h => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -231,6 +242,8 @@ export default function Orders() {
                     <td className="px-5 py-3 text-gray-500">{customerPhone(order)}</td>
                     <td className="px-5 py-3 text-gray-500 text-center">{order.items?.length ?? 0}</td>
                     <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(productCost(order))}</td>
+                    <td className="px-5 py-3 text-gray-600">{order.coupon_code || '—'}</td>
+                    <td className="px-5 py-3 whitespace-nowrap">{couponAmountLabel(order)}</td>
                     <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(order.shipping_charge)}</td>
                     <td className="px-5 py-3 font-semibold whitespace-nowrap">{formatCurrency(totalPayable(order))}</td>
                     <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(order.logistics_cost ?? 0)}</td>
@@ -250,7 +263,7 @@ export default function Orders() {
                   </tr>
                 ))}
                 {(orders ?? []).length === 0 && (
-                  <tr><td colSpan={14} className="px-5 py-12 text-center text-gray-400">No orders match your filters</td></tr>
+                  <tr><td colSpan={16} className="px-5 py-12 text-center text-gray-400">No orders match your filters</td></tr>
                 )}
               </tbody>
             </table>
