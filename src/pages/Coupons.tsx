@@ -5,6 +5,7 @@ import {
   useCoupons,
   useDeleteCoupon,
   useToggleCouponActive,
+  useUpdateCoupon,
 } from '@/hooks/useCoupons'
 import type { CouponListRow } from '@/types/coupon'
 
@@ -27,9 +28,68 @@ export default function Coupons() {
   const { data: coupons, isLoading, error } = useCoupons()
   const deleteMutation = useDeleteCoupon()
   const toggleMutation = useToggleCouponActive()
+  const updateCoupon = useUpdateCoupon()
   const [deleteTarget, setDeleteTarget] = useState<CouponListRow | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [remarksDrafts, setRemarksDrafts] = useState<Record<string, string>>({})
+  const [activeRemarksId, setActiveRemarksId] = useState<string | null>(null)
+  const [savingRemarks, setSavingRemarks] = useState<Record<string, boolean>>({})
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
+  const [saveSuccess, setSaveSuccess] = useState<Record<string, string>>({})
   const navigate = useNavigate()
+
+  const autoResizeTextarea = (textarea: HTMLTextAreaElement) => {
+    textarea.style.height = 'auto'
+    textarea.style.height = `${textarea.scrollHeight}px`
+  }
+
+  const handleSaveRemarks = async (row: CouponListRow) => {
+    const newRemarks = remarksDrafts[row.id] ?? row.remarks ?? ''
+    const originalRemarks = row.remarks ?? ''
+
+    if (newRemarks === originalRemarks) {
+      setActiveRemarksId(current => current === row.id ? null : current)
+      return
+    }
+
+    setSavingRemarks(previous => ({ ...previous, [row.id]: true }))
+    setSaveErrors(previous => ({ ...previous, [row.id]: '' }))
+    setSaveSuccess(previous => ({ ...previous, [row.id]: '' }))
+
+    try {
+      await updateCoupon.mutateAsync({ id: row.id, remarks: newRemarks })
+      setRemarksDrafts(previous => ({ ...previous, [row.id]: newRemarks }))
+      setSaveSuccess(previous => ({ ...previous, [row.id]: 'Remarks saved successfully.' }))
+      setActiveRemarksId(current => current === row.id ? null : current)
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'An unexpected error occurred.'
+
+      setSaveErrors(previous => ({
+        ...previous,
+        [row.id]: `Failed to save remarks: ${message}`,
+      }))
+    } finally {
+      setSavingRemarks(previous => ({ ...previous, [row.id]: false }))
+    }
+  }
+
+  const handleCancelRemarks = (row: CouponListRow) => {
+    setRemarksDrafts(previous => ({ ...previous, [row.id]: row.remarks ?? '' }))
+    setSaveErrors(previous => ({ ...previous, [row.id]: '' }))
+    setSaveSuccess(previous => ({ ...previous, [row.id]: '' }))
+    setActiveRemarksId(current => current === row.id ? null : current)
+  }
+
+  const handleRemarksBlur = (row: CouponListRow) => {
+    const savedRemarks = row.remarks ?? ''
+    const currentDraft = remarksDrafts[row.id] ?? savedRemarks
+
+    if (currentDraft === savedRemarks) {
+      setActiveRemarksId(current => current === row.id ? null : current)
+    }
+  }
 
   const handleToggle = (row: CouponListRow) => {
     toggleMutation.mutate({ id: row.id, is_active: !row.is_active })
@@ -102,13 +162,21 @@ export default function Coupons() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Valid From</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Valid To</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Uses / Limit</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide min-w-[260px]">Remarks</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {coupons!.map((row) => (
-                  <tr key={row.id} className="hover:bg-gray-50 transition-colors">
+                {coupons!.map((row) => {
+                  const savedRemarks = row.remarks ?? ''
+                  const draftRemarks = remarksDrafts[row.id] ?? savedRemarks
+                  const hasChanges = draftRemarks !== savedRemarks
+                  const isSaving = savingRemarks[row.id] ?? false
+                  const showSaveOptions = activeRemarksId === row.id || hasChanges
+
+                  return (
+                    <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                     {/* Code */}
                     <td className="px-4 py-3">
                       <span className="font-mono font-semibold text-gray-900 bg-gray-100 px-2 py-0.5 rounded text-xs">
@@ -127,6 +195,70 @@ export default function Coupons() {
                     <td className="px-4 py-3 text-gray-600">
                       {row.total_uses}
                       {row.total_usage_limit != null ? ` / ${row.total_usage_limit}` : ' / ∞'}
+                    </td>
+                    {/* Editable Remarks column */}
+                    <td className="px-4 py-3 min-w-[260px] max-w-[360px] align-top">
+                      <div className="space-y-2">
+                        <textarea
+                          rows={1}
+                          maxLength={1000}
+                          value={draftRemarks}
+                          placeholder="Enter remarks..."
+                          disabled={isSaving}
+                          onFocus={() => setActiveRemarksId(row.id)}
+                          onBlur={() => handleRemarksBlur(row)}
+                          onChange={event => {
+                            const textarea = event.currentTarget
+                            const value = textarea.value
+                            setRemarksDrafts(previous => ({ ...previous, [row.id]: value }))
+                            setSaveErrors(previous => ({ ...previous, [row.id]: '' }))
+                            setSaveSuccess(previous => ({ ...previous, [row.id]: '' }))
+                            autoResizeTextarea(textarea)
+                          }}
+                          ref={element => {
+                            if (element) autoResizeTextarea(element)
+                          }}
+                          className="block w-full min-h-[38px] resize-none overflow-hidden rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-300 disabled:bg-gray-100"
+                        />
+
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-gray-400">{draftRemarks.length}/1000</span>
+                          {showSaveOptions && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onMouseDown={event => event.preventDefault()}
+                                onClick={() => handleCancelRemarks(row)}
+                                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSaving || !hasChanges}
+                                onMouseDown={event => event.preventDefault()}
+                                onClick={() => handleSaveRemarks(row)}
+                                className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                              >
+                                {isSaving && <Loader2 size={12} className="animate-spin" />}
+                                {isSaving ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {saveErrors[row.id] && (
+                          <p role="alert" className="text-xs text-red-600 break-words">
+                            {saveErrors[row.id]}
+                          </p>
+                        )}
+                        {saveSuccess[row.id] && (
+                          <p role="status" className="text-xs text-green-600">
+                            {saveSuccess[row.id]}
+                          </p>
+                        )}
+                      </div>
                     </td>
                     {/* Status toggle */}
                     <td className="px-4 py-3">
@@ -158,8 +290,9 @@ export default function Coupons() {
                         </button>
                       </div>
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

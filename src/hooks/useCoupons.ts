@@ -27,6 +27,7 @@ function docToCoupon(id: string, data: Record<string, any>): Coupon {
     per_user_limit:     data.per_user_limit ?? null,
     applicable_for:     data.applicable_for ?? 'all_orders',
     terms_conditions:   data.terms_conditions ?? null,
+    remarks:            data.remarks ?? null,
     valid_from:         data.valid_from as Timestamp,
     valid_to:           data.valid_to as Timestamp,
     is_active:          data.is_active ?? true,
@@ -48,6 +49,7 @@ function couponToListRow(c: Coupon): CouponListRow {
     total_usage_limit:  c.total_usage_limit,
     is_active:          c.is_active,
     min_cart_amount:    c.min_cart_amount,
+    remarks:            c.remarks,
   }
 }
 
@@ -92,6 +94,7 @@ export interface CreateCouponPayload {
   per_user_limit: number | null
   applicable_for: 'all_orders'
   terms_conditions: string | null
+  remarks?: string | null
   valid_from: Date
   valid_to: Date
   is_active: boolean
@@ -152,7 +155,14 @@ export function useUpdateCoupon() {
 
       await updateDoc(doc(db, COLL, id), updates)
     },
-    onSuccess: (_, { id }) => {
+    onSuccess: (_, { id, remarks }) => {
+      if (remarks !== undefined) {
+        qc.setQueryData<CouponListRow[]>(['coupons'], current =>
+          current?.map(coupon =>
+            coupon.id === id ? { ...coupon, remarks } : coupon
+          )
+        )
+      }
       qc.invalidateQueries({ queryKey: ['coupons'] })
       qc.invalidateQueries({ queryKey: ['coupon', id] })
     },

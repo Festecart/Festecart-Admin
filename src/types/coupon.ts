@@ -13,6 +13,7 @@ export interface Coupon {
   per_user_limit: number | null;    // null = unlimited
   applicable_for: 'all_orders';
   terms_conditions: string | null;
+  remarks: string | null;
   valid_from: Timestamp;
   valid_to: Timestamp;
   is_active: boolean;
@@ -33,6 +34,7 @@ export interface CouponListRow {
   total_usage_limit: number | null;
   is_active: boolean;
   min_cart_amount: number;
+  remarks: string | null;
 }
 
 export interface CouponUserUsage {
