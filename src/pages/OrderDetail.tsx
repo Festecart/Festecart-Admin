@@ -637,8 +637,19 @@ function downloadInvoicePdf(invoice: Invoice, order: Order) {
     .toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
   const ordDate   = new Date(order.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
 
-  const couponCode     = order.coupon_code ?? null
-  const couponDiscount = order.coupon_discount ?? 0
+  const couponCode = order.coupon_code?.trim() || null
+  const savedCouponDiscount = Number(order.coupon_discount)
+  const calculatedCouponDiscount = Math.max(
+    0,
+    Math.round(
+      (order.subtotal + shippingCharge - order.total + Number.EPSILON) * 100
+    ) / 100,
+  )
+  const couponDiscount = couponCode
+    ? Number.isFinite(savedCouponDiscount) && savedCouponDiscount > 0
+      ? savedCouponDiscount
+      : calculatedCouponDiscount
+    : 0
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invoice.invoice_number}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:12px;padding:32px;}
