@@ -1,35 +1,22 @@
-import type { Order, ShippingAddress } from '@/types'
+import type { Order } from '@/types'
 
 const PAGE_MARGIN = 10
 const HEADER_HEIGHT = 12
-const TITLE_HEIGHT = 11
-const ROW_PADDING = 2
-const LINE_HEIGHT = 3
-const FONT_SIZE = 6
+const TITLE_HEIGHT = 12
+const CELL_PADDING = 2
+const LINE_HEIGHT = 4
+const FONT_SIZE = 8
 const COLUMNS = [
   { title: 'Order Number', width: 25 },
-  { title: 'Name', width: 30 },
-  { title: 'Phone No.', width: 25 },
-  { title: 'E-mail', width: 42 },
-  { title: 'Billing Address', width: 55 },
+  { title: 'Name', width: 27 },
+  { title: 'Phone No.', width: 22 },
   { title: 'Shipping Address', width: 55 },
-  { title: 'Products', width: 95 },
-  { title: 'Quantities', width: 20 },
+  { title: 'Products', width: 78 },
+  { title: 'Quantities', width: 17 },
   { title: 'Amount Payable', width: 25 },
   { title: 'Mode of Payment', width: 28 },
 ]
-
-function formatAddress(address: ShippingAddress | string | null | undefined): string {
-  if (!address) return 'Not provided'
-  if (typeof address === 'string') return address.trim() || 'Not provided'
-
-  return [
-    address.name,
-    address.phone,
-    address.address,
-    [address.city, address.state, address.pincode].filter(Boolean).join(', '),
-  ].filter(Boolean).join('\n')
-}
+const HEADERS = COLUMNS.map(column => column.title)
 
 function customerName(order: Order): string {
   return order.guest_name?.trim() || order.shipping_address?.name?.trim() || '—'
@@ -39,8 +26,16 @@ function customerPhone(order: Order): string {
   return order.guest_phone?.trim() || order.shipping_address?.phone?.trim() || '—'
 }
 
-function customerEmail(order: Order): string {
-  return order.guest_email?.trim() || order.customer_email?.trim() || '—'
+function shippingAddress(order: Order): string {
+  const address = order.shipping_address
+  if (!address) return 'Not provided'
+
+  return [
+    address.name,
+    address.phone,
+    address.address,
+    [address.city, address.state, address.pincode].filter(Boolean).join(', '),
+  ].filter(Boolean).join(', ')
 }
 
 function paymentMethod(order: Order): string {
@@ -55,27 +50,48 @@ function paymentMethod(order: Order): string {
 }
 
 function orderCells(order: Order): string[] {
-  const shippingAddress = formatAddress(order.shipping_address)
-  const billingAddress = order.billing_address
-    ? formatAddress(order.billing_address)
-    : 'Same as shipping'
-  const products = (order.items ?? []).map(item =>
-    `${item.name || 'Unnamed product'} (x${item.quantity})`
-  )
+  const products = (order.items ?? []).map(item => item.name || 'Unnamed product')
   const quantities = (order.items ?? []).map(item => String(item.quantity))
 
   return [
     order.order_number || order.id,
     customerName(order),
     customerPhone(order),
-    customerEmail(order),
-    billingAddress,
-    shippingAddress,
+    shippingAddress(order),
     products.length ? products.join('\n') : '—',
     quantities.length ? quantities.join('\n') : '—',
     `INR ${Number(order.total).toFixed(2)}`,
     paymentMethod(order),
   ]
+}
+
+function dateStamp(): string {
+  const date = new Date()
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function csvCell(value: string): string {
+  const safeValue = /^[\u0000-\u0020]*[=+\-@]/.test(value) ? `'${value}` : value
+  return `"${safeValue.replace(/"/g, '""')}"`
+}
+
+export function downloadLogisticsCsv(orders: Order[]): void {
+  if (orders.length === 0) {
+    throw new Error('There are no orders to export.')
+  }
+
+  const csv = [HEADERS, ...orders.map(orderCells)]
+    .map(row => row.map(csvCell).join(','))
+    .join('\r\n')
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `logistics_orders_${dateStamp()}.csv`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export async function downloadLogisticsPdf(orders: Order[]): Promise<void> {
@@ -84,7 +100,7 @@ export async function downloadLogisticsPdf(orders: Order[]): Promise<void> {
   }
 
   const { jsPDF } = await import('jspdf')
-  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' })
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   pdf.setProperties({ title: 'Logistics Dispatch Sheet', subject: 'Order details for logistics' })
   const pageWidth = pdf.internal.pageSize.getWidth()
   const pageHeight = pdf.internal.pageSize.getHeight()
@@ -99,7 +115,7 @@ export async function downloadLogisticsPdf(orders: Order[]): Promise<void> {
       pdf.setFontSize(12)
       pdf.text('Logistics Dispatch Sheet', PAGE_MARGIN, y + 4)
       pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(7)
+      pdf.setFontSize(8)
       pdf.text(
         `Generated ${new Date().toLocaleString('en-IN')} | ${orders.length} orders`,
         pageWidth - PAGE_MARGIN,
@@ -117,8 +133,8 @@ export async function downloadLogisticsPdf(orders: Order[]): Promise<void> {
       pdf.rect(x, y, column.width, HEADER_HEIGHT, 'F')
       pdf.setDrawColor(209, 213, 219)
       pdf.rect(x, y, column.width, HEADER_HEIGHT)
-      const lines = pdf.splitTextToSize(column.title, column.width - 4)
-      pdf.text(lines, x + 2, y + 4)
+      const lines = pdf.splitTextToSize(column.title, column.width - CELL_PADDING * 2)
+      pdf.text(lines, x + CELL_PADDING, y + 4)
       x += column.width
     })
     y += HEADER_HEIGHT
@@ -129,10 +145,10 @@ export async function downloadLogisticsPdf(orders: Order[]): Promise<void> {
 
   orders.forEach(order => {
     const cells = orderCells(order).map((value, index) =>
-      pdf.splitTextToSize(value, COLUMNS[index].width - 4)
+      pdf.splitTextToSize(value, COLUMNS[index].width - CELL_PADDING * 2)
     )
     const lineCount = Math.max(...cells.map(lines => lines.length))
-    const rowHeight = Math.max(8, lineCount * LINE_HEIGHT + ROW_PADDING * 2)
+    const rowHeight = Math.max(9, lineCount * LINE_HEIGHT + CELL_PADDING * 2)
 
     if (y + rowHeight > bodyBottom) {
       pdf.addPage()
@@ -145,8 +161,8 @@ export async function downloadLogisticsPdf(orders: Order[]): Promise<void> {
       const column = COLUMNS[index]
       pdf.setDrawColor(209, 213, 219)
       pdf.rect(x, y, column.width, rowHeight)
-      pdf.text(lines, x + 2, y + ROW_PADDING + 2.2, {
-        maxWidth: column.width - 4,
+      pdf.text(lines, x + CELL_PADDING, y + CELL_PADDING + 2.2, {
+        maxWidth: column.width - CELL_PADDING * 2,
       })
       x += column.width
     })
@@ -157,13 +173,11 @@ export async function downloadLogisticsPdf(orders: Order[]): Promise<void> {
   for (let page = 1; page <= pageCount; page += 1) {
     pdf.setPage(page)
     pdf.setFont('helvetica', 'normal')
-    pdf.setFontSize(7)
+    pdf.setFontSize(8)
     pdf.text(`Page ${page} of ${pageCount}`, pageWidth - PAGE_MARGIN, pageHeight - 5, {
       align: 'right',
     })
   }
 
-  const date = new Date()
-  const dateStamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-  pdf.save(`logistics_orders_${dateStamp}.pdf`)
+  pdf.save(`logistics_orders_${dateStamp()}.pdf`)
 }

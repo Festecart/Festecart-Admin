@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Search, X, Plus, Download, FileDown, Loader2 } from 'lucide-react'
+import { Search, X, Plus, Download, FileDown, Loader2, ChevronDown, FileText } from 'lucide-react'
 import { useOrders, isOrderPaid } from '@/hooks/useOrders'
 import { StatusBadge } from '@/components/StatusBadge'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
-import { downloadLogisticsPdf } from '@/lib/logisticsPdf'
+import { downloadLogisticsCsv, downloadLogisticsPdf } from '@/lib/logisticsPdf'
 import type { Order, OrderStatus } from '@/types'
 
 const STATUS_OPTIONS: { value: OrderStatus | 'all'; label: string }[] = [
@@ -67,6 +67,7 @@ export default function Orders() {
   const [dateTo,   setDateTo]   = useState('')
   const [logisticsExportError, setLogisticsExportError] = useState('')
   const [isExportingLogistics, setIsExportingLogistics] = useState(false)
+  const [isLogisticsExportMenuOpen, setIsLogisticsExportMenuOpen] = useState(false)
 
   const { data: orders, isLoading } = useOrders({
     status, search,
@@ -77,14 +78,19 @@ export default function Orders() {
   const clearFilters = () => { setSearch(''); setStatus('all'); setDateFrom(''); setDateTo('') }
   const hasFilters   = !!(search || status !== 'all' || dateFrom || dateTo)
 
-  const exportLogisticsData = async () => {
+  const exportLogisticsData = async (format: 'pdf' | 'csv') => {
     setLogisticsExportError('')
     setIsExportingLogistics(true)
+    setIsLogisticsExportMenuOpen(false)
     try {
-      await downloadLogisticsPdf(orders ?? [])
+      if (format === 'pdf') {
+        await downloadLogisticsPdf(orders ?? [])
+      } else {
+        downloadLogisticsCsv(orders ?? [])
+      }
     } catch (error) {
       setLogisticsExportError(
-        error instanceof Error ? error.message : 'Failed to generate the logistics PDF.'
+        error instanceof Error ? error.message : `Failed to generate the logistics ${format.toUpperCase()}.`
       )
     } finally {
       setIsExportingLogistics(false)
@@ -159,18 +165,50 @@ export default function Orders() {
             className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium px-4 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">
             <Download size={15} /> Export CSV
           </button>
-          <button
-            type="button"
-            onClick={exportLogisticsData}
-            disabled={isLoading || isExportingLogistics || !orders?.length}
-            title={orders?.length ? `Export ${orders.length} filtered orders for logistics` : 'No orders to export'}
-            className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isExportingLogistics
-              ? <Loader2 size={15} className="animate-spin" />
-              : <FileDown size={15} />}
-            {isExportingLogistics ? 'Preparing PDF...' : 'Export Data to Logistics'}
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsLogisticsExportMenuOpen(open => !open)}
+              disabled={isLoading || isExportingLogistics || !orders?.length}
+              title={orders?.length ? `Export ${orders.length} filtered orders for logistics` : 'No orders to export'}
+              aria-haspopup="menu"
+              aria-expanded={isLogisticsExportMenuOpen}
+              className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isExportingLogistics
+                ? <Loader2 size={15} className="animate-spin" />
+                : <FileDown size={15} />}
+              {isExportingLogistics ? 'Preparing export...' : 'Export Data to Logistics'}
+              {!isExportingLogistics && <ChevronDown size={14} />}
+            </button>
+            {isLogisticsExportMenuOpen && (
+              <div
+                role="menu"
+                aria-label="Choose logistics export format"
+                onKeyDown={event => {
+                  if (event.key === 'Escape') setIsLogisticsExportMenuOpen(false)
+                }}
+                className="absolute right-0 z-20 mt-2 w-44 rounded-lg border border-gray-200 bg-white p-1 shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => exportLogisticsData('pdf')}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  <FileDown size={15} /> Download PDF
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => exportLogisticsData('csv')}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  <FileText size={15} /> Download CSV
+                </button>
+              </div>
+            )}
+          </div>
           <Link to="/orders/add"
             className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg">
             <Plus size={15} /> Add Order
