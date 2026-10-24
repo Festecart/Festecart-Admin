@@ -53,6 +53,8 @@ export interface OrderConfirmationData {
   items: { name: string; price: number; quantity: number; image?: string | null }[];
   subtotal: number;
   shippingCharge: number;
+  couponCode?: string | null;
+  couponDiscount?: number | null;
   total: number;
   paymentMethod: string;
   shippingAddress: {
@@ -95,6 +97,8 @@ export async function sendOrderConfirmationEmail(data: OrderConfirmationData): P
     items:           data.items,
     subtotal:        data.subtotal,
     shipping_charge: data.shippingCharge,
+    coupon_code:     data.couponCode ?? null,
+    coupon_discount: data.couponDiscount ?? null,
     total:           data.total,
     payment_method:  data.paymentMethod,
   };

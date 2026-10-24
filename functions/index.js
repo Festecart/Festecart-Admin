@@ -21,6 +21,25 @@ function fmtInr(n) {
   return '\u20B9\u00a0' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
+function getCouponDiscount(order) {
+  if (!order.coupon_code) return 0
+
+  if (order.coupon_discount !== undefined && order.coupon_discount !== null && order.coupon_discount !== '') {
+    var savedDiscount = Number(order.coupon_discount)
+    if (Number.isFinite(savedDiscount)) return Math.max(0, savedDiscount)
+  }
+
+  var itemSubtotal = (order.items || []).reduce(function(sum, item) {
+    return sum + Number(item.price || 0) * (item.quantity || 1)
+  }, 0)
+  var subtotal = Number(order.subtotal)
+  if (!Number.isFinite(subtotal) || subtotal <= 0) subtotal = itemSubtotal
+
+  var shipping = Number(order.shipping_charge || 0)
+  var total = Number(order.total || 0)
+  return Math.max(0, Math.round((subtotal + shipping - total + Number.EPSILON) * 100) / 100)
+}
+
 function numToWords(num) {
   var ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
     'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen']
@@ -60,7 +79,7 @@ function generateInvoicePdf(order, logoImageBuffer) {
     var shipping  = Number(order.shipping_charge || 0)
     var subtotal  = items.reduce(function(s, i) { return s + Number(i.price || 0) * (i.quantity || 1) }, 0)
     var couponCode     = order.coupon_code || null
-    var couponDiscount = Number(order.coupon_discount || 0)
+    var couponDiscount = getCouponDiscount(order)
     var custEmail = order.customer_email || order.guest_email || ''
     var payment   = order.payment_method === 'cod' ? 'Cash on Delivery'
                   : order.payment_method === 'self_pickup' ? 'Self Pickup'
@@ -231,7 +250,7 @@ function buildAdminOrderEmail(order, linkHref) {
                 : order.payment_method === 'cod' ? 'Cash on Delivery'
                 : (order.payment_method || '').toUpperCase()
   var couponCode     = order.coupon_code || null
-  var couponDiscount = Number(order.coupon_discount || 0)
+  var couponDiscount = getCouponDiscount(order)
   var addrName   = (addr && addr.name) || custName
   var addrStreet = (addr && addr.address) || ''
   var addrCity   = (addr && addr.city) || ''
@@ -326,7 +345,7 @@ function buildCustomerConfirmationEmail(order) {
                 : (order.payment_method || '').toUpperCase()
   var items          = order.items || []
   var couponCode     = order.coupon_code || null
-  var couponDiscount = Number(order.coupon_discount || 0)
+  var couponDiscount = getCouponDiscount(order)
 
   var itemRows = items.map(function(i) {
     var qty  = i.quantity || 1

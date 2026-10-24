@@ -145,6 +145,25 @@ function fmtInr(value) {
   return '\u20B9\u00a0' + Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
+function getCouponDiscount(order) {
+  if (!order.coupon_code) return 0;
+
+  if (order.coupon_discount !== undefined && order.coupon_discount !== null && order.coupon_discount !== '') {
+    const savedDiscount = Number(order.coupon_discount);
+    if (Number.isFinite(savedDiscount)) return Math.max(0, savedDiscount);
+  }
+
+  const itemSubtotal = (order.items || []).reduce(function(sum, item) {
+    return sum + Number(item.price || 0) * (item.quantity || 1);
+  }, 0);
+  let subtotal = Number(order.subtotal);
+  if (!Number.isFinite(subtotal) || subtotal <= 0) subtotal = itemSubtotal;
+
+  const shipping = Number(order.shipping_charge || 0);
+  const total = Number(order.total || 0);
+  return Math.max(0, Math.round((subtotal + shipping - total + Number.EPSILON) * 100) / 100);
+}
+
 function buildAdminOrderEmail(order, linkHref) {
   const orderNum = order.order_number || '—';
   const addr = order.shipping_address || null;
@@ -158,7 +177,7 @@ function buildAdminOrderEmail(order, linkHref) {
     : order.payment_method === 'cod' ? 'Cash on Delivery'
     : (order.payment_method || '').toUpperCase();
   const couponCode = order.coupon_code || null;
-  const couponDiscount = Number(order.coupon_discount || 0);
+  const couponDiscount = getCouponDiscount(order);
   const addrName = (addr && addr.name) || custName;
   const addrStreet = (addr && addr.address) || '';
   const addrCity = (addr && addr.city) || '';
@@ -251,7 +270,7 @@ function buildCustomerConfirmationEmail(order) {
     : (order.payment_method || '').toUpperCase();
   const items = order.items || [];
   const couponCode = order.coupon_code || null;
-  const couponDiscount = Number(order.coupon_discount || 0);
+  const couponDiscount = getCouponDiscount(order);
   const itemRows = items.map(function(item) {
     const quantity = item.quantity || 1;
     const price = Number(item.price || 0);

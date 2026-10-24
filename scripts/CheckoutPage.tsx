@@ -327,6 +327,8 @@ export default function CheckoutPage() {
           items:           items.map(i => ({ name: i.name, price: i.price, quantity: i.quantity, image: i.image ?? null })),
           subtotal,
           shippingCharge:  shippingCharge,
+          couponCode:      couponApplied ? coupon : null,
+          couponDiscount:  null,
           total:           totalPayable,
           paymentMethod:   paymentMethod,
           shippingAddress: shippingAddr,
