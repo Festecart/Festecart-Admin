@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Search, X, Plus, Download } from 'lucide-react'
+import { Search, X, Plus, Download, FileDown, Loader2 } from 'lucide-react'
 import { useOrders, isOrderPaid } from '@/hooks/useOrders'
 import { StatusBadge } from '@/components/StatusBadge'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
+import { downloadLogisticsPdf } from '@/lib/logisticsPdf'
 import type { Order, OrderStatus } from '@/types'
 
 const STATUS_OPTIONS: { value: OrderStatus | 'all'; label: string }[] = [
@@ -56,6 +57,8 @@ export default function Orders() {
   const [status,   setStatus]   = useState<OrderStatus | 'all'>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo,   setDateTo]   = useState('')
+  const [logisticsExportError, setLogisticsExportError] = useState('')
+  const [isExportingLogistics, setIsExportingLogistics] = useState(false)
 
   const { data: orders, isLoading } = useOrders({
     status, search,
@@ -65,6 +68,20 @@ export default function Orders() {
 
   const clearFilters = () => { setSearch(''); setStatus('all'); setDateFrom(''); setDateTo('') }
   const hasFilters   = !!(search || status !== 'all' || dateFrom || dateTo)
+
+  const exportLogisticsData = async () => {
+    setLogisticsExportError('')
+    setIsExportingLogistics(true)
+    try {
+      await downloadLogisticsPdf(orders ?? [])
+    } catch (error) {
+      setLogisticsExportError(
+        error instanceof Error ? error.message : 'Failed to generate the logistics PDF.'
+      )
+    } finally {
+      setIsExportingLogistics(false)
+    }
+  }
 
   const exportOrders = () => {
     if (!orders?.length) return
@@ -125,11 +142,23 @@ export default function Orders() {
             {isLoading ? 'Loading…' : `${orders?.length ?? 0} orders`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button type="button" onClick={exportOrders} disabled={isLoading || !orders?.length}
             title={orders?.length ? `Export ${orders.length} filtered orders` : 'No orders to export'}
             className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium px-4 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">
             <Download size={15} /> Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={exportLogisticsData}
+            disabled={isLoading || isExportingLogistics || !orders?.length}
+            title={orders?.length ? `Export ${orders.length} filtered orders for logistics` : 'No orders to export'}
+            className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isExportingLogistics
+              ? <Loader2 size={15} className="animate-spin" />
+              : <FileDown size={15} />}
+            {isExportingLogistics ? 'Preparing PDF...' : 'Export Data to Logistics'}
           </button>
           <Link to="/orders/add"
             className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg">
@@ -137,6 +166,11 @@ export default function Orders() {
           </Link>
         </div>
       </div>
+      {logisticsExportError && (
+        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {logisticsExportError}
+        </p>
+      )}
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">

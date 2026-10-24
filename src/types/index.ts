@@ -49,6 +49,7 @@ export interface Order {
   note: string | null
   coupon_code: string | null
   coupon_discount?: number | null
+  billing_address?: ShippingAddress | string | null
   shipping_address: ShippingAddress | null
   items: OrderItem[]
   tracking_number: string | null
