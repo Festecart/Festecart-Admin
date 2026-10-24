@@ -42,6 +42,9 @@ export interface Order {
   customer_email: string | null
   subtotal: number
   shipping_charge: number
+  customer_shipping_charge: number
+  logistics_cost: number | null
+  amount_paid: number
   total: number
   note: string | null
   coupon_code: string | null
@@ -78,6 +81,7 @@ export interface Invoice {
   status: string
   courier: string | null
   tracking_number: string | null
+  shipping_cost?: number | null
   sent_at: string | null
   estimated_delivery: string | null
   delivered_at: string | null

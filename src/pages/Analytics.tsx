@@ -87,6 +87,7 @@ function exportCSV(data: AnalyticsData, range: DateRange) {
   sections.push(buildCSVSection('SUMMARY', ['Metric', 'Value'], [
     ['Date Range', `${from} to ${to}`],
     ['Total Revenue (₹)', data.totalRevenue],
+    ['Earned Value (₹)', data.totalEarnedValue],
     ['Total Orders', data.totalOrders],
     ['Average Order Value (₹)', data.averageOrderValue],
     ['Total Customers', data.totalCustomers],
@@ -718,6 +719,7 @@ export default function Analytics() {
       {isLoading && !data ? <KPISkel /> : data && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <KPI label="Total Revenue"     value={fmtINR(data.totalRevenue)}      icon={IndianRupee} color={C.indigo} />
+          <KPI label="Earned Value"      value={fmtINR(data.totalEarnedValue)} icon={IndianRupee} color={C.green} sub="Actual paid − logistics cost" />
           <KPI label="Total Orders"      value={data.totalOrders}               icon={ShoppingBag} color={C.blue} />
           <KPI label="Avg Order Value"   value={fmtINR(data.averageOrderValue)} icon={TrendingUp}  color={C.green} />
           <KPI label="Total Customers"   value={data.totalCustomers}            icon={Users}       color={C.sky} />

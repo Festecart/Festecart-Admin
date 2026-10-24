@@ -62,7 +62,12 @@ function toOrder(id: string, data: Record<string, unknown>): Order {
     paid_at:             tsToStr(data.paid_at),
     subtotal:            Number(data.subtotal ?? 0),
     shipping_charge:     Number(data.shipping_charge ?? 0),
+    customer_shipping_charge: Number(data.customer_shipping_charge ?? data.shipping_charge ?? 0),
     total:               Number(data.total ?? 0),
+    logistics_cost:      data.logistics_cost == null ? null : Number(data.logistics_cost),
+    amount_paid:         data.amount_paid == null
+      ? (data.payment_status === 'paid' ? Number(data.total ?? 0) : 0)
+      : Number(data.amount_paid),
     note:                (data.note as string | null) ?? null,
     coupon_code:         (data.coupon_code as string | null) ?? null,
     coupon_discount:     (data.coupon_discount as number | null) ?? null,
@@ -90,6 +95,7 @@ function toInvoice(id: string, data: Record<string, unknown>): Invoice {
     status:             String(data.status ?? 'pending_shipment'),
     courier:            (data.courier as string | null) ?? null,
     tracking_number:    (data.tracking_number as string | null) ?? null,
+    shipping_cost:      data.shipping_cost == null ? null : Number(data.shipping_cost),
     sent_at:            tsToStr(data.sent_at),
     estimated_delivery: tsToStr(data.estimated_delivery),
     delivered_at:       tsToStr(data.delivered_at),
@@ -126,6 +132,55 @@ function ConfirmModal({ title, message, onClose, onConfirm, loading }: {
           className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {loading && <Loader2 size={13} className="animate-spin" />} Confirm
         </button>
+      </div>
+    </Modal>
+  )
+}
+
+function MarkPaidModal({ totalPayable, onClose, onConfirm, loading }: {
+  totalPayable: number; onClose: () => void; onConfirm: (amountPaid: number) => void; loading?: boolean
+}) {
+  const [fullPaid, setFullPaid] = useState(false)
+  const [amount, setAmount] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = () => {
+    const amountPaid = fullPaid ? totalPayable : Number(amount)
+    if (!fullPaid && (!amount.trim() || !Number.isFinite(amountPaid) || amountPaid <= 0)) {
+      setError('Select Full paid or enter an amount greater than zero')
+      return
+    }
+    if (amountPaid > totalPayable) {
+      setError('Amount paid cannot exceed the total payable')
+      return
+    }
+    setError(null)
+    onConfirm(amountPaid)
+  }
+
+  return (
+    <Modal title="Mark as Paid" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">Total payable: <strong>{formatCurrency(totalPayable)}</strong></p>
+        <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+          <input type="checkbox" checked={fullPaid} onChange={e => setFullPaid(e.target.checked)} />
+          Full paid ({formatCurrency(totalPayable)})
+        </label>
+        <div>
+          <label htmlFor="amount-paid" className="block text-xs font-medium text-gray-700 mb-1">Amount paid</label>
+          <input id="amount-paid" type="number" min="0.01" max={totalPayable} step="0.01"
+            value={amount} onChange={e => setAmount(e.target.value)} disabled={fullPaid}
+            placeholder="Enter amount received"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:bg-gray-100" />
+        </div>
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        <div className="flex gap-3 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm">Cancel</button>
+          <button onClick={submit} disabled={loading}
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-60">
+            {loading && <Loader2 size={13} className="animate-spin" />} Save Paid Status
+          </button>
+        </div>
       </div>
     </Modal>
   )
@@ -330,8 +385,8 @@ function GenerateInvoiceModal({ order, invoices, onClose, onSuccess }: {
 }
 
 // ── Tracking Modal ────────────────────────────────────────────
-function TrackingModal({ invoice, onClose, onSuccess }: {
-  invoice: Invoice; onClose: () => void; onSuccess: () => void
+function TrackingModal({ invoice, order, invoices, onClose, onSuccess }: {
+  invoice: Invoice; order: Order; invoices: Invoice[]; onClose: () => void; onSuccess: () => void
 }) {
   const qc = useQueryClient()
   const now = new Date()
@@ -344,6 +399,7 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
   const [form, setForm] = useState({
     courier:            invoice.courier ?? 'Self-delivery',
     tracking_number:    invoice.tracking_number ?? '',
+    shipping_cost:      invoice.shipping_cost == null ? '' : String(invoice.shipping_cost),
     sent_at:            invoice.sent_at ? invoice.sent_at.slice(0, 16) : toLocal(now),
     estimated_delivery: invoice.estimated_delivery ? invoice.estimated_delivery.slice(0, 16) : toLocal(defaultDelivery),
   })
@@ -354,6 +410,15 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
 
   const handleSave = async () => {
     if (!form.courier) { setError('Courier is required'); return }
+    const shippingCost = Number(form.shipping_cost)
+    if (!form.shipping_cost.trim() || !Number.isFinite(shippingCost) || shippingCost < 0) {
+      setError('Shipping cost is required and must be zero or greater')
+      return
+    }
+    const totalShippingCost = invoices.reduce(
+      (total, current) => total + (current.id === invoice.id ? shippingCost : current.shipping_cost ?? 0),
+      0
+    )
     setLoading(true); setError(null)
     try {
       const sentAt = form.sent_at ? new Date(form.sent_at).toISOString() : new Date().toISOString()
@@ -362,6 +427,7 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
       await updateDoc(doc(db, 'invoices', invoice.id), {
         courier: form.courier,
         tracking_number: form.tracking_number || null,
+        shipping_cost: shippingCost,
         sent_at: sentAt,
         estimated_delivery: estDelivery,
         status: 'shipped',
@@ -374,10 +440,13 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
         fulfillment_status: 'shipped',
         out_for_delivery_at: Timestamp.now(),
         shipped_at: Timestamp.now(),
+        customer_shipping_charge: order.customer_shipping_charge,
+        logistics_cost: totalShippingCost,
         updated_at: Timestamp.now(),
       })
       qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
       qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
+      qc.invalidateQueries({ queryKey: ['orders'] })
       onSuccess()
     } catch (e) { setError(e instanceof Error ? e.message : 'Save failed') }
     finally { setLoading(false) }
@@ -397,6 +466,13 @@ function TrackingModal({ invoice, onClose, onSuccess }: {
           <input type="text" value={form.tracking_number} onChange={e => f('tracking_number', e.target.value)}
             placeholder="AWB / Tracking No"
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+        </div>
+        <div>
+          <label htmlFor="shipping-cost" className="block text-xs font-medium text-gray-700 mb-1">Shipping Cost *</label>
+          <input id="shipping-cost" type="number" min="0" step="0.01" required value={form.shipping_cost}
+            onChange={e => f('shipping_cost', e.target.value)} placeholder="Enter shipping amount"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+          <p className="mt-1 text-xs text-gray-500">This amount is added to the customer total and recorded as paid to logistics.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -430,45 +506,80 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
   const qc = useQueryClient()
   const [loading, setLoading] = useState(false)
   const [checked, setChecked] = useState(false)
+  const [shippingCost, setShippingCost] = useState('')
+  const [error, setError] = useState<string | null>(null)
   const paid = isOrderPaid(order)
 
   const confirm = async () => {
     if (!checked) return
-    setLoading(true)
-    await updateDoc(doc(db, 'invoices', invoice.id), {
-      status: 'delivered', delivered_at: Timestamp.now(), updated_at: Timestamp.now(),
-    })
-    const invSnap = await getDocs(
-      query(collection(db, 'invoices'), where('order_id', '==', invoice.order_id))
-    )
-    const allInvoices = invSnap.docs.map(d => ({ ...d.data(), id: d.id }) as Invoice & Record<string, unknown>)
-    const fulfilledQtyMap: Record<string, number> = {}
-    allInvoices.forEach(inv => {
-      (inv.invoice_items ?? []).forEach((ii: { product_id: string; fulfilled_qty: number }) => {
-        fulfilledQtyMap[ii.product_id] = (fulfilledQtyMap[ii.product_id] ?? 0) + ii.fulfilled_qty
-      })
-    })
-    const allDelivered = (order.items ?? []).every(
-      item => (fulfilledQtyMap[item.product_id] ?? 0) >= item.quantity
-    )
-    const newOrderStatus = allDelivered ? 'delivered' : 'partially_delivered'
-    await updateDoc(doc(db, 'orders', invoice.order_id), {
-      status: newOrderStatus,
-      fulfillment_status: allDelivered ? 'delivered' : 'partially_delivered',
-      delivered_at: allDelivered ? Timestamp.now() : null,
-      updated_at: Timestamp.now(),
-    })
-    await logHistory(invoice.order_id, 'Marked Delivered', null, newOrderStatus, `Invoice ${invoice.invoice_number}`)
-    if (allDelivered) {
-      const freshSnap = await getDoc(doc(db, 'orders', invoice.order_id))
-      if (freshSnap.exists()) {
-        sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'delivered', invoice)
-          .catch(e => console.warn('[Email] Delivered email failed:', e instanceof Error ? e.message : e))
-      }
+    const updatedShippingCost = shippingCost.trim() ? Number(shippingCost) : null
+    if (updatedShippingCost !== null && (!Number.isFinite(updatedShippingCost) || updatedShippingCost < 0)) {
+      setError('Shipping cost must be a valid amount of zero or greater')
+      return
     }
-    qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
-    qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
-    setLoading(false); onSuccess()
+
+    setLoading(true)
+    setError(null)
+    try {
+      const invoiceUpdates: Record<string, unknown> = {
+        status: 'delivered',
+        delivered_at: Timestamp.now(),
+        updated_at: Timestamp.now(),
+      }
+      if (updatedShippingCost !== null) invoiceUpdates.shipping_cost = updatedShippingCost
+      await updateDoc(doc(db, 'invoices', invoice.id), invoiceUpdates)
+
+      const invSnap = await getDocs(
+        query(collection(db, 'invoices'), where('order_id', '==', invoice.order_id))
+      )
+      const allInvoices = invSnap.docs.map(d => ({ ...d.data(), id: d.id }) as Invoice & Record<string, unknown>)
+      const fulfilledQtyMap: Record<string, number> = {}
+      allInvoices.forEach(inv => {
+        (inv.invoice_items ?? []).forEach((ii: { product_id: string; fulfilled_qty: number }) => {
+          fulfilledQtyMap[ii.product_id] = (fulfilledQtyMap[ii.product_id] ?? 0) + ii.fulfilled_qty
+        })
+      })
+
+      const allDelivered = (order.items ?? []).every(
+        item => (fulfilledQtyMap[item.product_id] ?? 0) >= item.quantity
+      )
+      const newOrderStatus = allDelivered ? 'delivered' : 'partially_delivered'
+      const orderUpdates: Record<string, unknown> = {
+        status: newOrderStatus,
+        fulfillment_status: allDelivered ? 'delivered' : 'partially_delivered',
+        delivered_at: allDelivered ? Timestamp.now() : null,
+        updated_at: Timestamp.now(),
+      }
+      if (updatedShippingCost !== null) {
+        orderUpdates.logistics_cost = Math.max(
+          0,
+          (order.logistics_cost ?? 0) + updatedShippingCost - (invoice.shipping_cost ?? 0)
+        )
+      }
+      await updateDoc(doc(db, 'orders', invoice.order_id), orderUpdates)
+      await logHistory(
+        invoice.order_id,
+        'Marked Delivered',
+        null,
+        newOrderStatus,
+        `Invoice ${invoice.invoice_number}${updatedShippingCost !== null ? `; logistics cost updated to ${formatCurrency(orderUpdates.logistics_cost as number)}` : ''}`
+      )
+      if (allDelivered) {
+        const freshSnap = await getDoc(doc(db, 'orders', invoice.order_id))
+        if (freshSnap.exists()) {
+          sendStatusEmail(toOrder(freshSnap.id, freshSnap.data() as Record<string,unknown>), 'delivered', invoice)
+            .catch(e => console.warn('[Email] Delivered email failed:', e instanceof Error ? e.message : e))
+        }
+      }
+      qc.invalidateQueries({ queryKey: ['invoices', invoice.order_id] })
+      qc.invalidateQueries({ queryKey: ['orders', invoice.order_id] })
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      onSuccess()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to mark order as delivered')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -482,13 +593,27 @@ function MarkDeliveredModal({ invoice, order, onClose, onSuccess }: {
       <div className="space-y-3 text-sm text-gray-700">
         {invoice.tracking_number && <p><span className="text-gray-400">Tracking No:</span> <strong>{invoice.tracking_number}</strong></p>}
         {invoice.courier         && <p><span className="text-gray-400">Courier:</span> <strong>{invoice.courier}</strong></p>}
+        <div>
+          <label htmlFor={`delivered-shipping-cost-${invoice.id}`} className="block text-xs font-medium text-gray-700 mb-1">
+            Update Shipping Cost <span className="font-normal text-gray-400">(optional)</span>
+          </label>
+          <input id={`delivered-shipping-cost-${invoice.id}`} type="number" min="0" step="0.01"
+            value={shippingCost} onChange={e => setShippingCost(e.target.value)}
+            placeholder={`No change${invoice.shipping_cost == null ? '' : ` (current ${formatCurrency(invoice.shipping_cost)})`}`}
+            disabled={!paid || loading}
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:bg-gray-100" />
+          <p className="mt-1 text-xs text-gray-500">
+            Leave blank to keep Paid to Logistics unchanged. Updating this amount recalculates Earned Value.
+          </p>
+        </div>
         <div className="flex items-center gap-2 mt-3 p-3 bg-gray-50 rounded-lg">
           <input type="checkbox" id="markdel" checked={checked} onChange={e => setChecked(e.target.checked)} disabled={!paid} />
           <label htmlFor="markdel" className={`text-sm font-medium ${paid ? 'text-gray-800' : 'text-gray-400'}`}>Mark As Delivered</label>
         </div>
       </div>
+      {error && <p role="alert" className="mt-3 text-xs text-red-600">{error}</p>}
       <div className="flex gap-3 justify-end mt-4">
-        <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-sm">Close</button>
+        <button onClick={onClose} disabled={loading} className="px-4 py-2 border border-gray-300 rounded-lg text-sm disabled:opacity-60">Close</button>
         <button onClick={confirm} disabled={!checked || loading || !paid}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:bg-gray-400">
           {loading && <Loader2 size={13} className="animate-spin" />} Confirm
@@ -563,7 +688,7 @@ ${invoice.notes ? `<p style="font-size:11px;margin:4px 0;"><strong>Notes:</stron
 }
 
 // ── Invoice Card ──────────────────────────────────────────────
-function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
+function InvoiceCard({ invoice, order, invoices }: { invoice: Invoice; order: Order; invoices: Invoice[] }) {
   const qc = useQueryClient()
   const [showTracking,  setShowTracking]  = useState(false)
   const [showDelivered, setShowDelivered] = useState(false)
@@ -636,7 +761,7 @@ function InvoiceCard({ invoice, order }: { invoice: Invoice; order: Order }) {
           </button>
         </div>
       )}
-      {showTracking  && <TrackingModal  invoice={invoice} onClose={() => setShowTracking(false)}  onSuccess={() => setShowTracking(false)}  />}
+      {showTracking  && <TrackingModal  invoice={invoice} order={order} invoices={invoices} onClose={() => setShowTracking(false)}  onSuccess={() => setShowTracking(false)}  />}
       {showDelivered && <MarkDeliveredModal invoice={invoice} order={order} onClose={() => setShowDelivered(false)} onSuccess={() => setShowDelivered(false)} />}
       {cancelConfirm && (
         <ConfirmModal title="Cancel Fulfillment" message="Are you sure you want to cancel this fulfillment?"
@@ -691,6 +816,7 @@ export default function OrderDetail() {
 
   const addr = order.shipping_address
   const paid = isOrderPaid(order)
+  const customerShippingCharge = order.customer_shipping_charge ?? order.shipping_charge
   const couponCode = order.coupon_code?.trim() || null
   const couponDiscount = order.coupon_discount == null ? Number.NaN : Number(order.coupon_discount)
   const hasCouponDiscount = Number.isFinite(couponDiscount)
@@ -826,8 +952,8 @@ export default function OrderDetail() {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>{formatCurrency(order.subtotal)}</span></div>
               <div className="flex justify-between text-gray-600">
-                <span>Shipping {order.shipping_charge === 0 && <span className="text-xs text-green-600 ml-1">[Free]</span>}</span>
-                <span>{order.shipping_charge > 0 ? formatCurrency(order.shipping_charge) : '₹0.00'}</span>
+                <span>Shipping {customerShippingCharge === 0 && <span className="text-xs text-green-600 ml-1">[Free]</span>}</span>
+                <span>{customerShippingCharge > 0 ? formatCurrency(customerShippingCharge) : '₹0.00'}</span>
               </div>
               <div className="flex justify-between text-gray-600">
                 <span>Coupon Name</span>
@@ -857,7 +983,7 @@ export default function OrderDetail() {
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2"><FileText size={16} /> Invoices</h2>
             <div className="space-y-3">
-              {invoices.map(inv => <InvoiceCard key={inv.id} invoice={inv} order={order} />)}
+              {invoices.map(inv => <InvoiceCard key={inv.id} invoice={inv} order={order} invoices={invoices} />)}
             </div>
           </div>
         )}
@@ -927,9 +1053,13 @@ export default function OrderDetail() {
           onConfirm={() => doUpdate({ status: 'cancelled', cancelled_at: Timestamp.now() }, 'Order Cancelled', 'cancelled')} />
       )}
       {modal === 'markpaid' && (
-        <ConfirmModal title="Mark as Paid" message="Confirm payment has been received?"
+        <MarkPaidModal totalPayable={order.total}
           onClose={() => setModal(null)} loading={busy}
-          onConfirm={() => doUpdate({ payment_status: 'paid', paid_at: Timestamp.now() }, 'Payment Received', order.status)} />
+          onConfirm={amountPaid => doUpdate({
+            payment_status: 'paid',
+            amount_paid: amountPaid,
+            paid_at: Timestamp.now(),
+          }, 'Payment Received', order.status)} />
       )}
       {modal === 'processing' && (
         <ConfirmModal title="Mark as Processing" message="Mark this order as processing?"

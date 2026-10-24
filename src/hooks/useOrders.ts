@@ -30,7 +30,12 @@ function toOrder(id: string, data: Record<string, unknown>): Order {
     paid_at:              ts(data.paid_at),
     subtotal:             Number(data.subtotal ?? 0),
     shipping_charge:      Number(data.shipping_charge ?? 0),
+    customer_shipping_charge: Number(data.customer_shipping_charge ?? data.shipping_charge ?? 0),
     total:                Number(data.total ?? 0),
+    logistics_cost:       data.logistics_cost == null ? null : Number(data.logistics_cost),
+    amount_paid:          data.amount_paid == null
+      ? (data.payment_status === 'paid' ? Number(data.total ?? 0) : 0)
+      : Number(data.amount_paid),
     note:                 (data.note as string | null) ?? null,
     coupon_code:          (data.coupon_code as string | null) ?? null,
     coupon_discount:      data.coupon_discount == null ? null : Number(data.coupon_discount),

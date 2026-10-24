@@ -22,6 +22,7 @@ export function aggregateOrders(
   productCategoryMap: Map<string, string>,
 ): AnalyticsData {
   let totalRevenue = 0
+  let totalEarnedValue = 0
   let totalOrders = orders.length
   let cancelledOrders = 0
   let codOrders = 0
@@ -60,6 +61,9 @@ export function aggregateOrders(
 
     const total: number = order.total ?? 0
     totalRevenue += total
+    const actualPaid = Number(order.amount_paid ?? (order.payment_status === 'paid' ? total : 0))
+    const logisticsCost = Number(order.logistics_cost ?? 0)
+    totalEarnedValue += actualPaid - logisticsCost
 
     // Payment method
     const method: string = order.payment_method ?? 'cod'
@@ -179,6 +183,7 @@ export function aggregateOrders(
 
   return {
     totalRevenue,
+    totalEarnedValue,
     totalOrders,
     averageOrderValue,
     totalCustomers,

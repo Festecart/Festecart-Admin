@@ -65,6 +65,7 @@ export interface CustomerDetail {
 export interface AnalyticsData {
   // KPIs
   totalRevenue: number;
+  totalEarnedValue: number;
   totalOrders: number;
   averageOrderValue: number;
   totalCustomers: number;

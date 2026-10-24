@@ -22,6 +22,18 @@ function customerPhone(order: Order): string {
   return order.guest_phone?.trim() || order.shipping_address?.phone?.trim() || '—'
 }
 
+function productCost(order: Order): number {
+  return order.items?.length
+    ? order.items.reduce((total, item) => total + item.price * item.quantity, 0)
+    : order.subtotal
+}
+
+function totalPayable(order: Order): number {
+  const products = productCost(order)
+  const shipment = order.shipping_charge || 0
+  return products + shipment
+}
+
 function csvCell(value: string | number | null | undefined): string {
   let text = value == null ? '' : String(value)
   if (typeof value === 'string' && /^[\u0000-\u0020]*[=+\-@]/.test(text)) text = `'${text}`
@@ -59,7 +71,8 @@ export default function Orders() {
 
     const headers = [
       'Order Number', 'Order Date', 'Customer Name', 'Customer Email', 'Phone',
-      'Item Count', 'Items', 'Subtotal', 'Shipping Charge', 'Total',
+      'Item Count', 'Items', 'Product Cost', 'Shipment Cost', 'Total Payable',
+      'Paid to Logistics', 'Actual Paid', 'Earned Value',
       'Payment Method', 'Payment Status', 'Order Status', 'Address', 'City',
       'State', 'Postal Code', 'Courier', 'Tracking Number', 'Notes',
     ]
@@ -71,9 +84,12 @@ export default function Orders() {
       customerPhone(order) === '—' ? '' : customerPhone(order),
       order.items?.length ?? 0,
       (order.items ?? []).map(item => `${item.name} x ${item.quantity}`).join('; '),
-      order.subtotal,
+      productCost(order),
       order.shipping_charge,
-      order.total,
+      totalPayable(order),
+      order.logistics_cost ?? 0,
+      order.amount_paid,
+      order.amount_paid - (order.logistics_cost ?? 0),
       order.payment_method === 'cod' ? 'COD' : 'Online',
       isOrderPaid(order) ? 'Paid' : 'Pending',
       order.status,
@@ -161,7 +177,7 @@ export default function Orders() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Order No','Order Date','Customer Name','Phone','Items','Total','Payment Method','Payment Status','Order Status'].map(h => (
+                  {['Order No','Order Date','Customer Name','Phone','Items','Product Cost','Shipment Cost','Total Payable','Paid to Logistics','Actual Paid','Earned Value','Payment Method','Payment Status','Order Status'].map(h => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -180,7 +196,14 @@ export default function Orders() {
                     <td className="px-5 py-3 text-gray-800 font-medium">{customerName(order)}</td>
                     <td className="px-5 py-3 text-gray-500">{customerPhone(order)}</td>
                     <td className="px-5 py-3 text-gray-500 text-center">{order.items?.length ?? 0}</td>
-                    <td className="px-5 py-3 font-semibold whitespace-nowrap">{formatCurrency(order.total)}</td>
+                    <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(productCost(order))}</td>
+                    <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(order.shipping_charge)}</td>
+                    <td className="px-5 py-3 font-semibold whitespace-nowrap">{formatCurrency(totalPayable(order))}</td>
+                    <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(order.logistics_cost ?? 0)}</td>
+                    <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(order.amount_paid)}</td>
+                    <td className={`px-5 py-3 whitespace-nowrap font-medium ${order.amount_paid - (order.logistics_cost ?? 0) < 0 ? 'text-red-600' : 'text-gray-800'}`}>
+                      {formatCurrency(order.amount_paid - (order.logistics_cost ?? 0))}
+                    </td>
                     <td className="px-5 py-3 text-gray-600 text-xs font-medium">
                       {order.payment_method === 'cod' ? 'COD' : 'Online'}
                     </td>
@@ -193,7 +216,7 @@ export default function Orders() {
                   </tr>
                 ))}
                 {(orders ?? []).length === 0 && (
-                  <tr><td colSpan={9} className="px-5 py-12 text-center text-gray-400">No orders match your filters</td></tr>
+                  <tr><td colSpan={14} className="px-5 py-12 text-center text-gray-400">No orders match your filters</td></tr>
                 )}
               </tbody>
             </table>
