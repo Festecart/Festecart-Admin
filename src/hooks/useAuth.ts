@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   type User,
@@ -88,10 +89,14 @@ export function useAuth() {
     }
   }, [])
 
+  const resetPassword = useCallback(async (email: string) => {
+    await sendPasswordResetEmail(auth, email.trim())
+  }, [])
+
   const logout = useCallback(async () => {
     await firebaseSignOut(auth)
     setState({ user: null, session: null, isAdmin: false, loading: false, error: null })
   }, [])
 
-  return { ...state, login, logout }
+  return { ...state, login, resetPassword, logout }
 }
