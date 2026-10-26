@@ -106,6 +106,23 @@ export function useOrders(filters?: {
   return { ...queryResult, data: filtered }
 }
 
+// ── Orders using a coupon ────────────────────────────────────────────────────
+export function useCouponOrders(couponCode: string) {
+  const normalizedCode = couponCode.trim().toUpperCase()
+
+  return useQuery({
+    queryKey: ['orders', 'coupon', normalizedCode],
+    enabled: normalizedCode.length > 0,
+    queryFn: async () => {
+      const snap = await getDocs(
+        query(collection(db, 'orders'), where('coupon_code', '==', normalizedCode))
+      )
+      return snap.docs.map(d => toOrder(d.id, d.data() as Record<string, unknown>))
+    },
+    staleTime: 1000 * 30,
+  })
+}
+
 // ── Single order ─────────────────────────────────────────────────────────────
 export function useOrder(id: string) {
   return useQuery({

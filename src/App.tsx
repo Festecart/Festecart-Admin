@@ -33,6 +33,7 @@ import WhyPackages from '@/pages/WhyPackages'
 
 import Coupons from '@/pages/Coupons'
 import CouponForm from '@/pages/CouponForm'
+import CouponAnalytics from '@/pages/CouponAnalytics'
 import Analytics from '@/pages/Analytics'
 
 const queryClient = new QueryClient({
@@ -189,6 +190,14 @@ export default function App() {
             <Route
               path="coupons"
               element={<Coupons />}
+            />
+            <Route
+              path="coupons/analytics"
+              element={<CouponAnalytics />}
+            />
+            <Route
+              path="coupons/analytics/:couponId"
+              element={<CouponAnalytics />}
             />
             <Route
               path="coupons/add"

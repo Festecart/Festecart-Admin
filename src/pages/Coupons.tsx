@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, BarChart3, Copy, Check } from 'lucide-react'
 import {
   useCoupons,
   useDeleteCoupon,
@@ -36,7 +36,42 @@ export default function Coupons() {
   const [savingRemarks, setSavingRemarks] = useState<Record<string, boolean>>({})
   const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
   const [saveSuccess, setSaveSuccess] = useState<Record<string, string>>({})
+  const [copiedCouponId, setCopiedCouponId] = useState<string | null>(null)
+  const [copyErrors, setCopyErrors] = useState<Record<string, string>>({})
   const navigate = useNavigate()
+
+  const handleCopyCode = async (row: CouponListRow) => {
+    setCopyErrors(previous => ({ ...previous, [row.id]: '' }))
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(row.code)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = row.code
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        let copied = false
+        try {
+          textarea.select()
+          copied = document.execCommand('copy')
+        } finally {
+          document.body.removeChild(textarea)
+        }
+        if (!copied) throw new Error('Clipboard access is unavailable.')
+      }
+
+      setCopiedCouponId(row.id)
+    } catch (error) {
+      setCopiedCouponId(null)
+      setCopyErrors(previous => ({
+        ...previous,
+        [row.id]: error instanceof Error ? error.message : 'Clipboard access is unavailable.',
+      }))
+    }
+  }
 
   const autoResizeTextarea = (textarea: HTMLTextAreaElement) => {
     textarea.style.height = 'auto'
@@ -114,12 +149,20 @@ export default function Coupons() {
           <h1 className="text-2xl font-bold text-gray-900">Coupons</h1>
           <p className="text-sm text-gray-500 mt-0.5">Manage discount codes and promotional offers</p>
         </div>
-        <button
-          onClick={() => navigate('/coupons/add')}
-          className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
-        >
-          <Plus size={16} /> Add Coupon
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/coupons/analytics')}
+            className="flex items-center gap-2 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
+          >
+            <BarChart3 size={16} /> Coupon Analytics
+          </button>
+          <button
+            onClick={() => navigate('/coupons/add')}
+            className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
+          >
+            <Plus size={16} /> Add Coupon
+          </button>
+        </div>
       </div>
 
       {/* Loading */}
@@ -179,9 +222,29 @@ export default function Coupons() {
                     <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                     {/* Code */}
                     <td className="px-4 py-3">
-                      <span className="font-mono font-semibold text-gray-900 bg-gray-100 px-2 py-0.5 rounded text-xs">
-                        {row.code}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono font-semibold text-gray-900 bg-gray-100 px-2 py-0.5 rounded text-xs">
+                          {row.code}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyCode(row)}
+                          aria-label={copiedCouponId === row.id ? `Copied coupon code ${row.code}` : `Copy coupon code ${row.code}`}
+                          title={copiedCouponId === row.id ? 'Coupon code copied' : 'Copy coupon code'}
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 ${
+                            copiedCouponId === row.id
+                              ? 'text-green-700 bg-green-50'
+                              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
+                          }`}
+                        >
+                          {copiedCouponId === row.id ? <Check size={14} /> : <Copy size={14} />}
+                        </button>
+                        {copyErrors[row.id] && (
+                          <span role="alert" className="basis-full text-xs text-red-600">
+                            Copy failed: {copyErrors[row.id]}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     {/* Type */}
                     <td className="px-4 py-3 text-gray-600">{TYPE_LABELS[row.type] ?? row.type}</td>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Loader2, Save, ChevronDown, ChevronRight, Check } from 'lucide-react'
+import { ArrowLeft, Loader2, Save, ChevronDown, ChevronRight, Check, Copy } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
 import { db, collection, getDocs, query, orderBy } from '@/lib/firebase'
 import {
@@ -248,6 +248,8 @@ export default function CouponForm() {
   const [termsConditions, setTermsConditions] = useState('')
   const [isActive,        setIsActive]        = useState(true)
   const [error,           setError]           = useState<string | null>(null)
+  const [codeCopied,      setCodeCopied]      = useState(false)
+  const [copyError,       setCopyError]       = useState<string | null>(null)
 
   // Applicable For state
   const [applicableMode,    setApplicableMode]    = useState<ApplicableMode>('all_orders')
@@ -282,6 +284,35 @@ export default function CouponForm() {
   }, [existing])
 
   const isMutating = createMutation.isPending || updateMutation.isPending
+
+  const handleCopyCode = async () => {
+    setCopyError(null)
+    setCodeCopied(false)
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = code
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        let copied = false
+        try {
+          textarea.select()
+          copied = document.execCommand('copy')
+        } finally {
+          document.body.removeChild(textarea)
+        }
+        if (!copied) throw new Error('Clipboard access is unavailable.')
+      }
+      setCodeCopied(true)
+    } catch (copyFailure) {
+      setCopyError(copyFailure instanceof Error ? copyFailure.message : 'Clipboard access is unavailable.')
+    }
+  }
 
   // Toggle a category node — selects/deselects all items inside it
   const toggleCatNode = (node: CategoryNode) => {
@@ -404,9 +435,28 @@ export default function CouponForm() {
 
         {/* Code */}
         <Field label="Coupon Code" required>
-          <input type="text" value={code} onChange={e => setCode(e.target.value.toUpperCase())}
-            placeholder="e.g. SUMMER20" disabled={isEdit}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 font-mono uppercase disabled:bg-gray-50 disabled:text-gray-400" />
+          <div className="flex items-stretch gap-2">
+            <input type="text" value={code} onChange={e => setCode(e.target.value.toUpperCase())}
+              placeholder="e.g. SUMMER20" disabled={isEdit}
+              className="min-w-0 flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 font-mono uppercase disabled:bg-gray-50 disabled:text-gray-400" />
+            {isEdit && (
+              <button
+                type="button"
+                onClick={() => void handleCopyCode()}
+                aria-label={codeCopied ? 'Coupon code copied' : 'Copy coupon code'}
+                title={codeCopied ? 'Coupon code copied' : 'Copy coupon code'}
+                className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 ${
+                  codeCopied
+                    ? 'border-green-200 bg-green-50 text-green-700'
+                    : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                {codeCopied ? <Check size={16} /> : <Copy size={16} />}
+                <span>{codeCopied ? 'Copied' : 'Copy'}</span>
+              </button>
+            )}
+          </div>
+          {copyError && <p role="alert" className="text-xs text-red-600">Copy failed: {copyError}</p>}
           {isEdit && <p className="text-xs text-gray-400 mt-1">Code cannot be changed after creation.</p>}
         </Field>
 
