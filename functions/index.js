@@ -519,8 +519,49 @@ function validRequiredString(value, maxLength) {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= maxLength
 }
 
+exports.checkAffiliateEmail = onCall(async function(request) {
+  await requireSuperAdmin(request)
+
+  const email = request.data && typeof request.data.email === 'string'
+    ? request.data.email.trim().toLowerCase()
+    : ''
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpsError('invalid-argument', 'Enter a valid email address.')
+  }
+
+  let user
+  try {
+    user = await adminAuth.getUserByEmail(email)
+  } catch (error) {
+    if (error && error.code === 'auth/user-not-found') {
+      return { exists: false, providers: [], alreadyAffiliate: false }
+    }
+    console.error('[affiliate] Email lookup failed:', error)
+    throw new HttpsError('internal', 'Unable to check this email right now.')
+  }
+
+  const profile = await db.collection('affiliate_profiles').doc(user.uid).get()
+  const providerLabels = new Map([
+    ['password', 'Email and password'],
+    ['google.com', 'Google'],
+    ['facebook.com', 'Facebook'],
+    ['apple.com', 'Apple'],
+    ['phone', 'Phone'],
+  ])
+  const providers = Array.from(new Set(user.providerData.map(function(provider) {
+    return providerLabels.get(provider.providerId) || 'Another sign-in provider'
+  })))
+
+  return {
+    exists: true,
+    providers: providers.length ? providers : ['Existing Firebase account'],
+    alreadyAffiliate: profile.exists,
+  }
+})
+
 exports.createAffiliateCoupon = onCall(async function(request) {
   let affiliateUser
+  let createdAffiliateUser = false
   let operation = 'authorization'
   try {
     await requireSuperAdmin(request)
@@ -547,9 +588,6 @@ exports.createAffiliateCoupon = onCall(async function(request) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new HttpsError('invalid-argument', 'Enter a valid affiliate email address.')
     }
-    if (password.length < 8 || password.length > 128) {
-      throw new HttpsError('invalid-argument', 'Affiliate password must be between 8 and 128 characters.')
-    }
     if (!['flat', 'percentage'].includes(commissionType) ||
         !Number.isFinite(commissionValue) || commissionValue <= 0 ||
         (commissionType === 'percentage' && commissionValue > 100)) {
@@ -564,11 +602,35 @@ exports.createAffiliateCoupon = onCall(async function(request) {
     }
 
     operation = 'creating-affiliate-account'
-    affiliateUser = await adminAuth.createUser({
-      email: email,
-      password: password,
-      displayName: affiliate.name.trim(),
-    })
+    try {
+      affiliateUser = await adminAuth.getUserByEmail(email)
+    } catch (error) {
+      if (!error || error.code !== 'auth/user-not-found') throw error
+    }
+
+    if (!affiliateUser) {
+      if (password.length < 8 || password.length > 128) {
+        throw new HttpsError(
+          'invalid-argument',
+          'A password of 8 to 128 characters is required when creating a new affiliate account.'
+        )
+      }
+
+      try {
+        affiliateUser = await adminAuth.createUser({
+          email: email,
+          password: password,
+          displayName: affiliate.name.trim(),
+        })
+        createdAffiliateUser = true
+      } catch (error) {
+        if (!error || error.code !== 'auth/email-already-exists') throw error
+        affiliateUser = await adminAuth.getUserByEmail(email)
+      }
+    }
+    if (affiliateUser.disabled) {
+      throw new HttpsError('failed-precondition', 'This Firebase account is disabled and cannot be activated as an affiliate.')
+    }
 
     const couponRef = db.collection('coupons').doc()
     const profileRef = db.collection('affiliate_profiles').doc(affiliateUser.uid)
@@ -583,6 +645,23 @@ exports.createAffiliateCoupon = onCall(async function(request) {
       if (!existing.empty) {
         throw new HttpsError('already-exists', 'Coupon code already exists.')
       }
+
+      const existingProfile = await transaction.get(profileRef)
+      if (existingProfile.exists) {
+        throw new HttpsError('already-exists', 'This account is already linked to an affiliate profile.')
+      }
+
+      const existingRole = await transaction.get(roleRef)
+      const existingRoleData = existingRole.exists ? existingRole.data() : {}
+      if (existingRoleData.affiliate_id && existingRoleData.affiliate_id !== affiliateUser.uid) {
+        throw new HttpsError('failed-precondition', 'The existing account has conflicting affiliate authorization.')
+      }
+
+      const roleNames = new Set(Array.isArray(existingRoleData.roles)
+        ? existingRoleData.roles.filter(function(role) { return typeof role === 'string' })
+        : [])
+      if (typeof existingRoleData.role === 'string') roleNames.add(existingRoleData.role)
+      roleNames.add('affiliate')
 
       operation = 'writing-affiliate-records'
       transaction.create(couponRef, {
@@ -607,26 +686,30 @@ exports.createAffiliateCoupon = onCall(async function(request) {
         is_active: true,
         created_at: now,
       })
-      transaction.create(roleRef, {
-        role: 'affiliate',
+      transaction.set(roleRef, {
+        ...existingRoleData,
+        role: existingRoleData.role || 'affiliate',
+        roles: Array.from(roleNames),
         affiliate_id: affiliateUser.uid,
         coupon_id: couponRef.id,
         email: email,
-        created_at: now,
-      })
+        created_at: existingRoleData.created_at || now,
+        updated_at: now,
+      }, { merge: true })
     })
 
-    return { coupon_id: couponRef.id, affiliate_id: affiliateUser.uid }
+    return {
+      coupon_id: couponRef.id,
+      affiliate_id: affiliateUser.uid,
+      reused_existing_account: !createdAffiliateUser,
+    }
   } catch (error) {
-    if (affiliateUser) {
+    if (affiliateUser && createdAffiliateUser) {
       await adminAuth.deleteUser(affiliateUser.uid).catch(function(cleanupError) {
         console.error('[affiliate] Failed to remove account after coupon creation failure:', cleanupError)
       })
     }
     if (error instanceof HttpsError) throw error
-    if (error && error.code === 'auth/email-already-exists') {
-      throw new HttpsError('already-exists', 'An account already exists for this affiliate email.')
-    }
     if (error && error.code === 'auth/invalid-email') {
       throw new HttpsError('invalid-argument', 'The affiliate email address is not valid.')
     }

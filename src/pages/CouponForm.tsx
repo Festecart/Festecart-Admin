@@ -8,12 +8,15 @@ import {
 import { Timestamp } from 'firebase/firestore'
 import { FirebaseError } from 'firebase/app'
 import { db, collection, getDocs, query, orderBy } from '@/lib/firebase'
+import { formatCurrency } from '@/lib/utils'
 import {
   useCoupon,
+  useCheckAffiliateEmail,
   useCreateCoupon,
   useUpdateCoupon,
   type CreateCouponPayload,
 } from '@/hooks/useCoupons'
+import { useAffiliateProfile } from '@/hooks/useAffiliate'
 import type { CouponType } from '@/types/coupon'
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -30,6 +33,36 @@ interface CategoryNode extends Category { children: CategoryNode[] }
 interface Product { id: string; name: string; category_id: string | null; status: string; images: string[] }
 
 type ApplicableMode = 'all_orders' | 'categories' | 'products'
+
+interface AffiliateShareDetails {
+  email: string
+  password: string | null
+  couponCode: string
+  loginUrl: string
+  signInProviders: string[]
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  let copied = false
+  try {
+    textarea.select()
+    copied = document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+  if (!copied) throw new Error('Clipboard access is unavailable.')
+}
 
 function toDateInput(ts: Timestamp | undefined): string {
   if (!ts) return ''
@@ -218,6 +251,7 @@ export default function CouponForm() {
   const isEdit   = !!id
 
   const { data: existing, isLoading: loadingExisting } = useCoupon(id)
+  const affiliateProfileQuery = useAffiliateProfile(existing?.affiliate_id ?? undefined)
   const createMutation = useCreateCoupon()
   const updateMutation = useUpdateCoupon()
 
@@ -257,10 +291,34 @@ export default function CouponForm() {
   const [affiliateEnabled, setAffiliateEnabled] = useState(false)
   const [affiliateName, setAffiliateName] = useState('')
   const [affiliateEmail, setAffiliateEmail] = useState('')
+  const [debouncedAffiliateEmail, setDebouncedAffiliateEmail] = useState('')
   const [affiliatePassword, setAffiliatePassword] = useState('')
   const [affiliatePhone, setAffiliatePhone] = useState('')
   const [commissionType, setCommissionType] = useState<'flat' | 'percentage'>('flat')
   const [commissionValue, setCommissionValue] = useState('')
+  const [createdAffiliate, setCreatedAffiliate] = useState<AffiliateShareDetails | null>(null)
+  const [shareCopied, setShareCopied] = useState(false)
+  const [shareCopyError, setShareCopyError] = useState<string | null>(null)
+  const normalizedAffiliateEmail = affiliateEmail.trim().toLowerCase()
+  const validAffiliateEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedAffiliateEmail)
+  const affiliateEmailCheck = useCheckAffiliateEmail(debouncedAffiliateEmail)
+  const isAffiliateEmailCheckCurrent = validAffiliateEmail &&
+    normalizedAffiliateEmail === debouncedAffiliateEmail
+
+  useEffect(() => {
+    if (!validAffiliateEmail) {
+      setDebouncedAffiliateEmail('')
+      return
+    }
+    const timer = window.setTimeout(() => setDebouncedAffiliateEmail(normalizedAffiliateEmail), 450)
+    return () => window.clearTimeout(timer)
+  }, [normalizedAffiliateEmail, validAffiliateEmail])
+
+  useEffect(() => {
+    if (isAffiliateEmailCheckCurrent && affiliateEmailCheck.data?.exists) {
+      setAffiliatePassword('')
+    }
+  }, [affiliateEmailCheck.data, isAffiliateEmailCheckCurrent])
 
   // Applicable For state
   const [applicableMode,    setApplicableMode]    = useState<ApplicableMode>('all_orders')
@@ -389,8 +447,17 @@ export default function CouponForm() {
         setError('Enter a valid affiliate email address.')
         return
       }
-      if (affiliatePassword.length < 8) {
-        setError('Affiliate password must be at least 8 characters.')
+      if (!isAffiliateEmailCheckCurrent || affiliateEmailCheck.isFetching || affiliateEmailCheck.isError ||
+          !affiliateEmailCheck.data) {
+        setError('Wait for the affiliate email account check to finish before creating the coupon.')
+        return
+      }
+      if (affiliateEmailCheck.data.alreadyAffiliate) {
+        setError('This email is already linked to an affiliate account. Use the existing affiliate account instead.')
+        return
+      }
+      if (!affiliateEmailCheck.data.exists && affiliatePassword.length < 8) {
+        setError('This email is not registered. Enter a password of at least 8 characters to create the account.')
         return
       }
       const commission = Number(commissionValue)
@@ -426,17 +493,29 @@ export default function CouponForm() {
       if (isEdit) {
         await updateMutation.mutateAsync({ id: id!, ...payload })
       } else {
-        await createMutation.mutateAsync({
+        const result = await createMutation.mutateAsync({
           coupon: payload,
           affiliate: affiliateEnabled ? {
             name: affiliateName.trim(),
-            email: affiliateEmail.trim().toLowerCase(),
-            password: affiliatePassword,
+            email: normalizedAffiliateEmail,
+            password: affiliateEmailCheck.data?.exists ? undefined : affiliatePassword,
             phone: affiliatePhone.trim(),
             commission_type: commissionType,
             commission_value: Number(commissionValue),
           } : undefined,
         })
+        if (affiliateEnabled) {
+          setCreatedAffiliate({
+            email: normalizedAffiliateEmail,
+            password: result.reusedExistingAccount ? null : affiliatePassword,
+            couponCode: normalizedCode,
+            loginUrl: `${window.location.origin}/login`,
+            signInProviders: result.reusedExistingAccount
+              ? affiliateEmailCheck.data?.providers ?? []
+              : ['Email and password'],
+          })
+          return
+        }
       }
       navigate('/coupons')
     } catch (err: unknown) {
@@ -490,6 +569,81 @@ export default function CouponForm() {
     : applicableMode === 'categories'
     ? `${selectedIds.size} categor${selectedIds.size === 1 ? 'y' : 'ies'} selected`
     : `${selectedIds.size} product${selectedIds.size === 1 ? '' : 's'} selected`
+
+  const handleCopyAffiliateDetails = async () => {
+    if (!createdAffiliate) return
+    const details = [
+      'Festecart affiliate account',
+      `Login: ${createdAffiliate.loginUrl}`,
+      `Email: ${createdAffiliate.email}`,
+      ...(createdAffiliate.password ? [`Password: ${createdAffiliate.password}`] : []),
+      `Coupon code: ${createdAffiliate.couponCode}`,
+      createdAffiliate.password
+        ? 'Please keep these login details private.'
+        : `Sign in using: ${createdAffiliate.signInProviders.join(' or ')}.`,
+    ].join('\n')
+
+    setShareCopyError(null)
+    setShareCopied(false)
+    try {
+      await copyTextToClipboard(details)
+      setShareCopied(true)
+    } catch (copyFailure) {
+      setShareCopyError(copyFailure instanceof Error ? copyFailure.message : 'Clipboard access is unavailable.')
+    }
+  }
+
+  if (createdAffiliate) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div className="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm sm:p-8">
+          <div className="flex items-start gap-3">
+            <span className="rounded-full bg-emerald-100 p-2 text-emerald-700"><Check size={22} /></span>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">Coupon and affiliate created</h1>
+              <p className="mt-1 text-sm text-gray-600">
+                Coupon <span className="font-mono font-semibold">{createdAffiliate.couponCode}</span> is ready to share.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-3 rounded-xl bg-gray-50 p-4 text-sm">
+            <p><span className="font-medium text-gray-600">Affiliate login:</span> <span className="break-all">{createdAffiliate.loginUrl}</span></p>
+            <p><span className="font-medium text-gray-600">Email:</span> <span className="break-all">{createdAffiliate.email}</span></p>
+            {createdAffiliate.password ? (
+              <p><span className="font-medium text-gray-600">Temporary password:</span> {createdAffiliate.password}</p>
+            ) : (
+              <p className="text-gray-600">
+                This email already has an account. Sign in using:{' '}
+                {createdAffiliate.signInProviders.join(' or ') || 'the existing account credentials'}.
+              </p>
+            )}
+            <p><span className="font-medium text-gray-600">Coupon code:</span> <span className="font-mono font-semibold">{createdAffiliate.couponCode}</span></p>
+          </div>
+
+          {createdAffiliate.password && (
+            <p className="mt-3 text-xs text-amber-700">
+              Share the password securely and advise the affiliate to change it after signing in.
+            </p>
+          )}
+          {shareCopyError && <p role="alert" className="mt-3 text-sm text-red-600">Copy failed: {shareCopyError}</p>}
+          {shareCopied && <p role="status" className="mt-3 text-sm text-emerald-700">Affiliate details copied to clipboard.</p>}
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button type="button" onClick={() => void handleCopyAffiliateDetails()}
+              className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
+              {shareCopied ? <Check size={16} /> : <Copy size={16} />}
+              {shareCopied ? 'Copied' : 'Copy affiliate details'}
+            </button>
+            <button type="button" onClick={() => navigate('/coupons')}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              <ArrowLeft size={16} /> Back to coupons
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6">
@@ -730,15 +884,54 @@ export default function CouponForm() {
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
                 </Field>
                 <Field label="Email" required>
-                  <input type="email" value={affiliateEmail} onChange={event => setAffiliateEmail(event.target.value)}
+                  <input type="email" value={affiliateEmail} onChange={event => {
+                    setAffiliateEmail(event.target.value)
+                    setAffiliatePassword('')
+                    setError(null)
+                  }}
                     autoComplete="email" required placeholder="affiliate@example.com"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
                 </Field>
-                <Field label="Password" required hint="At least 8 characters. The password is used once to create their sign-in and is never saved in Firestore.">
-                  <input type="password" value={affiliatePassword} onChange={event => setAffiliatePassword(event.target.value)}
-                    autoComplete="new-password" minLength={8} maxLength={128} required placeholder="Create a secure password"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
-                </Field>
+                {validAffiliateEmail && !isAffiliateEmailCheckCurrent && (
+                  <p role="status" className="text-sm text-gray-500">Checking whether this email already has an account…</p>
+                )}
+                {isAffiliateEmailCheckCurrent && affiliateEmailCheck.isFetching && (
+                  <p role="status" className="flex items-center gap-2 text-sm text-gray-500">
+                    <Loader2 size={14} className="animate-spin" /> Checking affiliate email…
+                  </p>
+                )}
+                {isAffiliateEmailCheckCurrent && affiliateEmailCheck.error && (
+                  <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {affiliateEmailCheck.error instanceof FirebaseError &&
+                    affiliateEmailCheck.error.code === 'functions/not-found'
+                      ? 'The affiliate email-check function is not deployed. Deploy checkAffiliateEmail before creating an affiliate coupon.'
+                      : 'Could not check this email. Please retry; the coupon cannot be created until the email is checked.'}
+                  </p>
+                )}
+                {isAffiliateEmailCheckCurrent && affiliateEmailCheck.data?.exists && (
+                  <p role={affiliateEmailCheck.data.alreadyAffiliate ? 'alert' : 'status'}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      affiliateEmailCheck.data.alreadyAffiliate
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    }`}>
+                    {affiliateEmailCheck.data.alreadyAffiliate
+                      ? 'An account already exists for this email and it is already linked to an affiliate profile.'
+                      : `Account already exists. Sign-in method${affiliateEmailCheck.data.providers.length === 1 ? '' : 's'}: ${affiliateEmailCheck.data.providers.join(', ')}. The existing password will not be changed.`}
+                  </p>
+                )}
+                {isAffiliateEmailCheckCurrent && affiliateEmailCheck.data && !affiliateEmailCheck.data.exists && (
+                  <>
+                    <p role="status" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                      No account exists for this email. Create a password below to set up the affiliate login.
+                    </p>
+                    <Field label="Create Password" required hint="At least 8 characters. This password is used to create the new affiliate login.">
+                      <input type="password" value={affiliatePassword} onChange={event => setAffiliatePassword(event.target.value)}
+                        autoComplete="new-password" minLength={8} maxLength={128} required placeholder="Create a secure password"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                    </Field>
+                  </>
+                )}
                 <Field label="Phone Number" required>
                   <input type="tel" value={affiliatePhone} onChange={event => setAffiliatePhone(event.target.value)}
                     autoComplete="tel" maxLength={40} required placeholder="Affiliate contact number"
@@ -761,11 +954,90 @@ export default function CouponForm() {
                 </Field>
                 <div className="flex items-start gap-2 rounded-lg bg-violet-50 p-3 text-xs leading-5 text-violet-800">
                   <ShieldCheck size={16} className="mt-0.5 shrink-0" />
-                  <p>The affiliate account is securely created with this coupon. Commission is recalculated from order items, and cancelled orders are excluded.</p>
+                  <p>Existing accounts are reused without changing their password or customer role. A new account is created only when the email is not registered. Commission is calculated per eligible order or by percentage, and cancelled orders are excluded.</p>
                 </div>
               </div>
             ) : (
               <p className="px-5 py-4 text-sm text-gray-500">Leave this off to create a standard coupon without an affiliate account.</p>
+            )}
+          </aside>
+        )}
+        {isEdit && existing?.affiliate_id && (
+          <aside className="overflow-hidden rounded-xl border border-violet-200 bg-white shadow-sm">
+            <div className="border-b border-violet-100 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-5 py-5">
+              <div className="flex items-start gap-3">
+                <span className="rounded-xl bg-violet-100 p-2.5 text-violet-700"><UserPlus size={20} /></span>
+                <div>
+                  <h2 className="font-semibold text-gray-900">Linked affiliate details</h2>
+                  <p className="mt-1 text-sm text-gray-500">Affiliate account and commission linked to this coupon.</p>
+                </div>
+              </div>
+            </div>
+            {affiliateProfileQuery.isLoading ? (
+              <div role="status" className="flex items-center gap-2 px-5 py-6 text-sm text-gray-500">
+                <Loader2 size={16} className="animate-spin" /> Loading affiliate details…
+              </div>
+            ) : affiliateProfileQuery.error ? (
+              <p role="alert" className="px-5 py-5 text-sm text-red-700">
+                Affiliate details could not be loaded. Please retry or check that your admin account can read affiliate profiles.
+              </p>
+            ) : affiliateProfileQuery.data ? (
+              <dl className="grid gap-x-6 gap-y-5 p-5 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Affiliate name</dt>
+                  <dd className="mt-1 break-words text-sm font-medium text-gray-900">{affiliateProfileQuery.data.name || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Email address</dt>
+                  <dd className="mt-1 break-all text-sm font-medium text-gray-900">{affiliateProfileQuery.data.email || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Phone number</dt>
+                  <dd className="mt-1 break-words text-sm font-medium text-gray-900">{affiliateProfileQuery.data.phone || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Account status</dt>
+                  <dd className="mt-1">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      affiliateProfileQuery.data.is_active
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-gray-100 text-gray-700'
+                    }`}>
+                      {affiliateProfileQuery.data.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Commission</dt>
+                  <dd className="mt-1 text-sm font-medium text-gray-900">
+                    {affiliateProfileQuery.data.commission_type === 'flat'
+                      ? `${formatCurrency(affiliateProfileQuery.data.commission_value)} per eligible order`
+                      : `${affiliateProfileQuery.data.commission_value}% of product subtotal`}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Linked coupon code</dt>
+                  <dd className="mt-1 font-mono text-sm font-semibold text-gray-900">{affiliateProfileQuery.data.coupon_code || existing.code}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Affiliate account ID</dt>
+                  <dd className="mt-1 break-all font-mono text-xs text-gray-700">{affiliateProfileQuery.data.uid}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Profile created</dt>
+                  <dd className="mt-1 text-sm text-gray-700">
+                    {affiliateProfileQuery.data.created_at
+                      ? affiliateProfileQuery.data.created_at.toDate().toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })
+                      : '—'}
+                  </dd>
+                </div>
+              </dl>
+            ) : (
+              <p className="px-5 py-5 text-sm text-gray-500">No affiliate profile was found for this coupon.</p>
             )}
           </aside>
         )}

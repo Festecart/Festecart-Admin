@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   sendPasswordResetEmail,
   signOut as firebaseSignOut,
   onAuthStateChanged,
@@ -40,16 +42,16 @@ async function getUserRole(user: User): Promise<{ role: UserRole; affiliateId: s
 
     const roleData = snap.data()
     const roles = Array.isArray(roleData?.roles) ? roleData.roles : []
-    const role = roleData?.role
-    if (role === 'super_admin' || roles.includes('super_admin')) {
+    const primaryRole = roleData?.role
+    if (primaryRole === 'super_admin' || roles.includes('super_admin')) {
       return { role: 'super_admin', affiliateId: null }
     }
-    if (role === 'affiliate' || roles.includes('affiliate')) {
+    if (primaryRole === 'affiliate' || roles.includes('affiliate')) {
       const affiliateId = roleData?.affiliate_id
       if (affiliateId !== user.uid) return { role: null, affiliateId: null }
       const profile = await getDoc(doc(db, 'affiliate_profiles', user.uid))
       if (profile.exists() && profile.data()?.is_active === true) {
-        return { role, affiliateId: user.uid }
+        return { role: 'affiliate', affiliateId: user.uid }
       }
     }
     return { role: null, affiliateId: null }
@@ -116,6 +118,29 @@ export function useAuth() {
     }
   }, [])
 
+  const loginWithGoogle = useCallback(async () => {
+    setState(s => ({ ...s, loading: true, error: null }))
+    try {
+      const provider = new GoogleAuthProvider()
+      provider.setCustomParameters({ prompt: 'select_account' })
+      await signInWithPopup(auth, provider)
+      return true
+    } catch (err: unknown) {
+      const code = typeof err === 'object' && err !== null && 'code' in err
+        ? String(err.code)
+        : ''
+      const message = code === 'auth/popup-closed-by-user'
+        ? 'Google sign-in was cancelled.'
+        : code === 'auth/popup-blocked'
+          ? 'Your browser blocked the Google sign-in window. Allow pop-ups and try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Google sign-in failed.'
+      setState(s => ({ ...s, loading: false, error: message }))
+      return false
+    }
+  }, [])
+
   const resetPassword = useCallback(async (email: string) => {
     await sendPasswordResetEmail(auth, email.trim())
   }, [])
@@ -128,5 +153,5 @@ export function useAuth() {
     })
   }, [])
 
-  return { ...state, login, resetPassword, logout }
+  return { ...state, login, loginWithGoogle, resetPassword, logout }
 }

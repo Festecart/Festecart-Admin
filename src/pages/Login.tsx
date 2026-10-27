@@ -12,7 +12,7 @@ const inputCls =
   'w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent'
 
 export default function Login() {
-  const { user, isAdmin, isAffiliate, loading, error, login, resetPassword } = useAuth()
+  const { user, isAdmin, isAffiliate, loading, error, login, loginWithGoogle, resetPassword } = useAuth()
 
   const [view,         setView]         = useState<View>('login')
   const [email,        setEmail]        = useState('')
@@ -50,6 +50,16 @@ export default function Login() {
     setSubmitting(true)
     try {
       await login(email.trim(), password)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleGoogleLogin = async () => {
+    if (submitting || loading) return
+    setSubmitting(true)
+    try {
+      await loginWithGoogle()
     } finally {
       setSubmitting(false)
     }
@@ -168,6 +178,34 @@ export default function Login() {
               >
                 {(submitting || loading) && <Loader2 size={16} className="animate-spin" />}
                 Sign In
+              </button>
+
+              <div className="relative py-1">
+                <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-white px-2 text-xs text-gray-400">OR</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void handleGoogleLogin()}
+                disabled={submitting || loading}
+                className="w-full flex items-center justify-center gap-3 border border-gray-300 bg-white hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 text-gray-700 font-medium py-2.5 px-4 rounded-lg transition-colors text-sm"
+              >
+                {submitting || loading ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <svg aria-hidden="true" viewBox="0 0 48 48" className="h-5 w-5">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.04 13.22l7.98 6.19C11.91 13.72 17.45 9.5 24 9.5Z" transform="translate(0 4)" />
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.76 7.18l7.73 6C44.42 38.05 46.98 31.9 46.98 24.55Z" />
+                    <path fill="#FBBC05" d="M10.02 28.59a14.4 14.4 0 0 1 0-9.18l-7.98-6.19a23.9 23.9 0 0 0 0 21.56l7.98-6.19Z" />
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.91-5.8l-7.73-6c-2.14 1.44-4.88 2.3-8.18 2.3-6.55 0-12.09-4.22-14.08-10.09l-7.98 6.19C6.41 42.62 14.62 48 24 48Z" transform="translate(0 -4)" />
+                  </svg>
+                )}
+                Continue with Google
               </button>
             </form>
           ) : (

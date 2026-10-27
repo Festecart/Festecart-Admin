@@ -106,10 +106,38 @@ export interface CreateCouponPayload {
 export interface CreateAffiliatePayload {
   name: string
   email: string
-  password: string
+  password?: string
   phone: string
   commission_type: 'flat' | 'percentage'
   commission_value: number
+}
+
+export interface AffiliateEmailCheck {
+  exists: boolean
+  providers: string[]
+  alreadyAffiliate: boolean
+}
+
+export function useCheckAffiliateEmail(email: string) {
+  return useQuery({
+    queryKey: ['affiliate-email-check', email],
+    enabled: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+    staleTime: 30_000,
+    retry: false,
+    queryFn: async (): Promise<AffiliateEmailCheck> => {
+      const checkAffiliateEmail = httpsCallable<
+        { email: string },
+        AffiliateEmailCheck
+      >(getFunctions(app, 'us-central1'), 'checkAffiliateEmail')
+      const result = await checkAffiliateEmail({ email })
+      return result.data
+    },
+  })
+}
+
+export interface CreateCouponResult {
+  couponId: string
+  reusedExistingAccount: boolean | null
 }
 
 export function useCreateCoupon() {
@@ -121,7 +149,7 @@ export function useCreateCoupon() {
     }: {
       coupon: CreateCouponPayload
       affiliate?: CreateAffiliatePayload
-    }): Promise<string> => {
+    }): Promise<CreateCouponResult> => {
       const normalizedCode = payload.code.trim().toUpperCase()
 
       if (affiliate) {
@@ -133,7 +161,7 @@ export function useCreateCoupon() {
             }
             affiliate: CreateAffiliatePayload
           },
-          { coupon_id: string; affiliate_id: string }
+          { coupon_id: string; affiliate_id: string; reused_existing_account: boolean }
         >(getFunctions(app, 'us-central1'), 'createAffiliateCoupon')
         const result = await createAffiliateCoupon({
           coupon: {
@@ -149,7 +177,10 @@ export function useCreateCoupon() {
             phone: affiliate.phone.trim(),
           },
         })
-        return result.data.coupon_id
+        return {
+          couponId: result.data.coupon_id,
+          reusedExistingAccount: result.data.reused_existing_account,
+        }
       }
 
       // Uniqueness check
@@ -169,7 +200,7 @@ export function useCreateCoupon() {
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       })
-      return docRef.id
+      return { couponId: docRef.id, reusedExistingAccount: null }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['coupons'] }),
   })

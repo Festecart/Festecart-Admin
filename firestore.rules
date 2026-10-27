@@ -46,7 +46,14 @@ service cloud.firestore {
     function isAffiliate() {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/user_roles/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role == 'affiliate' &&
+        (
+          get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role == 'affiliate' ||
+          (
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.keys().hasAny(['roles']) &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.roles is list &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.roles.hasAny(['affiliate'])
+          )
+        ) &&
         get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.affiliate_id == request.auth.uid;
     }
 
