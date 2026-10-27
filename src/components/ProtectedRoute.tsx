@@ -1,8 +1,8 @@
-import { Navigate } from 'react-router-dom'
+import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAdmin, loading } = useAuth()
+  const { user, isAdmin, isAffiliate, loading } = useAuth()
 
   if (loading) {
     return (
@@ -12,9 +12,23 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (!user || !isAdmin) {
+  if (!user || (!isAdmin && !isAffiliate)) {
     return <Navigate to="/login" replace />
   }
 
   return <>{children}</>
+}
+
+export function AdminOnlyRoute() {
+  const { isAdmin, isAffiliate, loading } = useAuth()
+  if (loading) return null
+  if (!isAdmin) return <Navigate to={isAffiliate ? '/affiliate' : '/login'} replace />
+  return <Outlet />
+}
+
+export function AffiliateOnlyRoute() {
+  const { isAdmin, isAffiliate, loading } = useAuth()
+  if (loading) return null
+  if (!isAffiliate) return <Navigate to={isAdmin ? '/' : '/login'} replace />
+  return <Outlet />
 }

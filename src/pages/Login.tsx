@@ -12,7 +12,7 @@ const inputCls =
   'w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent'
 
 export default function Login() {
-  const { user, isAdmin, loading, error, login, resetPassword } = useAuth()
+  const { user, isAdmin, isAffiliate, loading, error, login, resetPassword } = useAuth()
 
   const [view,         setView]         = useState<View>('login')
   const [email,        setEmail]        = useState('')
@@ -32,7 +32,9 @@ export default function Login() {
     return () => clearTimeout(t)
   }, [cooldown])
 
-  if (!loading && user && isAdmin) return <Navigate to="/" replace />
+  if (!loading && user && (isAdmin || isAffiliate)) {
+    return <Navigate to={isAffiliate ? '/affiliate' : '/'} replace />
+  }
 
   const switchView = (next: View) => {
     setView(next)
@@ -172,7 +174,7 @@ export default function Login() {
             /* ───────────── Forgot password ───────────── */
             <form onSubmit={handleReset} className="space-y-4">
               <p className="text-sm text-gray-600">
-                Enter the email linked to your admin account and we'll send you a link to reset your password.
+                Enter the email linked to your account and we'll send you a link to reset your password.
               </p>
 
               <div>
@@ -235,7 +237,7 @@ export default function Login() {
         </div>
 
         <p className="text-center text-xs text-gray-400 mt-6">
-          Only super_admin accounts can access this panel
+          Admin and affiliate accounts only
         </p>
       </div>
     </div>

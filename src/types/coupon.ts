@@ -11,13 +11,14 @@ export interface Coupon {
   max_discount: number | null; // cap for percentage type; null = no cap
   total_usage_limit: number | null; // null = unlimited
   per_user_limit: number | null;    // null = unlimited
-  applicable_for: 'all_orders';
+  applicable_for: ApplicableFor;
   terms_conditions: string | null;
   remarks: string | null;
   valid_from: Timestamp;
   valid_to: Timestamp;
   is_active: boolean;
   total_uses: number;
+  affiliate_id?: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -35,6 +36,7 @@ export interface CouponListRow {
   is_active: boolean;
   min_cart_amount: number;
   remarks: string | null;
+  affiliate_id?: string | null;
 }
 
 export interface CouponUserUsage {

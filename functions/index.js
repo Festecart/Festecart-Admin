@@ -1,10 +1,15 @@
 'use strict'
-const { onRequest } = require('firebase-functions/v2/https')
+const { onRequest, onCall, HttpsError } = require('firebase-functions/v2/https')
+const { onDocumentWritten } = require('firebase-functions/v2/firestore')
 const { setGlobalOptions } = require('firebase-functions/v2')
 const { initializeApp } = require('firebase-admin/app')
+const { getAuth } = require('firebase-admin/auth')
+const { getFirestore, Timestamp, FieldPath } = require('firebase-admin/firestore')
 const PDFDocument = require('pdfkit')
 
-initializeApp()
+const firebaseApp = initializeApp()
+const db = getFirestore(firebaseApp, 'festecart')
+const adminAuth = getAuth(firebaseApp)
 setGlobalOptions({ region: 'us-central1' })
 
 const LOGO_URL   = 'https://admin.festecart.org/logo.png'
@@ -494,4 +499,283 @@ exports.sendOrderEmail = onRequest({ cors: true, secrets: ['GOOGLE_APPS_SCRIPT_T
     console.error('[email] HTTP error:', e)
     res.status(500).json({ ok: false, error: e.message })
   }
+})
+
+function requireSuperAdmin(request) {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in as an administrator.')
+  return db.collection('user_roles').doc(request.auth.uid).get().then(function(roleSnap) {
+    const roleData = roleSnap.exists ? roleSnap.data() : null
+    const isSuperAdmin = roleData && (
+      roleData.role === 'super_admin' ||
+      (Array.isArray(roleData.roles) && roleData.roles.includes('super_admin'))
+    )
+    if (!isSuperAdmin) {
+      throw new HttpsError('permission-denied', 'Only a super admin can create affiliate coupons.')
+    }
+  })
+}
+
+function validRequiredString(value, maxLength) {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= maxLength
+}
+
+exports.createAffiliateCoupon = onCall(async function(request) {
+  let affiliateUser
+  let operation = 'authorization'
+  try {
+    await requireSuperAdmin(request)
+
+    operation = 'validation'
+    const input = request.data || {}
+    const coupon = input.coupon || {}
+    const affiliate = input.affiliate || {}
+
+    const code = typeof coupon.code === 'string' ? coupon.code.trim().toUpperCase() : ''
+    const email = typeof affiliate.email === 'string' ? affiliate.email.trim().toLowerCase() : ''
+    const password = typeof affiliate.password === 'string' ? affiliate.password : ''
+    const commissionType = affiliate.commission_type
+    const commissionValue = Number(affiliate.commission_value)
+    const validFrom = Number(coupon.valid_from)
+    const validTo = Number(coupon.valid_to)
+
+    if (!/^[A-Z0-9_-]{2,40}$/.test(code)) {
+      throw new HttpsError('invalid-argument', 'Coupon code must contain 2–40 letters, numbers, underscores, or hyphens.')
+    }
+    if (!validRequiredString(affiliate.name, 120) || !validRequiredString(affiliate.phone, 40)) {
+      throw new HttpsError('invalid-argument', 'Affiliate name and phone number are required.')
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new HttpsError('invalid-argument', 'Enter a valid affiliate email address.')
+    }
+    if (password.length < 8 || password.length > 128) {
+      throw new HttpsError('invalid-argument', 'Affiliate password must be between 8 and 128 characters.')
+    }
+    if (!['flat', 'percentage'].includes(commissionType) ||
+        !Number.isFinite(commissionValue) || commissionValue <= 0 ||
+        (commissionType === 'percentage' && commissionValue > 100)) {
+      throw new HttpsError('invalid-argument', 'Enter a valid positive flat or percentage commission.')
+    }
+    if (!Number.isFinite(validFrom) || !Number.isFinite(validTo) || validTo < validFrom) {
+      throw new HttpsError('invalid-argument', 'Coupon validity dates are invalid.')
+    }
+    if (!validRequiredString(coupon.type, 40) ||
+        !Number.isFinite(Number(coupon.value)) || Number(coupon.value) < 0) {
+      throw new HttpsError('invalid-argument', 'Coupon details are invalid.')
+    }
+
+    operation = 'creating-affiliate-account'
+    affiliateUser = await adminAuth.createUser({
+      email: email,
+      password: password,
+      displayName: affiliate.name.trim(),
+    })
+
+    const couponRef = db.collection('coupons').doc()
+    const profileRef = db.collection('affiliate_profiles').doc(affiliateUser.uid)
+    const roleRef = db.collection('user_roles').doc(affiliateUser.uid)
+    const now = Timestamp.now()
+
+    operation = 'checking-coupon-code'
+    await db.runTransaction(async function(transaction) {
+      const existing = await transaction.get(
+        db.collection('coupons').where('code', '==', code).limit(1)
+      )
+      if (!existing.empty) {
+        throw new HttpsError('already-exists', 'Coupon code already exists.')
+      }
+
+      operation = 'writing-affiliate-records'
+      transaction.create(couponRef, {
+        ...coupon,
+        code: code,
+        valid_from: Timestamp.fromMillis(validFrom),
+        valid_to: Timestamp.fromMillis(validTo),
+        total_uses: 0,
+        affiliate_id: affiliateUser.uid,
+        created_at: now,
+        updated_at: now,
+      })
+      transaction.create(profileRef, {
+        uid: affiliateUser.uid,
+        name: affiliate.name.trim(),
+        email: email,
+        phone: affiliate.phone.trim(),
+        coupon_id: couponRef.id,
+        coupon_code: code,
+        commission_type: commissionType,
+        commission_value: commissionValue,
+        is_active: true,
+        created_at: now,
+      })
+      transaction.create(roleRef, {
+        role: 'affiliate',
+        affiliate_id: affiliateUser.uid,
+        coupon_id: couponRef.id,
+        email: email,
+        created_at: now,
+      })
+    })
+
+    return { coupon_id: couponRef.id, affiliate_id: affiliateUser.uid }
+  } catch (error) {
+    if (affiliateUser) {
+      await adminAuth.deleteUser(affiliateUser.uid).catch(function(cleanupError) {
+        console.error('[affiliate] Failed to remove account after coupon creation failure:', cleanupError)
+      })
+    }
+    if (error instanceof HttpsError) throw error
+    if (error && error.code === 'auth/email-already-exists') {
+      throw new HttpsError('already-exists', 'An account already exists for this affiliate email.')
+    }
+    if (error && error.code === 'auth/invalid-email') {
+      throw new HttpsError('invalid-argument', 'The affiliate email address is not valid.')
+    }
+    if (error && (error.code === 'auth/weak-password' ||
+        error.code === 'auth/password-does-not-meet-requirements')) {
+      throw new HttpsError('invalid-argument', 'The affiliate password does not meet the Firebase password policy.')
+    }
+    console.error('[affiliate] Coupon/account creation failed:', {
+      operation: operation,
+      code: error && error.code,
+      message: error && error.message,
+      error: error,
+    })
+    throw new HttpsError(
+      'internal',
+      'Unable to create the affiliate coupon. Please try again.',
+      {
+        operation: operation,
+        causeCode: error && error.code ? String(error.code) : 'unknown',
+      }
+    )
+  }
+})
+
+async function writeAffiliateOrderAnalytics(orderId, order) {
+  const analyticsRef = db.collection('affiliate_order_analytics').doc(orderId)
+  const existingAnalytics = await analyticsRef.get()
+  let attribution = existingAnalytics.exists ? existingAnalytics.data() : null
+
+  if (!attribution && typeof order.coupon_code === 'string' && order.coupon_code.trim()) {
+    const couponSnap = await db.collection('coupons')
+      .where('code', '==', order.coupon_code.trim().toUpperCase())
+      .limit(1)
+      .get()
+    if (couponSnap.empty) return false
+
+    const coupon = couponSnap.docs[0].data()
+    if (!coupon.affiliate_id) return false
+    const profileSnap = await db.collection('affiliate_profiles').doc(coupon.affiliate_id).get()
+    if (!profileSnap.exists) return false
+    const profile = profileSnap.data()
+    attribution = {
+      affiliate_id: profile.uid,
+      coupon_id: profile.coupon_id,
+      coupon_code: profile.coupon_code,
+      commission_type: profile.commission_type,
+      commission_value: Number(profile.commission_value),
+    }
+  }
+
+  if (!attribution) return false
+
+  const items = Array.isArray(order.items) ? order.items : []
+  const products = items.map(function(item) {
+    return {
+      product_id: String(item.product_id || ''),
+      name: String(item.name || 'Unnamed product'),
+      price: Math.max(0, Number(item.price) || 0),
+      quantity: Math.max(0, Number(item.quantity) || 0),
+      image: null,
+    }
+  })
+  const quantity = products.reduce(function(sum, item) { return sum + item.quantity }, 0)
+  const productSubtotal = products.reduce(function(sum, item) {
+    return sum + item.price * item.quantity
+  }, 0)
+  const normalizedStatus = String(order.status || 'confirmed').toLowerCase()
+  const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled'
+  const commission = isCancelled ? 0 : attribution.commission_type === 'percentage'
+    ? productSubtotal * attribution.commission_value / 100
+    : attribution.commission_value
+
+  await analyticsRef.set({
+    affiliate_id: attribution.affiliate_id,
+    coupon_id: attribution.coupon_id,
+    coupon_code: attribution.coupon_code,
+    commission_type: attribution.commission_type,
+    commission_value: attribution.commission_value,
+    order_id: orderId,
+    order_number: String(order.order_number || orderId),
+    status: normalizedStatus,
+    created_at: order.created_at || Timestamp.now(),
+    customer_name: String(
+      order.guest_name || (order.shipping_address && order.shipping_address.name) || 'Customer'
+    ),
+    customer_email: String(order.guest_email || order.customer_email || ''),
+    customer_phone: String(
+      order.guest_phone || (order.shipping_address && order.shipping_address.phone) || ''
+    ),
+    customer_id: String(order.user_id || order.guest_email || order.customer_email || orderId),
+    products: products,
+    product_quantity: quantity,
+    product_subtotal: productSubtotal,
+    commission_earned: Math.round((commission + Number.EPSILON) * 100) / 100,
+    updated_at: Timestamp.now(),
+  })
+  return true
+}
+
+exports.syncAffiliateOrderAnalytics = onDocumentWritten(
+  { document: 'orders/{orderId}', database: 'festecart', region: 'asia-south1' },
+  async function(event) {
+    const orderId = event.params.orderId
+    const analyticsRef = db.collection('affiliate_order_analytics').doc(orderId)
+    const orderSnapshot = await db.collection('orders').doc(orderId).get()
+
+    if (!orderSnapshot.exists) {
+      await analyticsRef.delete()
+      return
+    }
+
+    await writeAffiliateOrderAnalytics(orderId, orderSnapshot.data())
+  }
+)
+
+exports.rebuildAffiliateCouponAnalytics = onCall(async function(request) {
+  await requireSuperAdmin(request)
+  const couponId = request.data && request.data.coupon_id
+  if (typeof couponId !== 'string' || !couponId.trim()) {
+    throw new HttpsError('invalid-argument', 'A coupon ID is required.')
+  }
+
+  const couponSnapshot = await db.collection('coupons').doc(couponId).get()
+  if (!couponSnapshot.exists) {
+    throw new HttpsError('not-found', 'The selected coupon was not found.')
+  }
+  const coupon = couponSnapshot.data()
+  if (!coupon.affiliate_id || typeof coupon.code !== 'string' || !coupon.code.trim()) {
+    throw new HttpsError('failed-precondition', 'The selected coupon is not linked to an affiliate.')
+  }
+
+  const baseQuery = db.collection('orders')
+    .where('coupon_code', '==', coupon.code.trim().toUpperCase())
+    .orderBy(FieldPath.documentId())
+    .limit(200)
+  let lastDocument = null
+  let ordersProcessed = 0
+  while (true) {
+    const pageQuery = lastDocument ? baseQuery.startAfter(lastDocument) : baseQuery
+    const page = await pageQuery.get()
+    if (page.empty) break
+
+    const results = await Promise.all(page.docs.map(function(orderDocument) {
+      return writeAffiliateOrderAnalytics(orderDocument.id, orderDocument.data())
+    }))
+    ordersProcessed += results.filter(Boolean).length
+    if (page.size < 200) break
+    lastDocument = page.docs[page.docs.length - 1]
+  }
+
+  return { orders_processed: ordersProcessed }
 })

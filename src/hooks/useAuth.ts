@@ -8,10 +8,15 @@ import {
 } from 'firebase/auth'
 import { auth, db, doc, getDoc, setDoc, Timestamp } from '@/lib/firebase'
 
+type UserRole = 'super_admin' | 'affiliate' | null
+
 interface AuthState {
   user:    User | null
   session: User | null
   isAdmin: boolean
+  isAffiliate: boolean
+  role: UserRole
+  affiliateId: string | null
   loading: boolean
   error:   string | null
 }
@@ -19,32 +24,38 @@ interface AuthState {
 // ── Super admin email — only this email can self-provision ─────────
 const SUPER_ADMIN_EMAIL = 'festecartdesi@gmail.com'
 
-async function checkSuperAdmin(user: User): Promise<boolean> {
+async function getUserRole(user: User): Promise<{ role: UserRole; affiliateId: string | null }> {
   try {
-    const snap = await getDoc(doc(db, 'user_roles', user.uid))
+    let snap = await getDoc(doc(db, 'user_roles', user.uid))
 
-    // If doc exists, check role
-    if (snap.exists()) {
-      return snap.data()?.role === 'super_admin'
-    }
-
-    // ── Auto-provision: if this is the designated super admin email
-    //    and no role doc exists yet, create it automatically.
-    //    This solves the chicken-and-egg problem on first deploy. ──
-    if (user.email === SUPER_ADMIN_EMAIL) {
+    if (!snap.exists() && user.email === SUPER_ADMIN_EMAIL) {
       await setDoc(doc(db, 'user_roles', user.uid), {
         role:       'super_admin',
         email:      user.email,
         created_at: Timestamp.now(),
       })
       console.log('[useAuth] Super admin role auto-provisioned for', user.email)
-      return true
+      snap = await getDoc(doc(db, 'user_roles', user.uid))
     }
 
-    return false
+    const roleData = snap.data()
+    const roles = Array.isArray(roleData?.roles) ? roleData.roles : []
+    const role = roleData?.role
+    if (role === 'super_admin' || roles.includes('super_admin')) {
+      return { role: 'super_admin', affiliateId: null }
+    }
+    if (role === 'affiliate' || roles.includes('affiliate')) {
+      const affiliateId = roleData?.affiliate_id
+      if (affiliateId !== user.uid) return { role: null, affiliateId: null }
+      const profile = await getDoc(doc(db, 'affiliate_profiles', user.uid))
+      if (profile.exists() && profile.data()?.is_active === true) {
+        return { role, affiliateId: user.uid }
+      }
+    }
+    return { role: null, affiliateId: null }
   } catch (e) {
     console.error('[useAuth] Role check failed:', e)
-    return false
+    return { role: null, affiliateId: null }
   }
 }
 
@@ -53,6 +64,9 @@ export function useAuth() {
     user:    null,
     session: null,
     isAdmin: false,
+    isAffiliate: false,
+    role: null,
+    affiliateId: null,
     loading: true,
     error:   null,
   })
@@ -60,19 +74,32 @@ export function useAuth() {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        setState({ user: null, session: null, isAdmin: false, loading: false, error: null })
-        return
-      }
-      const isAdmin = await checkSuperAdmin(user)
-      if (!isAdmin) {
-        await firebaseSignOut(auth)
         setState({
-          user: null, session: null, isAdmin: false, loading: false,
-          error: 'Access denied. Super admin role required.',
+          user: null, session: null, isAdmin: false, isAffiliate: false,
+          role: null, affiliateId: null, loading: false, error: null,
         })
         return
       }
-      setState({ user, session: user, isAdmin: true, loading: false, error: null })
+      const { role, affiliateId } = await getUserRole(user)
+      if (!role) {
+        await firebaseSignOut(auth)
+        setState({
+          user: null, session: null, isAdmin: false, isAffiliate: false,
+          role: null, affiliateId: null, loading: false,
+          error: 'Access denied. An authorized admin or affiliate account is required.',
+        })
+        return
+      }
+      setState({
+        user,
+        session: user,
+        isAdmin: role === 'super_admin',
+        isAffiliate: role === 'affiliate',
+        role,
+        affiliateId,
+        loading: false,
+        error: null,
+      })
     })
     return unsub
   }, [])
@@ -95,7 +122,10 @@ export function useAuth() {
 
   const logout = useCallback(async () => {
     await firebaseSignOut(auth)
-    setState({ user: null, session: null, isAdmin: false, loading: false, error: null })
+    setState({
+      user: null, session: null, isAdmin: false, isAffiliate: false,
+      role: null, affiliateId: null, loading: false, error: null,
+    })
   }, [])
 
   return { ...state, login, resetPassword, logout }

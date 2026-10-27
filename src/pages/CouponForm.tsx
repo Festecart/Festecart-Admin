@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Loader2, Save, ChevronDown, ChevronRight, Check, Copy } from 'lucide-react'
+import {
+  ArrowLeft, Loader2, Save, ChevronDown, ChevronRight, Check, Copy,
+  UserPlus, ShieldCheck,
+} from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
+import { FirebaseError } from 'firebase/app'
 import { db, collection, getDocs, query, orderBy } from '@/lib/firebase'
 import {
   useCoupon,
@@ -250,6 +254,13 @@ export default function CouponForm() {
   const [error,           setError]           = useState<string | null>(null)
   const [codeCopied,      setCodeCopied]      = useState(false)
   const [copyError,       setCopyError]       = useState<string | null>(null)
+  const [affiliateEnabled, setAffiliateEnabled] = useState(false)
+  const [affiliateName, setAffiliateName] = useState('')
+  const [affiliateEmail, setAffiliateEmail] = useState('')
+  const [affiliatePassword, setAffiliatePassword] = useState('')
+  const [affiliatePhone, setAffiliatePhone] = useState('')
+  const [commissionType, setCommissionType] = useState<'flat' | 'percentage'>('flat')
+  const [commissionValue, setCommissionValue] = useState('')
 
   // Applicable For state
   const [applicableMode,    setApplicableMode]    = useState<ApplicableMode>('all_orders')
@@ -369,8 +380,30 @@ export default function CouponForm() {
     if (applicableMode !== 'all_orders' && selectedIds.size === 0) {
       setError(`Please select at least one ${applicableMode === 'categories' ? 'category' : 'product'}`); return
     }
+    if (affiliateEnabled) {
+      if (!affiliateName.trim() || !affiliatePhone.trim() || !affiliateEmail.trim()) {
+        setError('Complete all affiliate details before creating the coupon.')
+        return
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(affiliateEmail.trim())) {
+        setError('Enter a valid affiliate email address.')
+        return
+      }
+      if (affiliatePassword.length < 8) {
+        setError('Affiliate password must be at least 8 characters.')
+        return
+      }
+      const commission = Number(commissionValue)
+      if (!Number.isFinite(commission) || commission <= 0 ||
+          (commissionType === 'percentage' && commission > 100)) {
+        setError(commissionType === 'percentage'
+          ? 'Percentage commission must be greater than 0 and no more than 100.'
+          : 'Flat commission must be greater than 0.')
+        return
+      }
+    }
 
-    const applicableFor = applicableMode === 'all_orders'
+    const applicableFor: CreateCouponPayload['applicable_for'] = applicableMode === 'all_orders'
       ? 'all_orders'
       : { type: applicableMode, ids: Array.from(selectedIds) }
 
@@ -382,7 +415,7 @@ export default function CouponForm() {
       max_discount:       (type === 'percentage' && maxDiscount) ? Number(maxDiscount) : null,
       total_usage_limit:  totalUsageLimit ? Number(totalUsageLimit) : null,
       per_user_limit:     perUserLimit ? Number(perUserLimit) : null,
-      applicable_for:     applicableFor as any,
+      applicable_for:     applicableFor,
       terms_conditions:   termsConditions.trim() || null,
       valid_from:         new Date(validFrom),
       valid_to:           new Date(validTo + 'T23:59:59'),
@@ -393,11 +426,54 @@ export default function CouponForm() {
       if (isEdit) {
         await updateMutation.mutateAsync({ id: id!, ...payload })
       } else {
-        await createMutation.mutateAsync(payload)
+        await createMutation.mutateAsync({
+          coupon: payload,
+          affiliate: affiliateEnabled ? {
+            name: affiliateName.trim(),
+            email: affiliateEmail.trim().toLowerCase(),
+            password: affiliatePassword,
+            phone: affiliatePhone.trim(),
+            commission_type: commissionType,
+            commission_value: Number(commissionValue),
+          } : undefined,
+        })
       }
       navigate('/coupons')
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to save coupon')
+    } catch (err: unknown) {
+      if (err instanceof FirebaseError) {
+        const details = err.customData?.details
+        const diagnostic = typeof details === 'object' && details !== null && !Array.isArray(details)
+          ? details as Record<string, unknown>
+          : null
+        const operation = typeof diagnostic?.operation === 'string'
+          ? diagnostic.operation.replace(/-/g, ' ')
+          : null
+        const causeCode = typeof diagnostic?.causeCode === 'string'
+          ? diagnostic.causeCode
+          : null
+
+        if (err.code === 'functions/not-found') {
+          setError('Affiliate coupon creation is not available because the createAffiliateCoupon Cloud Function is not deployed. Ask a Firebase project owner to deploy it.')
+        } else if (err.code === 'functions/internal') {
+          console.error('[CouponForm] Affiliate coupon callable failed:', {
+            code: err.code,
+            message: err.message,
+            details: err.customData,
+          })
+          setError([
+            'Affiliate coupon creation failed in the server function.',
+            operation ? `Failed during: ${operation}.` : '',
+            causeCode ? `Server error code: ${causeCode}.` : '',
+            !operation && !causeCode
+              ? 'The function may not be deployed or may be unavailable. Ask a Firebase project owner to deploy createAffiliateCoupon and check its Cloud Functions logs.'
+              : '',
+          ].filter(Boolean).join(' '))
+        } else {
+          setError(err.message)
+        }
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to save coupon')
+      }
     }
   }
 
@@ -416,7 +492,7 @@ export default function CouponForm() {
     : `${selectedIds.size} product${selectedIds.size === 1 ? '' : 's'} selected`
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-6">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
         <button type="button" onClick={() => navigate('/coupons')}
@@ -431,7 +507,9 @@ export default function CouponForm() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className={isEdit ? '' : 'grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.78fr)]'}>
+        <section className="space-y-5 rounded-xl border border-gray-200 bg-white p-6">
 
         {/* Code */}
         <Field label="Coupon Code" required>
@@ -620,6 +698,77 @@ export default function CouponForm() {
           <span className="text-sm text-gray-700 font-medium">
             {isActive ? 'Active — coupon is live' : 'Inactive — coupon is disabled'}
           </span>
+        </div>
+        </section>
+
+        {!isEdit && (
+          <aside className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="border-b border-gray-100 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-5 py-5">
+              <div className="flex items-start gap-3">
+                <span className="rounded-xl bg-violet-100 p-2.5 text-violet-700"><UserPlus size={20} /></span>
+                <div>
+                  <h2 className="font-semibold text-gray-900">Affiliate</h2>
+                  <p className="mt-1 text-sm text-gray-500">Optionally create an affiliate login and link it to this coupon.</p>
+                </div>
+              </div>
+              <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-lg border border-violet-100 bg-white/80 p-3">
+                <input type="checkbox" checked={affiliateEnabled}
+                  onChange={event => {
+                    setAffiliateEnabled(event.target.checked)
+                    setError(null)
+                  }}
+                  className="h-4 w-4 rounded border-gray-300 accent-violet-700" />
+                <span className="text-sm font-medium text-gray-800">Create an affiliate account with this coupon</span>
+              </label>
+            </div>
+
+            {affiliateEnabled ? (
+              <div className="space-y-4 p-5">
+                <Field label="Name" required>
+                  <input value={affiliateName} onChange={event => setAffiliateName(event.target.value)}
+                    autoComplete="name" maxLength={120} required placeholder="Affiliate full name"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                </Field>
+                <Field label="Email" required>
+                  <input type="email" value={affiliateEmail} onChange={event => setAffiliateEmail(event.target.value)}
+                    autoComplete="email" required placeholder="affiliate@example.com"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                </Field>
+                <Field label="Password" required hint="At least 8 characters. The password is used once to create their sign-in and is never saved in Firestore.">
+                  <input type="password" value={affiliatePassword} onChange={event => setAffiliatePassword(event.target.value)}
+                    autoComplete="new-password" minLength={8} maxLength={128} required placeholder="Create a secure password"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                </Field>
+                <Field label="Phone Number" required>
+                  <input type="tel" value={affiliatePhone} onChange={event => setAffiliatePhone(event.target.value)}
+                    autoComplete="tel" maxLength={40} required placeholder="Affiliate contact number"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                </Field>
+                <Field label="Commission" required hint={commissionType === 'flat'
+                  ? 'Paid once per eligible order, regardless of item quantities. Example: ₹50 commission for an order with 1 or 10 units.'
+                  : 'Percentage of product subtotal; shipping is excluded.'}>
+                  <div className="flex gap-2">
+                    <select value={commissionType} onChange={event => setCommissionType(event.target.value as 'flat' | 'percentage')}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100">
+                      <option value="flat">Flat ₹ / order</option>
+                      <option value="percentage">Percentage %</option>
+                    </select>
+                    <input type="number" min="0.01" max={commissionType === 'percentage' ? 100 : undefined}
+                      step="0.01" value={commissionValue} onChange={event => setCommissionValue(event.target.value)}
+                      required placeholder={commissionType === 'flat' ? 'e.g. 50' : 'e.g. 5'}
+                      className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" />
+                  </div>
+                </Field>
+                <div className="flex items-start gap-2 rounded-lg bg-violet-50 p-3 text-xs leading-5 text-violet-800">
+                  <ShieldCheck size={16} className="mt-0.5 shrink-0" />
+                  <p>The affiliate account is securely created with this coupon. Commission is recalculated from order items, and cancelled orders are excluded.</p>
+                </div>
+              </div>
+            ) : (
+              <p className="px-5 py-4 text-sm text-gray-500">Leave this off to create a standard coupon without an affiliate account.</p>
+            )}
+          </aside>
+        )}
         </div>
 
         {/* Error */}

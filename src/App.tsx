@@ -2,7 +2,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Layout } from '@/components/Layout'
-import { ProtectedRoute } from '@/components/ProtectedRoute'
+import { AdminOnlyRoute, AffiliateOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import Login from '@/pages/Login'
 import Orders from '@/pages/Orders'
 import OrderDetail from '@/pages/OrderDetail'
@@ -34,6 +34,7 @@ import WhyPackages from '@/pages/WhyPackages'
 import Coupons from '@/pages/Coupons'
 import CouponForm from '@/pages/CouponForm'
 import CouponAnalytics from '@/pages/CouponAnalytics'
+import AffiliateDashboard from '@/pages/AffiliateDashboard'
 import Analytics from '@/pages/Analytics'
 
 const queryClient = new QueryClient({
@@ -66,6 +67,11 @@ export default function App() {
             }
           >
 
+            <Route element={<AffiliateOnlyRoute />}>
+              <Route path="affiliate" element={<AffiliateDashboard />} />
+            </Route>
+
+            <Route element={<AdminOnlyRoute />}>
             {/* Dashboard */}
             <Route
               index
@@ -213,6 +219,7 @@ export default function App() {
               path="analytics"
               element={<Analytics />}
             />
+            </Route>
 
           </Route>
 

@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { getFunctions, httpsCallable } from 'firebase/functions'
 import {
   db, collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, orderBy, serverTimestamp, Timestamp,
+  query, where, orderBy, serverTimestamp, Timestamp, app,
 } from '@/lib/firebase'
 import type { Coupon, CouponListRow } from '@/types/coupon'
 
@@ -32,6 +33,7 @@ function docToCoupon(id: string, data: Record<string, any>): Coupon {
     valid_to:           data.valid_to as Timestamp,
     is_active:          data.is_active ?? true,
     total_uses:         data.total_uses ?? 0,
+    affiliate_id:       data.affiliate_id ?? null,
     created_at:         data.created_at as Timestamp,
     updated_at:         data.updated_at as Timestamp,
   }
@@ -50,6 +52,7 @@ function couponToListRow(c: Coupon): CouponListRow {
     is_active:          c.is_active,
     min_cart_amount:    c.min_cart_amount,
     remarks:            c.remarks,
+    affiliate_id:       c.affiliate_id ?? null,
   }
 }
 
@@ -92,7 +95,7 @@ export interface CreateCouponPayload {
   max_discount: number | null
   total_usage_limit: number | null
   per_user_limit: number | null
-  applicable_for: 'all_orders'
+  applicable_for: Coupon['applicable_for']
   terms_conditions: string | null
   remarks?: string | null
   valid_from: Date
@@ -100,11 +103,54 @@ export interface CreateCouponPayload {
   is_active: boolean
 }
 
+export interface CreateAffiliatePayload {
+  name: string
+  email: string
+  password: string
+  phone: string
+  commission_type: 'flat' | 'percentage'
+  commission_value: number
+}
+
 export function useCreateCoupon() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (payload: CreateCouponPayload): Promise<string> => {
+    mutationFn: async ({
+      coupon: payload,
+      affiliate,
+    }: {
+      coupon: CreateCouponPayload
+      affiliate?: CreateAffiliatePayload
+    }): Promise<string> => {
       const normalizedCode = payload.code.trim().toUpperCase()
+
+      if (affiliate) {
+        const createAffiliateCoupon = httpsCallable<
+          {
+            coupon: Omit<CreateCouponPayload, 'valid_from' | 'valid_to'> & {
+              valid_from: number
+              valid_to: number
+            }
+            affiliate: CreateAffiliatePayload
+          },
+          { coupon_id: string; affiliate_id: string }
+        >(getFunctions(app, 'us-central1'), 'createAffiliateCoupon')
+        const result = await createAffiliateCoupon({
+          coupon: {
+            ...payload,
+            code: normalizedCode,
+            valid_from: payload.valid_from.getTime(),
+            valid_to: payload.valid_to.getTime(),
+          },
+          affiliate: {
+            ...affiliate,
+            name: affiliate.name.trim(),
+            email: affiliate.email.trim().toLowerCase(),
+            phone: affiliate.phone.trim(),
+          },
+        })
+        return result.data.coupon_id
+      }
 
       // Uniqueness check
       const existing = await getDocs(

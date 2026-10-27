@@ -1,4 +1,10 @@
 {
+  "firestore": [
+    {
+      "database": "festecart",
+      "rules": "firestore.rules"
+    }
+  ],
   "functions": [
     {
       "source": "functions",

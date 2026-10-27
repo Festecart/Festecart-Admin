@@ -1,8 +1,8 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Core helpers ───────────────────────────────────────────────────
     function isSignedIn() {
       return request.auth != null;
     }
@@ -11,186 +11,226 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // Reads the user_roles doc for the current user
-    function myRole() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/user_roles/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role
-        : null;
-    }
-
-    // TRUE only for super_admin  ← this is what the Admin panel checks
-    function isSuperAdmin() {
-      return myRole() == 'super_admin';
-    }
-
-    // TRUE for super_admin OR admin roles
     function isAdmin() {
-      return myRole() == 'super_admin' || myRole() == 'admin';
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/user_roles/$(request.auth.uid)) &&
+        (
+          (
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.keys().hasAny(['roles']) &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.roles is list &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.roles.hasAny(['admin', 'super_admin'])
+          ) ||
+          (
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.keys().hasAny(['role']) &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role in ['admin', 'super_admin']
+          )
+        );
     }
 
-    // ── user_roles ────────────────────────────────────────────────────
-    // Own user can read their role (needed for login redirect in both
-    // the store AND the admin panel).
-    // create: any signed-in user can create their own role doc
-    //   → this allows the super admin to self-provision on first login
-    //   → also allows the store to create vendor/user roles at signup
-    // update/delete: only super_admin can modify roles
-    match /user_roles/{uid} {
-      allow read:          if isOwner(uid) || isSuperAdmin();
-      allow create:        if isOwner(uid);
-      allow update, delete: if isSuperAdmin();
+    function isSuperAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/user_roles/$(request.auth.uid)) &&
+        (
+          (
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.keys().hasAny(['roles']) &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.roles is list &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.roles.hasAny(['super_admin'])
+          ) ||
+          (
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.keys().hasAny(['role']) &&
+            get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role == 'super_admin'
+          )
+        );
     }
 
-    // ── user_profiles ─────────────────────────────────────────────────
-    match /user_profiles/{uid} {
-      allow read, write: if isOwner(uid) || isSuperAdmin();
+    function isAffiliate() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/user_roles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role == 'affiliate' &&
+        get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.affiliate_id == request.auth.uid;
     }
 
-    // ── vendors ───────────────────────────────────────────────────────
-    match /vendors/{vendorId} {
-      allow read:   if true;
-      allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
-      allow update: if isSignedIn() &&
-                      (resource.data.user_id == request.auth.uid || isSuperAdmin());
-      allow delete: if isSuperAdmin();
+    function isBasicRole(role) {
+      return role in ['user', 'customer', 'vendor'];
     }
 
-    // ── vendor_kyc ────────────────────────────────────────────────────
-    match /vendor_kyc/{vendorId} {
-      allow read:  if isSuperAdmin() ||
-                     (isSignedIn() &&
-                      get(/databases/$(database)/documents/vendors/$(vendorId)).data.user_id == request.auth.uid);
-      allow write: if isSignedIn();
+    function hasOnlyBasicRoleFields() {
+      return (
+        (
+          !request.resource.data.keys().hasAny(['role']) ||
+          isBasicRole(request.resource.data.role)
+        ) &&
+        (
+          !request.resource.data.keys().hasAny(['roles']) ||
+          (
+            request.resource.data.roles is list &&
+            request.resource.data.roles.size() > 0 &&
+            request.resource.data.roles.hasOnly(['user', 'customer', 'vendor'])
+          )
+        ) &&
+        (
+          request.resource.data.keys().hasAny(['role']) ||
+          request.resource.data.keys().hasAny(['roles'])
+        )
+      );
     }
 
-    // ── products ──────────────────────────────────────────────────────
-    match /products/{productId} {
-      allow read:   if true;
+    match /products/{id} {
+      allow read: if true;
       allow create: if isSignedIn();
-      allow update: if isSignedIn() &&
-                      (resource.data.vendor_id == request.auth.uid || isSuperAdmin());
-      allow delete: if isSignedIn() &&
-                      (resource.data.vendor_id == request.auth.uid || isSuperAdmin());
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && (resource.data.vendor_id == request.auth.uid || isAdmin());
     }
 
-    // ── categories ────────────────────────────────────────────────────
-    match /categories/{catId} {
-      allow read:  if true;
-      allow write: if isSuperAdmin();
-    }
-
-    // ── home_banners ──────────────────────────────────────────────────
-    match /home_banners/{bannerId} {
-      allow read:  if true;
-      allow write: if isSuperAdmin();
-    }
-
-    // ── site_config ───────────────────────────────────────────────────
-    // Store reads public config. Only super_admin writes.
-    match /site_config/{key} {
-      allow read:  if true;
-      allow write: if isSuperAdmin();
-    }
-
-    // ── orders ────────────────────────────────────────────────────────
-    // super_admin: full access (read, create, update, delete)
-    // Authenticated user: read/create their own orders
-    match /orders/{orderId} {
-      allow read:          if isSuperAdmin() ||
-                              (isSignedIn() && resource.data.user_id == request.auth.uid);
-      allow create:        if true;           // allow guest checkout
-      allow update,
-            delete:        if isSuperAdmin();
-    }
-
-    // ── order_status_history ──────────────────────────────────────────
-    match /order_status_history/{docId} {
-      allow read, write: if isSuperAdmin();
-    }
-
-    // ── invoices ──────────────────────────────────────────────────────
-    match /invoices/{invoiceId} {
-      allow read, write: if isSuperAdmin();
-    }
-
-    // ── cart_items ────────────────────────────────────────────────────
-    // Per-user subcollection OR flat collection with user_id field
-    match /cart_items/{docId} {
-      allow read, write: if isSuperAdmin() ||
-                            (isSignedIn() && (
-                              resource == null ||
-                              resource.data.user_id == request.auth.uid
-                            ));
-    }
-    // Subcollection variant (if store uses this pattern)
-    match /cart_items/{uid}/{document=**} {
-      allow read, write: if isOwner(uid) || isSuperAdmin();
-    }
-
-    // ── contact_enquiries ─────────────────────────────────────────────
-    match /contact_enquiries/{id} {
-      allow create:               if true;   // public contact form
-      allow read, update, delete: if isSuperAdmin();
-    }
-
-    // ── delivery_pincodes ─────────────────────────────────────────────
-    match /delivery_pincodes/{id} {
-      allow read:  if true;        // store checkout reads this
-      allow write: if isSuperAdmin();
-    }
-
-    // ── delivery_zones (hierarchical: state / city / pincode) ─────────
-    // Public read so guest checkout can resolve zones without being signed in.
-    // Write restricted to admin / super_admin.
-    match /delivery_zones/{id} {
-      allow read:  if true;
+    match /categories/{id} {
+      allow read: if true;
       allow write: if isAdmin();
     }
 
-    // ── shipping_zones ────────────────────────────────────────────────
+    match /vendors/{id} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /home_banners/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /site_config/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /shipping_zones/{id} {
-      allow read:  if true;
-      allow write: if isSuperAdmin();
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // ── shipping_methods ──────────────────────────────────────────────
     match /shipping_methods/{id} {
-      allow read:  if true;
-      allow write: if isSuperAdmin();
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // ── courier_vendors ───────────────────────────────────────────────
-    match /courier_vendors/{id} {
-      allow read, write: if isSuperAdmin();
+    match /delivery_pincodes/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // ── admin_invitations ─────────────────────────────────────────────
-    match /admin_invitations/{invId} {
-      allow read, create, delete: if isSuperAdmin();
-      allow update:               if isSignedIn();
+    match /delivery_zones/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // ── email_sent_log ────────────────────────────────────────────────
-    // Internal idempotency log written only by Cloud Functions (Admin SDK).
-    // No client-side access allowed.
-    match /email_sent_log/{docId} {
-      allow read, write: if false;
-    }
-
-    // ── coupons ───────────────────────────────────────────────────────
-    // Public read so guests can validate coupons at checkout.
-    // Admin-only writes.
     match /coupons/{couponId} {
-      allow read:           if true;
-      allow write:          if isAdmin();
+      allow read: if true;
+      allow write: if isAdmin();
 
-      // Per-user usage subcollection — readable by owner or admin,
-      // writable by anyone (needed for guest checkout usage recording).
+      // Allow storefront coupon usage to increment without changing affiliate attribution.
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['total_uses']) &&
+        request.resource.data.total_uses == resource.data.total_uses + 1;
+
       match /user_usage/{userId} {
-        allow read:           if isOwner(userId) || isAdmin();
+        allow read: if isOwner(userId) || isAdmin();
         allow create, update: if true;
       }
+    }
+
+    match /user_roles/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isOwner(uid) &&
+        (
+          hasOnlyBasicRoleFields() ||
+          (
+            request.auth.token.email == 'festecartdesi@gmail.com' &&
+            request.resource.data.role == 'super_admin'
+          )
+        );
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /user_profiles/{uid} {
+      allow read, write: if isOwner(uid) || isAdmin();
+    }
+
+    match /phone_email_mappings/{phone} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.uid;
+      allow delete: if (isSignedIn() && resource.data.uid == request.auth.uid) || isAdmin();
+      allow update: if isAdmin();
+    }
+
+    match /vendor_kyc/{vendorId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && get(/databases/$(database)/documents/vendors/$(vendorId)).data.user_id == request.auth.uid);
+      allow write: if isSignedIn();
+    }
+
+    match /orders/{orderId} {
+      allow create: if true;
+      allow read: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    match /counters/{id} {
+      allow read, write: if true;
+    }
+
+    match /cart_items/{uid} {
+      allow read, write: if isOwner(uid) || isAdmin();
+    }
+
+    match /cart_items/{uid}/{document=**} {
+      allow read, write: if isOwner(uid) || isAdmin();
+    }
+
+    match /contact_enquiries/{id} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /order_status_history/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /invoices/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /courier_vendors/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /admin_invitations/{id} {
+      allow read, create, delete: if isAdmin();
+      allow update: if isSignedIn();
+    }
+
+    match /email_tasks/{id} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /customers/{customerId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    // Affiliate profiles contain private contact information and commission terms.
+    // Only the affiliate and admins can read them; trusted backend code writes them.
+    match /affiliate_profiles/{affiliateId} {
+      allow read: if isAdmin() || (isAffiliate() && request.auth.uid == affiliateId);
+      allow write: if false;
+    }
+
+    // This server-maintained projection contains only the order details shown in the portal.
+    // Affiliates can query their own records but cannot read or alter another affiliate's ledger.
+    match /affiliate_order_analytics/{orderId} {
+      allow read: if isAdmin() ||
+        (isAffiliate() && resource.data.affiliate_id == request.auth.uid);
+      allow write: if false;
     }
   }
 }

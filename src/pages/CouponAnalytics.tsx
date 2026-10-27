@@ -2,13 +2,16 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft, BarChart3, CalendarDays, ChevronRight, CircleDollarSign,
-  Loader2, Package, ShoppingBag, Users,
+  Loader2, Package, RefreshCw, ShoppingBag, Users,
 } from 'lucide-react'
+import { getFunctions, httpsCallable } from 'firebase/functions'
 import { useCoupons } from '@/hooks/useCoupons'
 import { useCouponOrders } from '@/hooks/useOrders'
+import { useAffiliateOrders, useAffiliateProfile } from '@/hooks/useAffiliate'
 import type { CouponListRow } from '@/types/coupon'
 import type { Order } from '@/types'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
+import { app } from '@/lib/firebase'
 
 function localDateKey(dateString: string): string {
   const date = new Date(dateString)
@@ -49,6 +52,11 @@ function CouponCard({ coupon }: { coupon: CouponListRow }) {
             <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${coupon.is_active ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
               {coupon.is_active ? 'Active' : 'Inactive'}
             </span>
+            {coupon.affiliate_id && (
+              <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                Affiliate
+              </span>
+            )}
           </div>
           <p className="mt-1 text-sm text-gray-500">
             {coupon.total_uses} recorded {coupon.total_uses === 1 ? 'use' : 'uses'}
@@ -101,9 +109,14 @@ export default function CouponAnalytics() {
     refetch,
     isFetching,
   } = useCouponOrders(selectedCoupon?.code ?? '')
+  const affiliateProfileQuery = useAffiliateProfile(selectedCoupon?.affiliate_id ?? undefined)
+  const affiliateOrdersQuery = useAffiliateOrders(selectedCoupon?.affiliate_id ?? undefined)
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [specificDate, setSpecificDate] = useState('')
+  const [rebuildingAnalytics, setRebuildingAnalytics] = useState(false)
+  const [rebuildMessage, setRebuildMessage] = useState<string | null>(null)
+  const [rebuildError, setRebuildError] = useState<string | null>(null)
 
   const validRange = !fromDate || !toDate || fromDate <= toDate
   const filteredOrders = useMemo(() => {
@@ -146,6 +159,34 @@ export default function CouponAnalytics() {
   const totalUnits = productRows.reduce((sum, product) => sum + product.quantity, 0)
   const totalDiscount = filteredOrders.reduce((sum, order) => sum + (couponDiscount(order) ?? 0), 0)
   const recordedDiscountOrders = filteredOrders.filter(order => couponDiscount(order) !== null).length
+  const affiliateLedger = new Map((affiliateOrdersQuery.data ?? []).map(order => [order.order_id, order]))
+  const commissionDue = filteredOrders.reduce(
+    (sum, order) => sum + (affiliateLedger.get(order.id)?.commission_earned ?? 0),
+    0,
+  )
+  const commissionSyncPending = filteredOrders.filter(order => !affiliateLedger.has(order.id)).length
+
+  const rebuildAffiliateAnalytics = async () => {
+    const couponIdToSync = selectedCoupon?.id
+    if (!couponIdToSync || !selectedCoupon?.affiliate_id) return
+    setRebuildingAnalytics(true)
+    setRebuildMessage(null)
+    setRebuildError(null)
+    try {
+      const rebuild = httpsCallable<
+        { coupon_id: string },
+        { orders_processed: number }
+      >(getFunctions(app, 'us-central1'), 'rebuildAffiliateCouponAnalytics')
+      const result = await rebuild({ coupon_id: couponIdToSync })
+      await Promise.all([affiliateOrdersQuery.refetch(), refetch()])
+      const count = result.data.orders_processed
+      setRebuildMessage(`Synced commission records for ${count} ${count === 1 ? 'order' : 'orders'}.`)
+    } catch (error) {
+      setRebuildError(error instanceof Error ? error.message : 'Could not sync affiliate commissions.')
+    } finally {
+      setRebuildingAnalytics(false)
+    }
+  }
 
   if (!couponId) {
     return (
@@ -313,11 +354,74 @@ export default function CouponAnalytics() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {selectedCoupon.affiliate_id && (
+        <section className="overflow-hidden rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-indigo-50 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-violet-100 px-5 py-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">Affiliate partner</p>
+              <h2 className="mt-1 text-lg font-semibold text-gray-900">
+                {affiliateProfileQuery.data?.name ?? (affiliateProfileQuery.isLoading ? 'Loading affiliate…' : 'Affiliate')}
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">Commission terms and contact details for this coupon.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void rebuildAffiliateAnalytics()}
+                disabled={rebuildingAnalytics}
+                className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-medium text-violet-800 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw size={15} className={rebuildingAnalytics ? 'animate-spin' : ''} />
+                {rebuildingAnalytics ? 'Syncing orders…' : 'Sync commission records'}
+              </button>
+              <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Affiliate coupon</span>
+            </div>
+          </div>
+          {affiliateProfileQuery.error ? (
+            <p role="alert" className="px-5 py-4 text-sm text-red-700">Affiliate details could not be loaded: {(affiliateProfileQuery.error as Error).message}</p>
+          ) : affiliateProfileQuery.isLoading ? (
+            <div className="flex items-center gap-2 px-5 py-5 text-sm text-gray-500"><Loader2 size={16} className="animate-spin" /> Loading affiliate details…</div>
+          ) : affiliateProfileQuery.data && (
+            <div className="grid gap-4 px-5 py-5 sm:grid-cols-2 lg:grid-cols-4">
+              <div><p className="text-xs font-medium uppercase tracking-wide text-gray-400">Email</p><p className="mt-1 break-all text-sm font-medium text-gray-800">{affiliateProfileQuery.data.email}</p></div>
+              <div><p className="text-xs font-medium uppercase tracking-wide text-gray-400">Phone number</p><p className="mt-1 text-sm font-medium text-gray-800">{affiliateProfileQuery.data.phone}</p></div>
+              <div><p className="text-xs font-medium uppercase tracking-wide text-gray-400">Commission rate</p><p className="mt-1 text-sm font-medium text-gray-800">{affiliateProfileQuery.data.commission_type === 'flat' ? `${formatCurrency(affiliateProfileQuery.data.commission_value)} per eligible order` : `${affiliateProfileQuery.data.commission_value}% of product subtotal`}</p></div>
+              <div><p className="text-xs font-medium uppercase tracking-wide text-gray-400">Commission ledger</p><p className="mt-1 text-sm font-medium text-gray-800">{affiliateOrdersQuery.isLoading ? 'Updating…' : `${affiliateOrdersQuery.data?.length ?? 0} orders tracked`}</p></div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {rebuildMessage && (
+        <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {rebuildMessage}
+        </p>
+      )}
+      {rebuildError && (
+        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          Affiliate commission sync failed: {rebuildError}
+        </p>
+      )}
+
+      {affiliateOrdersQuery.error && selectedCoupon.affiliate_id && (
+        <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          Affiliate commission data could not be loaded: {(affiliateOrdersQuery.error as Error).message}
+        </p>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="Orders" value={ordersLoading ? '—' : filteredOrders.length.toLocaleString('en-IN')} detail="Cancelled orders excluded" icon={ShoppingBag} />
         <MetricCard label="Products ordered" value={ordersLoading ? '—' : totalUnits.toLocaleString('en-IN')} detail={`${productRows.length} unique ${productRows.length === 1 ? 'product' : 'products'}`} icon={Package} />
         <MetricCard label="Coupon discounts" value={ordersLoading ? '—' : formatCurrency(totalDiscount)} detail={`${recordedDiscountOrders} orders with a recorded discount`} icon={CircleDollarSign} />
         <MetricCard label="Customers" value={ordersLoading ? '—' : new Set(filteredOrders.map(order => order.user_id || customerFor(order).email || order.id)).size.toLocaleString('en-IN')} detail="Based on distinct customer accounts or emails" icon={Users} />
+        {selectedCoupon.affiliate_id && (
+          <MetricCard
+            label="Commission to pay"
+            value={affiliateOrdersQuery.isLoading ? '—' : affiliateOrdersQuery.error ? 'Unavailable' : formatCurrency(commissionDue)}
+            detail={affiliateOrdersQuery.error ? 'Commission ledger unavailable' : commissionSyncPending ? `${commissionSyncPending} order(s) awaiting commission sync` : 'Cancelled orders excluded'}
+            icon={CircleDollarSign}
+          />
+        )}
       </div>
 
       <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
@@ -380,6 +484,7 @@ export default function CouponAnalytics() {
                   <th className="px-5 py-3 text-left font-semibold">Products &amp; quantity</th>
                   <th className="px-5 py-3 text-left font-semibold">Order date</th>
                   <th className="px-5 py-3 text-right font-semibold">Coupon amount</th>
+                  {selectedCoupon.affiliate_id && <th className="px-5 py-3 text-right font-semibold">Commission</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -413,6 +518,13 @@ export default function CouponAnalytics() {
                       <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-gray-900">
                         {discount === null ? <span className="font-normal text-gray-400">Not recorded</span> : formatCurrency(discount)}
                       </td>
+                      {selectedCoupon.affiliate_id && (
+                        <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-emerald-700">
+                              {affiliateOrdersQuery.error ? 'Unavailable' : affiliateOrdersQuery.isLoading ? '…' : affiliateLedger.has(order.id)
+                            ? formatCurrency(affiliateLedger.get(order.id)!.commission_earned)
+                            : 'Awaiting sync'}
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
