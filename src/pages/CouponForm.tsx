@@ -9,6 +9,7 @@ import { Timestamp } from 'firebase/firestore'
 import { FirebaseError } from 'firebase/app'
 import { db, collection, getDocs, query, orderBy } from '@/lib/firebase'
 import { formatCurrency } from '@/lib/utils'
+import { sendAffiliateCouponEmail } from '@/lib/affiliateEmailService'
 import {
   useCoupon,
   useCheckAffiliateEmail,
@@ -35,11 +36,17 @@ interface Product { id: string; name: string; category_id: string | null; status
 type ApplicableMode = 'all_orders' | 'categories' | 'products'
 
 interface AffiliateShareDetails {
+  couponId: string
+  name: string
   email: string
   password: string | null
   couponCode: string
   loginUrl: string
   signInProviders: string[]
+  commissionType: 'flat' | 'percentage'
+  commissionValue: number
+  emailStatus: 'sending' | 'submitted' | 'failed'
+  emailError: string | null
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
@@ -299,6 +306,7 @@ export default function CouponForm() {
   const [createdAffiliate, setCreatedAffiliate] = useState<AffiliateShareDetails | null>(null)
   const [shareCopied, setShareCopied] = useState(false)
   const [shareCopyError, setShareCopyError] = useState<string | null>(null)
+  const [isRetryingAffiliateEmail, setIsRetryingAffiliateEmail] = useState(false)
   const normalizedAffiliateEmail = affiliateEmail.trim().toLowerCase()
   const validAffiliateEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedAffiliateEmail)
   const affiliateEmailCheck = useCheckAffiliateEmail(debouncedAffiliateEmail)
@@ -505,15 +513,37 @@ export default function CouponForm() {
           } : undefined,
         })
         if (affiliateEnabled) {
-          setCreatedAffiliate({
+          const affiliateDetails: AffiliateShareDetails = {
+            couponId: result.couponId,
+            name: affiliateName.trim(),
             email: normalizedAffiliateEmail,
             password: result.reusedExistingAccount ? null : affiliatePassword,
             couponCode: normalizedCode,
-            loginUrl: `${window.location.origin}/login`,
+            loginUrl: 'https://affiliate.festecart.com/',
             signInProviders: result.reusedExistingAccount
               ? affiliateEmailCheck.data?.providers ?? []
               : ['Email and password'],
-          })
+            commissionType,
+            commissionValue: Number(commissionValue),
+            emailStatus: 'sending',
+            emailError: null,
+          }
+          setCreatedAffiliate(affiliateDetails)
+          try {
+            await sendAffiliateCouponEmail(affiliateDetails)
+            setCreatedAffiliate({
+              ...affiliateDetails,
+              emailStatus: 'submitted',
+            })
+          } catch (emailFailure) {
+            setCreatedAffiliate({
+              ...affiliateDetails,
+              emailStatus: 'failed',
+              emailError: emailFailure instanceof Error
+                ? emailFailure.message
+                : 'Could not submit the affiliate email request.',
+            })
+          }
           return
         }
       }
@@ -578,6 +608,9 @@ export default function CouponForm() {
       `Email: ${createdAffiliate.email}`,
       ...(createdAffiliate.password ? [`Password: ${createdAffiliate.password}`] : []),
       `Coupon code: ${createdAffiliate.couponCode}`,
+      `Commission: ${createdAffiliate.commissionType === 'flat'
+        ? `${formatCurrency(createdAffiliate.commissionValue)} per eligible order`
+        : `${createdAffiliate.commissionValue}% of product subtotal`}`,
       createdAffiliate.password
         ? 'Please keep these login details private.'
         : `Sign in using: ${createdAffiliate.signInProviders.join(' or ')}.`,
@@ -590,6 +623,26 @@ export default function CouponForm() {
       setShareCopied(true)
     } catch (copyFailure) {
       setShareCopyError(copyFailure instanceof Error ? copyFailure.message : 'Clipboard access is unavailable.')
+    }
+  }
+
+  const handleRetryAffiliateEmail = async () => {
+    if (!createdAffiliate || isRetryingAffiliateEmail) return
+    setIsRetryingAffiliateEmail(true)
+    setCreatedAffiliate({ ...createdAffiliate, emailStatus: 'sending', emailError: null })
+    try {
+      await sendAffiliateCouponEmail(createdAffiliate)
+      setCreatedAffiliate({ ...createdAffiliate, emailStatus: 'submitted', emailError: null })
+    } catch (emailFailure) {
+      setCreatedAffiliate({
+        ...createdAffiliate,
+        emailStatus: 'failed',
+        emailError: emailFailure instanceof Error
+          ? emailFailure.message
+          : 'Could not submit the affiliate email request.',
+      })
+    } finally {
+      setIsRetryingAffiliateEmail(false)
     }
   }
 
@@ -619,11 +672,44 @@ export default function CouponForm() {
               </p>
             )}
             <p><span className="font-medium text-gray-600">Coupon code:</span> <span className="font-mono font-semibold">{createdAffiliate.couponCode}</span></p>
+            <p><span className="font-medium text-gray-600">Commission:</span> {createdAffiliate.commissionType === 'flat'
+              ? `${formatCurrency(createdAffiliate.commissionValue)} per eligible order`
+              : `${createdAffiliate.commissionValue}% of product subtotal`}</p>
+          </div>
+
+          <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
+            createdAffiliate.emailStatus === 'failed'
+              ? 'border-red-200 bg-red-50 text-red-800'
+              : createdAffiliate.emailStatus === 'sending'
+                ? 'border-blue-200 bg-blue-50 text-blue-800'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          }`}>
+            {createdAffiliate.emailStatus === 'sending' ? (
+              <span className="inline-flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> Submitting affiliate email request…</span>
+            ) : createdAffiliate.emailStatus === 'failed' ? (
+              <>
+                <p role="alert">Coupon and affiliate were created, but the email request could not be confirmed: {createdAffiliate.emailError} Check the Affiliate Emails sheet before retrying.</p>
+                <button type="button" onClick={() => void handleRetryAffiliateEmail()} disabled={isRetryingAffiliateEmail}
+                  className="mt-2 inline-flex items-center gap-2 font-semibold underline disabled:opacity-50">
+                  {isRetryingAffiliateEmail && <Loader2 size={14} className="animate-spin" />}
+                  Retry email request
+                </button>
+              </>
+            ) : (
+              <>
+                <p role="status">Affiliate email request submitted. Confirm delivery in the Affiliate Emails sheet.</p>
+                <button type="button" onClick={() => void handleRetryAffiliateEmail()} disabled={isRetryingAffiliateEmail}
+                  className="mt-2 inline-flex items-center gap-2 font-semibold underline disabled:opacity-50">
+                  {isRetryingAffiliateEmail && <Loader2 size={14} className="animate-spin" />}
+                  Retry if the sheet shows delivery failed
+                </button>
+              </>
+            )}
           </div>
 
           {createdAffiliate.password && (
             <p className="mt-3 text-xs text-amber-700">
-              Share the password securely and advise the affiliate to change it after signing in.
+              A temporary password was included in the affiliate email. Advise the affiliate to keep it private and change it after signing in.
             </p>
           )}
           {shareCopyError && <p role="alert" className="mt-3 text-sm text-red-600">Copy failed: {shareCopyError}</p>}
