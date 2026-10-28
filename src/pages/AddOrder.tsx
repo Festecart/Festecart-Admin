@@ -24,7 +24,7 @@ const SAVE_AS_OPTIONS: { value: SaveAsWorkflow; label: string }[] = [
   { value: 'order_processing_invoice_delivered', label: 'Order + Processing + Invoice + Delivered' },
 ]
 
-interface SaveModalResult { deliveryType: 'self_pickup' | 'delivery'; workflow: SaveAsWorkflow; paymentMethod: string; markAsPaid: boolean; transactionNote: string }
+interface SaveModalResult { deliveryType: 'self_pickup' | 'delivery'; workflow: SaveAsWorkflow; paymentMethod: string; markAsPaid: boolean; whatsappOptIn: boolean; transactionNote: string }
 
 function SaveAsOrderModal({ onClose, onConfirm, loading, error }: {
   onClose: () => void; onConfirm: (opts: SaveModalResult) => void; loading: boolean; error: string | null
@@ -33,6 +33,7 @@ function SaveAsOrderModal({ onClose, onConfirm, loading, error }: {
   const [workflow,        setWorkflow]        = useState<SaveAsWorkflow>('order_processing_invoice_delivered')
   const [paymentMethod,   setPaymentMethod]   = useState('cod')
   const [markAsPaid,      setMarkAsPaid]      = useState(false)
+  const [whatsappOptIn,   setWhatsappOptIn]   = useState(false)
   const [transactionNote, setTransactionNote] = useState('')
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
@@ -71,6 +72,10 @@ function SaveAsOrderModal({ onClose, onConfirm, loading, error }: {
             <input type="checkbox" id="markpaid" checked={markAsPaid} onChange={e => setMarkAsPaid(e.target.checked)} className="w-4 h-4 rounded border-gray-300 accent-gray-900" />
             <label htmlFor="markpaid" className="text-sm text-gray-700 font-medium">Mark as Paid</label>
           </div>
+          <div className="flex items-start gap-3">
+            <input type="checkbox" id="whatsapp-opt-in" checked={whatsappOptIn} onChange={e => setWhatsappOptIn(e.target.checked)} className="mt-0.5 w-4 h-4 rounded border-gray-300 accent-gray-900" />
+            <label htmlFor="whatsapp-opt-in" className="text-sm text-gray-700">Customer agreed to receive order updates on WhatsApp</label>
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Transaction Details / Notes</label>
             <textarea value={transactionNote} onChange={e => setTransactionNote(e.target.value)} rows={3}
@@ -81,7 +86,7 @@ function SaveAsOrderModal({ onClose, onConfirm, loading, error }: {
         </div>
         <div className="flex gap-3 justify-end px-6 py-4 border-t border-gray-100">
           <button onClick={onClose} className="px-5 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50">Cancel</button>
-          <button onClick={() => onConfirm({ deliveryType, workflow, paymentMethod, markAsPaid, transactionNote })}
+          <button onClick={() => onConfirm({ deliveryType, workflow, paymentMethod, markAsPaid, whatsappOptIn, transactionNote })}
             disabled={loading}
             className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-5 py-2 rounded-lg disabled:opacity-60">
             {loading && <Loader2 size={13} className="animate-spin" />} Confirm
@@ -209,6 +214,7 @@ export default function AddOrder() {
         user_id: userId, guest_name: guestName, guest_email: guestEmail, guest_phone: guestPhone,
         order_number, status: 'confirmed',
         payment_method: opts.paymentMethod,
+        whatsapp_opt_in: opts.whatsappOptIn,
         payment_status: opts.markAsPaid ? 'paid' : 'pending',
         paid_at: opts.markAsPaid ? now : null,
         subtotal, shipping_charge: shipping, total,

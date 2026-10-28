@@ -205,6 +205,7 @@ export default function CheckoutPage() {
   const [coupon,         setCoupon]         = useState('');
   const [couponApplied,  setCouponApplied]  = useState(false);
   const [paymentMethod,  setPaymentMethod]  = useState('cod');
+  const [whatsappOptIn,  setWhatsappOptIn]  = useState(false);
   const [manualPincode,  setManualPincode]  = useState('');
   const [placing,        setPlacing]        = useState(false);
 
@@ -291,6 +292,7 @@ export default function CheckoutPage() {
         guest_phone:     user ? null : guestForm.phone,
         status:          'confirmed',
         payment_method:  paymentMethod,
+        whatsapp_opt_in: whatsappOptIn,
         payment_status:  paymentMethod === 'cod' ? 'pending' : 'pending',
         subtotal,
         shipping_charge: shippingCharge,
@@ -629,6 +631,11 @@ export default function CheckoutPage() {
                 ))}
               </CardContent>
             </Card>
+
+            <label className="flex items-start gap-3 text-sm text-muted-foreground">
+              <input type="checkbox" checked={whatsappOptIn} onChange={e => setWhatsappOptIn(e.target.checked)} className="mt-0.5 h-4 w-4 accent-primary" />
+              <span>Send me order updates on WhatsApp at my provided phone number.</span>
+            </label>
 
             {/* Place Order */}
             <Button variant="maroon" size="lg" className="w-full" onClick={handlePlaceOrder}
