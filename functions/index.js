@@ -126,27 +126,67 @@ function generateInvoicePdf(order, logoImageBuffer) {
 
     // ── Address columns + order meta ──
     var rowY = doc.y
-    var colW = 150
+    var addressColumns = {
+      shipping: { x: 40, width: 145 },
+      billing: { x: 205, width: 145 },
+      order: { x: 390, width: 165 },
+    }
 
-    // Shipping Address
-    doc.fontSize(9).font('Helvetica-Bold').text('Shipping Address', 40, rowY)
-    doc.font('Helvetica').fontSize(8)
-    var saLines = [addr.name, addr.address, addr.city + ', ' + addr.state + ', India,', addr.state + ', India - ' + addr.pincode, 'Phone: ' + (addr.phone || '')].filter(Boolean)
-    saLines.forEach(function(l) { doc.text(l, 40) })
+    function addressLines(address) {
+      if (typeof address === 'string') {
+        return address.split(/\r?\n/).map(function(line) { return line.trim() }).filter(Boolean)
+      }
+      if (!address || typeof address !== 'object') return []
 
-    // Billing Address (same as shipping)
-    doc.fontSize(9).font('Helvetica-Bold').text('Billing Address', 200, rowY)
-    doc.font('Helvetica').fontSize(8)
-    var currY2 = rowY + 12
-    saLines.forEach(function(l) { doc.text(l, 200, currY2); currY2 += 10 })
+      var lines = [address.name, address.address].filter(function(line) {
+        return typeof line === 'string' && line.trim()
+      }).map(function(line) { return line.trim() })
+      var locality = [address.city, address.state].filter(function(value) {
+        return typeof value === 'string' && value.trim()
+      }).map(function(value) { return value.trim() }).join(', ')
+      var location = [locality, 'India'].filter(Boolean).join(', ')
+      if (address.pincode) location += ' - ' + address.pincode
+      if (location) lines.push(location)
+      if (typeof address.phone === 'string' && address.phone.trim()) {
+        lines.push('Phone: ' + address.phone.trim())
+      }
+      return lines
+    }
 
-    // Order meta (right)
-    doc.fontSize(9).font('Helvetica-Bold').text('Order Date: ', 400, rowY, { continued: true }).font('Helvetica').text(todayStr())
-    doc.font('Helvetica-Bold').text('Order No. ', 400, rowY + 12, { continued: true }).font('Helvetica').text(orderNum)
-    doc.font('Helvetica-Bold').text('Email: ', 400, rowY + 24, { continued: true }).font('Helvetica').text(custEmail || '—', { width: 140 })
+    function drawAddressColumn(title, lines, column) {
+      doc.fontSize(9).font('Helvetica-Bold').text(title, column.x, rowY, { width: column.width })
+      var y = doc.y + 2
+      doc.fontSize(8).font('Helvetica')
+      lines.forEach(function(line) {
+        doc.text(line, column.x, y, { width: column.width, lineGap: 1 })
+        y = doc.y + 1
+      })
+      return y
+    }
 
-    doc.y = rowY + Math.max(saLines.length * 10 + 20, 60)
-    doc.moveDown(0.5)
+    var shippingLines = addressLines(addr)
+    var billingLines = addressLines(order.billing_address)
+    if (!billingLines.length) billingLines = shippingLines
+    var shippingEndY = drawAddressColumn('Shipping Address', shippingLines, addressColumns.shipping)
+    var billingEndY = drawAddressColumn('Billing Address', billingLines, addressColumns.billing)
+
+    function drawOrderMeta(label, value, y) {
+      doc.fontSize(8).font('Helvetica-Bold')
+        .text(label + ' ', addressColumns.order.x, y, {
+          width: addressColumns.order.width,
+          continued: true,
+        })
+        .font('Helvetica')
+        .text(value || '—', { width: addressColumns.order.width })
+      return doc.y + 2
+    }
+
+    var orderMetaY = rowY
+    orderMetaY = drawOrderMeta('Order Date:', todayStr(), orderMetaY)
+    orderMetaY = drawOrderMeta('Order No.:', orderNum, orderMetaY)
+    orderMetaY = drawOrderMeta('Email:', custEmail, orderMetaY)
+
+    doc.y = Math.max(shippingEndY, billingEndY, orderMetaY) + 8
 
     // ── Items table ──
     var tableTop = doc.y
