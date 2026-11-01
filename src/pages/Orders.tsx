@@ -260,7 +260,7 @@ export default function Orders() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Order No','Order Date','Customer Name','Phone','Items','Product Cost','Coupon Name','Coupon Amount','Shipment Cost','Total Payable','Paid to Logistics','Actual Paid','Earned Value','Payment Method','Payment Status','Order Status'].map(h => (
+                  {['Order No','Order Date','Customer Name','Phone','Items','Products','Product Cost','Coupon Name','Coupon Amount','Shipment Cost','Total Payable','Paid to Logistics','Actual Paid','Earned Value','Payment Method','Payment Status','Order Status'].map(h => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -279,6 +279,11 @@ export default function Orders() {
                     <td className="px-5 py-3 text-gray-800 font-medium">{customerName(order)}</td>
                     <td className="px-5 py-3 text-gray-500">{customerPhone(order)}</td>
                     <td className="px-5 py-3 text-gray-500 text-center">{order.items?.length ?? 0}</td>
+                    <td className="px-5 py-3 text-gray-600 min-w-[220px] max-w-[320px] break-words">
+                      {order.items?.length
+                        ? order.items.map(item => `${item.name?.trim() || item.product_id} × ${item.quantity}`).join(', ')
+                        : '—'}
+                    </td>
                     <td className="px-5 py-3 whitespace-nowrap">{formatCurrency(productCost(order))}</td>
                     <td className="px-5 py-3 text-gray-600">{order.coupon_code || '—'}</td>
                     <td className="px-5 py-3 whitespace-nowrap">{couponAmountLabel(order)}</td>
@@ -301,7 +306,7 @@ export default function Orders() {
                   </tr>
                 ))}
                 {(orders ?? []).length === 0 && (
-                  <tr><td colSpan={16} className="px-5 py-12 text-center text-gray-400">No orders match your filters</td></tr>
+                  <tr><td colSpan={17} className="px-5 py-12 text-center text-gray-400">No orders match your filters</td></tr>
                 )}
               </tbody>
             </table>
