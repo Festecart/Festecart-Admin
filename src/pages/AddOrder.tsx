@@ -11,7 +11,7 @@ import { sendOrderStatusEmail, type OrderForEmail } from '@/lib/emailService'
 import { User, Mail, Phone, MapPin, X, Plus, Minus, Loader2, ChevronLeft } from 'lucide-react'
 
 interface CustomerProfile { user_id: string; name: string | null; email: string | null; phone: string | null; address: string | null }
-interface WalkInCustomer  { name: string; email: string; phone: string; address: string }
+interface WalkInCustomer  { name: string; email: string; phone: string; address: string; pincode: string }
 interface ProductResult   { id: string; name: string; price: number; compare_at_price: number | null; images: string[]; inventory_count: number | null }
 interface OrderItem       { product_id: string; name: string; price: number; compare_at_price: number | null; quantity: number; image: string | null }
 type CustomerMode   = 'customer' | 'walkin'
@@ -119,7 +119,7 @@ export default function AddOrder() {
   const [customerSearch,  setCustomerSearch]  = useState('')
   const [customerResults, setCustomerResults] = useState<CustomerProfile[]>([])
   const [selectedCustomer,setSelectedCustomer]= useState<CustomerProfile | null>(null)
-  const [walkin,          setWalkin]          = useState<WalkInCustomer>({ name: '', email: '', phone: '', address: '' })
+  const [walkin,          setWalkin]          = useState<WalkInCustomer>({ name: '', email: '', phone: '', address: '', pincode: '' })
   const [searchingCust,   setSearchingCust]   = useState(false)
   const [productSearch,   setProductSearch]   = useState('')
   const [productResults,  setProductResults]  = useState<ProductResult[]>([])
@@ -187,7 +187,7 @@ export default function AddOrder() {
 
   const buildShippingAddress = () => {
     const isWalkin = mode === 'walkin'
-    if (isWalkin && walkin.address) return { name: walkin.name, phone: walkin.phone, address: walkin.address, city: '', state: '', pincode: '' }
+    if (isWalkin) return { name: walkin.name, phone: walkin.phone, address: walkin.address, city: '', state: '', pincode: walkin.pincode.trim() }
     if (!isWalkin && selectedCustomer?.address) return { name: selectedCustomer.name ?? '', phone: selectedCustomer.phone ?? '', address: selectedCustomer.address, city: '', state: '', pincode: '' }
     return null
   }
@@ -302,6 +302,7 @@ export default function AddOrder() {
       } catch { /* email non-critical */ }
 
       qc.invalidateQueries({ queryKey: ['orders'] })
+      qc.invalidateQueries({ queryKey: ['analytics'] })
       navigate('/orders')
     } catch (e) { setModalError(e instanceof Error ? e.message : 'Something went wrong') }
     finally { setSaving(false) }
@@ -373,10 +374,12 @@ export default function AddOrder() {
                 { field: 'phone' as const, label: 'Phone', placeholder: '+91 XXXXX XXXXX' },
                 { field: 'email' as const, label: 'Email', placeholder: 'customer@email.com' },
                 { field: 'address' as const, label: 'Address', placeholder: 'Full address' },
+                { field: 'pincode' as const, label: 'Pincode', placeholder: 'Postal code' },
               ]).map(({ field, label, placeholder }) => (
                 <div key={field}>
                   <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
-                  <input type="text" value={walkin[field]} onChange={e => setWalkin(w => ({ ...w, [field]: e.target.value }))}
+                  <input type="text" value={walkin[field]} autoComplete={field === 'pincode' ? 'postal-code' : undefined}
+                    inputMode={field === 'pincode' ? 'numeric' : undefined} onChange={e => setWalkin(w => ({ ...w, [field]: e.target.value }))}
                     placeholder={placeholder}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
                 </div>

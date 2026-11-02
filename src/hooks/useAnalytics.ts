@@ -45,7 +45,7 @@ export function aggregateOrders(
   type CustAcc = { name: string; email: string; orders: number; spent: number; lastTs: number }
   const customerMap = new Map<string, CustAcc>()
 
-  for (const order of orders) {
+  for (const [orderIndex, order] of orders.entries()) {
     const status = order.status ?? 'pending'
 
     // Status breakdown
@@ -75,20 +75,29 @@ export function aggregateOrders(
     else prepaidOrders++
 
     // Customer deduplication
-    const customerId: string = order.user_id ? `uid:${order.user_id}` : `email:${(order.guest_email ?? '').toLowerCase()}`
-    if (customerId && customerId !== 'uid:null' && customerId !== 'email:') {
+    const orderTs: number = order.created_at?.toMillis?.() ?? Date.now()
+    const email = String(order.guest_email ?? order.customer_email ?? '').trim().toLowerCase()
+    const phone = String(order.guest_phone ?? order.shipping_address?.phone ?? '').replace(/[^\d+]/g, '')
+    const name = order.customer_name ?? order.guest_name ?? order.shipping_address?.name ?? ''
+    const customerId: string = order.user_id
+      ? `uid:${order.user_id}`
+      : email
+        ? `email:${email}`
+        : phone
+          ? `phone:${phone}`
+          : name.trim()
+            ? `order:${order.id ?? order.order_number ?? orderIndex}`
+            : ''
+    if (customerId) {
       customerSet.add(customerId)
-      const orderTs: number = order.created_at?.toMillis?.() ?? Date.now()
       const existing = firstOrderMap.get(customerId)
       if (existing === undefined || orderTs < existing) {
         firstOrderMap.set(customerId, orderTs)
       }
       // Build customer detail
-      const name  = order.customer_name  ?? order.shipping_address?.name ?? 'Guest'
-      const email = order.guest_email    ?? order.customer_email          ?? ''
-      const acc   = customerMap.get(customerId) ?? { name, email, orders: 0, spent: 0, lastTs: 0 }
+      const acc = customerMap.get(customerId) ?? { name: name || 'Guest', email, orders: 0, spent: 0, lastTs: 0 }
       acc.orders++
-      acc.spent   += total
+      acc.spent += total
       if (orderTs > acc.lastTs) { acc.lastTs = orderTs; acc.name = name || acc.name; acc.email = email || acc.email }
       customerMap.set(customerId, acc)
     }
