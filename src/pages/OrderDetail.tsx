@@ -6,7 +6,7 @@ import {
 } from '@/lib/firebase'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { isOrderPaid } from '@/hooks/useOrders'
-import type { Order, Invoice, OrderItem } from '@/types'
+import type { Order, Invoice, OrderItem, ShippingAddress } from '@/types'
 import { sendOrderStatusEmail, type OrderForEmail } from '@/lib/emailService'
 import {
   ChevronLeft, ChevronRight, User, MapPin, Phone, Mail,
@@ -18,6 +18,29 @@ import {
 function customerName(o: Order)  { return o.guest_name?.trim()  || o.shipping_address?.name?.trim()  || '—' }
 function customerPhone(o: Order) { return o.guest_phone?.trim() || o.shipping_address?.phone?.trim() || '—' }
 function customerEmail(o: Order) { return o.customer_email?.trim() || o.guest_email?.trim() || '—' }
+
+function escapeHtml(value: string | null | undefined): string {
+  return (value ?? '').replace(/[&<>"']/g, char => {
+    switch (char) {
+      case '&': return '&amp;'
+      case '<': return '&lt;'
+      case '>': return '&gt;'
+      case '"': return '&quot;'
+      case "'": return '&#39;'
+      default: return char
+    }
+  })
+}
+
+function invoiceAddressLines(address: ShippingAddress): string {
+  const location = [address.city, address.state].filter(Boolean).map(escapeHtml).join(', ')
+  const pincode = escapeHtml(address.pincode)
+  return [
+    escapeHtml(address.name),
+    escapeHtml(address.address),
+    location ? `${location}${pincode ? ` - ${pincode}` : ''}` : pincode,
+  ].filter(Boolean).join('<br/>')
+}
 
 const STATUS_DOT: Record<string, string> = {
   confirmed: 'bg-gray-400', processing: 'bg-blue-500',
@@ -636,6 +659,9 @@ function downloadInvoicePdf(invoice: Invoice, order: Order) {
   const invDate   = new Date(invoice.invoice_date || invoice.created_at || Date.now())
     .toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
   const ordDate   = new Date(order.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
+  const billingAddr = typeof order.billing_address === 'object' && order.billing_address
+    ? order.billing_address
+    : addr
 
   const couponCode = order.coupon_code?.trim() || null
   const savedCouponDiscount = Number(order.coupon_discount)
@@ -675,10 +701,13 @@ td{padding:7px 9px;border:1px solid #ddd;}
 <hr/>
 <div class="addr">
   <div class="addr-col"><h4 style="font-size:10px;font-weight:bold;margin-bottom:4px;text-transform:uppercase;">Shipping Address</h4>
-    ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state} - ${addr.pincode}<br/>Phone: ${addr.phone}` : custName}
+    ${addr ? `${invoiceAddressLines(addr)}<br/>Phone: ${escapeHtml(addr.phone)}` : custName}
   </div>
   <div class="addr-col"><h4 style="font-size:10px;font-weight:bold;margin-bottom:4px;text-transform:uppercase;">Billing Address</h4>
-    ${addr ? `${addr.name}<br/>${addr.address}<br/>${addr.city}, ${addr.state} - ${addr.pincode}` : custName}
+    ${typeof order.billing_address === 'string'
+      ? escapeHtml(order.billing_address)
+      : billingAddr ? invoiceAddressLines(billingAddr)
+      : custName}
   </div>
   <div style="text-align:right;font-size:11px;line-height:1.8;"><strong>Order Date:</strong> ${ordDate}<br/><strong>Order No:</strong> ${(order.order_number ?? '').replace('#','')}<br/><strong>Email:</strong> ${custEmail}</div>
 </div>
@@ -827,6 +856,9 @@ export default function OrderDetail() {
   )
 
   const addr = order.shipping_address
+  const billingAddr = typeof order.billing_address === 'object' && order.billing_address
+    ? order.billing_address
+    : typeof order.billing_address === 'string' ? null : addr
   const paid = isOrderPaid(order)
   const customerShippingCharge = order.customer_shipping_charge ?? order.shipping_charge
   const couponCode = order.coupon_code?.trim() || null
@@ -908,16 +940,28 @@ export default function OrderDetail() {
               <div className="flex items-center gap-2"><Phone  size={14} className="text-gray-400" /><span>{customerPhone(order)}</span></div>
             </div>
           </div>
-          {(['Billing Address', 'Shipping Address'] as const).map(title => (
+          {([
+            { title: 'Billing Address', address: billingAddr, addressText: typeof order.billing_address === 'string' ? order.billing_address : null },
+            { title: 'Shipping Address', address: addr, addressText: null },
+          ] as const).map(({ title, address, addressText }) => (
             <div key={title} className="bg-white rounded-xl border border-gray-200 p-5">
               <h2 className="font-semibold text-gray-900 text-sm mb-4">{title}</h2>
-              {addr ? (
+              {address || addressText ? (
                 <div className="space-y-2 text-sm text-gray-700">
-                  <div className="flex items-center gap-2"><User   size={14} className="text-gray-400" /><span>{addr.name}</span></div>
-                  <div className="flex items-start gap-2"><MapPin size={14} className="text-gray-400 shrink-0 mt-0.5" />
-                    <address className="not-italic leading-relaxed">{addr.address}<br />{addr.city}{addr.state ? `, ${addr.state}` : ''} — {addr.pincode}</address>
-                  </div>
-                  <div className="flex items-center gap-2"><Phone size={14} className="text-gray-400" /><span>{addr.phone}</span></div>
+                  {address ? (
+                    <>
+                      <div className="flex items-center gap-2"><User size={14} className="text-gray-400" /><span>{address.name}</span></div>
+                      <div className="flex items-start gap-2"><MapPin size={14} className="text-gray-400 shrink-0 mt-0.5" />
+                        <address className="not-italic leading-relaxed">
+                          {address.address && <>{address.address}<br /></>}
+                          {[address.city, address.state].filter(Boolean).join(', ')}
+                          {(address.city || address.state) && address.pincode && ' — '}
+                          {address.pincode}
+                        </address>
+                      </div>
+                      {address.phone && <div className="flex items-center gap-2"><Phone size={14} className="text-gray-400" /><span>{address.phone}</span></div>}
+                    </>
+                  ) : <p className="whitespace-pre-line">{addressText}</p>}
                 </div>
               ) : <p className="text-sm text-gray-400">No address on record</p>}
             </div>

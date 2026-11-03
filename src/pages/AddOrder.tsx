@@ -10,12 +10,76 @@ import { formatCurrency } from '@/lib/utils'
 import { sendOrderStatusEmail, type OrderForEmail } from '@/lib/emailService'
 import { User, Mail, Phone, MapPin, X, Plus, Minus, Loader2, ChevronLeft } from 'lucide-react'
 
-interface CustomerProfile { user_id: string; name: string | null; email: string | null; phone: string | null; address: string | null }
+interface CustomerAddress { name: string; phone: string; address: string; city: string; state: string; pincode: string }
+interface CustomerProfile {
+  user_id: string
+  name: string | null
+  email: string | null
+  phone: string | null
+  billingAddress: CustomerAddress | null
+  shippingAddress: CustomerAddress | null
+}
 interface WalkInCustomer  { name: string; email: string; phone: string; address: string; pincode: string }
 interface ProductResult   { id: string; name: string; price: number; compare_at_price: number | null; images: string[]; inventory_count: number | null }
 interface OrderItem       { product_id: string; name: string; price: number; compare_at_price: number | null; quantity: number; image: string | null }
 type CustomerMode   = 'customer' | 'walkin'
 type SaveAsWorkflow = 'order_only' | 'order_processing' | 'order_processing_invoice' | 'order_processing_invoice_delivered'
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  }
+  return ''
+}
+
+function normalizeCustomerAddress(raw: unknown, fallback: CustomerAddress): CustomerAddress | null {
+  const address = typeof raw === 'string' ? raw.trim() : ''
+  const value = record(raw)
+  const normalized: CustomerAddress = {
+    name: firstString(value.name, value.customer_name, value.full_name, fallback.name),
+    phone: firstString(value.phone, value.mobile, value.contact_number, fallback.phone),
+    address: firstString(address, value.address, value.line1, value.address1, value.street, value.street_address, fallback.address),
+    city: firstString(value.city, value.customer_city, value.town, fallback.city),
+    state: firstString(value.state, value.customer_state, value.region, fallback.state),
+    pincode: firstString(value.pincode, value.pin_code, value.postal_code, value.zip, value.customer_pincode, value.shipping_pin_code, fallback.pincode),
+  }
+  return normalized.address || normalized.city || normalized.state || normalized.pincode ? normalized : null
+}
+
+function customerProfileFromData(userId: string, data: Record<string, unknown>): CustomerProfile {
+  const fallback: CustomerAddress = {
+    name: firstString(data.name, data.full_name, data.display_name),
+    phone: firstString(data.phone, data.phone_number, data.mobile),
+    address: firstString(data.address, data.line1, data.address1, data.street, data.street_address),
+    city: firstString(data.city, data.customer_city, data.town),
+    state: firstString(data.state, data.customer_state, data.region),
+    pincode: firstString(data.pincode, data.pin_code, data.postal_code, data.zip, data.shipping_pincode, data.shipping_pin_code),
+  }
+  const shippingAddress = normalizeCustomerAddress(
+    data.shipping_address ?? data.shippingAddress ?? data.address,
+    fallback,
+  )
+  const billingAddress = normalizeCustomerAddress(
+    data.billing_address ?? data.billingAddress,
+    fallback,
+  ) ?? shippingAddress
+
+  return {
+    user_id: userId,
+    name: firstString(data.name, data.full_name, data.display_name) || null,
+    email: firstString(data.email) || null,
+    phone: firstString(data.phone, data.phone_number, data.mobile) || null,
+    billingAddress,
+    shippingAddress,
+  }
+}
 
 const SAVE_AS_OPTIONS: { value: SaveAsWorkflow; label: string }[] = [
   { value: 'order_only',                         label: 'Order' },
@@ -143,7 +207,7 @@ export default function AddOrder() {
       const q = customerSearch.toLowerCase()
       const snap = await getDocs(collection(db, 'user_profiles'))
       const results = snap.docs
-        .map(d => ({ user_id: d.id, ...d.data() } as CustomerProfile))
+        .map(d => customerProfileFromData(d.id, d.data()))
         .filter(c => (c.name ?? '').toLowerCase().includes(q) || (c.email ?? '').toLowerCase().includes(q) || (c.phone ?? '').toLowerCase().includes(q))
         .slice(0, 8)
       setCustomerResults(results); setSearchingCust(false)
@@ -188,8 +252,12 @@ export default function AddOrder() {
   const buildShippingAddress = () => {
     const isWalkin = mode === 'walkin'
     if (isWalkin) return { name: walkin.name, phone: walkin.phone, address: walkin.address, city: '', state: '', pincode: walkin.pincode.trim() }
-    if (!isWalkin && selectedCustomer?.address) return { name: selectedCustomer.name ?? '', phone: selectedCustomer.phone ?? '', address: selectedCustomer.address, city: '', state: '', pincode: '' }
-    return null
+    return selectedCustomer?.shippingAddress ?? null
+  }
+
+  const buildBillingAddress = () => {
+    if (mode === 'walkin') return buildShippingAddress()
+    return selectedCustomer?.billingAddress ?? selectedCustomer?.shippingAddress ?? null
   }
 
   const handleSaveAsOrderClick = () => {
@@ -207,6 +275,7 @@ export default function AddOrder() {
       const guestPhone  = isWalkin ? walkin.phone : (selectedCustomer?.phone ?? null)
       const userId      = isWalkin ? null : (selectedCustomer?.user_id ?? null)
       const shippingAddr = buildShippingAddress()
+      const billingAddr = buildBillingAddress()
       const order_number = await nextOrderNumber()
       const now = Timestamp.now()
 
@@ -220,6 +289,7 @@ export default function AddOrder() {
         subtotal, shipping_charge: shipping, total,
         note: [notes.trim(), opts.transactionNote.trim()].filter(Boolean).join(' | ') || null,
         shipping_address: shippingAddr,
+        billing_address: billingAddr,
         items: items.map(i => ({ product_id: i.product_id, name: i.name, price: i.price, quantity: i.quantity, image: i.image })),
         confirmed_at: now, created_at: now, updated_at: now,
       })
@@ -398,11 +468,21 @@ export default function AddOrder() {
                 {selectedCustomer.email && <div className="flex items-center gap-2 text-sm"><Mail size={13} className="text-gray-400" /><span>{selectedCustomer.email}</span></div>}
                 {selectedCustomer.phone && <div className="flex items-center gap-2 text-sm"><Phone size={13} className="text-gray-400" /><span>{selectedCustomer.phone}</span></div>}
               </div>
-              {['Billing Address', 'Shipping Address'].map(title => (
+              {[
+                { title: 'Billing Address', address: selectedCustomer.billingAddress },
+                { title: 'Shipping Address', address: selectedCustomer.shippingAddress },
+              ].map(({ title, address }) => (
                 <div key={title} className="bg-gray-50 rounded-xl p-4 space-y-2">
                   <p className="text-xs font-semibold text-gray-500 uppercase mb-1">{title}</p>
-                  {selectedCustomer.address
-                    ? <div className="flex items-start gap-2 text-sm"><MapPin size={13} className="text-gray-400 mt-0.5 shrink-0" /><span className="text-gray-600">{selectedCustomer.address}</span></div>
+                  {address
+                    ? <div className="flex items-start gap-2 text-sm"><MapPin size={13} className="text-gray-400 mt-0.5 shrink-0" />
+                      <address className="not-italic text-gray-600 leading-relaxed">
+                        {address.address && <>{address.address}<br /></>}
+                        {[address.city, address.state].filter(Boolean).join(', ')}
+                        {(address.city || address.state) && address.pincode && ' - '}
+                        {address.pincode}
+                      </address>
+                    </div>
                     : <p className="text-xs text-gray-400">No address on file</p>}
                 </div>
               ))}
