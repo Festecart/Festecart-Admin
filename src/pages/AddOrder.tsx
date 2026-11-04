@@ -245,9 +245,10 @@ export default function AddOrder() {
   const subtotalOrig = items.reduce((s, i) => s + (i.compare_at_price ?? i.price) * i.quantity, 0)
   const subtotal     = items.reduce((s, i) => s + i.price * i.quantity, 0)
   const itemDiscount = subtotalOrig - subtotal
-  const addDiscount  = parseFloat(additionalDiscount) || 0
+  const addDiscount  = Math.max(0, parseFloat(additionalDiscount) || 0)
+  const discountAmount = Math.min(addDiscount, subtotal)
   const shipping     = parseFloat(shippingCharge) || 0
-  const total        = Math.max(0, subtotal - addDiscount + shipping)
+  const total        = Math.max(0, subtotal - discountAmount + shipping)
 
   const buildShippingAddress = () => {
     const isWalkin = mode === 'walkin'
@@ -286,7 +287,7 @@ export default function AddOrder() {
         whatsapp_opt_in: opts.whatsappOptIn,
         payment_status: opts.markAsPaid ? 'paid' : 'pending',
         paid_at: opts.markAsPaid ? now : null,
-        subtotal, shipping_charge: shipping, total,
+        subtotal, shipping_charge: shipping, discount_amount: discountAmount, total,
         note: [notes.trim(), opts.transactionNote.trim()].filter(Boolean).join(' | ') || null,
         shipping_address: shippingAddr,
         billing_address: billingAddr,
@@ -360,6 +361,7 @@ export default function AddOrder() {
               items:            freshOrder.items ?? [],
               subtotal:         freshOrder.subtotal,
               shipping_charge:  freshOrder.shipping_charge,
+              discount_amount:  freshOrder.discount_amount ?? 0,
               total:            freshOrder.total,
               payment_method:   freshOrder.payment_method,
               tracking_number:  freshOrder.tracking_number ?? null,

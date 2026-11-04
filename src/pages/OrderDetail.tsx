@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  db, doc, getDoc, updateDoc, collection, addDoc, getDocs, query, where, orderBy, Timestamp,
+  db, doc, getDoc, updateDoc, collection, addDoc, getDocs, query, where, orderBy, Timestamp, runTransaction,
 } from '@/lib/firebase'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { isOrderPaid } from '@/hooks/useOrders'
 import type { Order, Invoice, OrderItem, ShippingAddress } from '@/types'
-import { sendOrderStatusEmail, type OrderForEmail } from '@/lib/emailService'
+import { sendOrderStatusEmail, sendOrderUpdatedInvoiceEmail, type OrderForEmail } from '@/lib/emailService'
 import {
   ChevronLeft, ChevronRight, User, MapPin, Phone, Mail,
   Package, AlertTriangle, Loader2, IndianRupee, FileText,
@@ -94,9 +94,13 @@ function toOrder(id: string, data: Record<string, unknown>): Order {
     note:                (data.note as string | null) ?? null,
     coupon_code:         (data.coupon_code as string | null) ?? null,
     coupon_discount:     (data.coupon_discount as number | null) ?? null,
+    discount_amount:     data.discount_amount == null ? null : Number(data.discount_amount),
     billing_address:     (data.billing_address as Order['billing_address']) ?? null,
     shipping_address:    (data.shipping_address as Order['shipping_address']) ?? null,
     items:               (data.items as Order['items']) ?? [],
+    cancelled_items:     (data.cancelled_items as Order['cancelled_items']) ?? [],
+    invoice_email_status:(data.invoice_email_status as Order['invoice_email_status']) ?? undefined,
+    invoice_email_sent_at: tsToStr(data.invoice_email_sent_at),
     tracking_number:     (data.tracking_number as string | null) ?? null,
     courier_name:        (data.courier_name as string | null) ?? null,
     confirmed_at:        tsToStr(data.confirmed_at),
@@ -156,6 +160,105 @@ function ConfirmModal({ title, message, onClose, onConfirm, loading }: {
           className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {loading && <Loader2 size={13} className="animate-spin" />} Confirm
         </button>
+      </div>
+    </Modal>
+  )
+}
+
+function canCancelItem(item: OrderItem, invoices: Invoice[]): boolean {
+  return !invoices.some(invoice =>
+    invoice.status !== 'cancelled' &&
+    invoice.invoice_items?.some(invoiceItem => invoiceItem.product_id === item.product_id && invoiceItem.fulfilled_qty > 0) &&
+    (invoice.status !== 'pending_shipment' || Boolean(invoice.sent_at))
+  )
+}
+
+function emailOrderSnapshot(order: Order): OrderForEmail {
+  const emailItems = (items: OrderItem[]) => items.map(item => ({
+    name: item.name,
+    price: item.price,
+    quantity: item.quantity,
+    image: item.image,
+  }))
+  return {
+    id: order.id,
+    order_number: order.order_number,
+    user_id: order.user_id,
+    customer_email: order.customer_email,
+    guest_email: order.guest_email,
+    guest_name: order.guest_name,
+    guest_phone: order.guest_phone,
+    shipping_address: order.shipping_address,
+    billing_address: order.billing_address,
+    items: emailItems(order.items),
+    cancelled_items: emailItems(order.cancelled_items ?? []),
+    subtotal: order.subtotal,
+    shipping_charge: order.shipping_charge,
+    coupon_code: order.coupon_code,
+    coupon_discount: order.coupon_discount,
+    discount_amount: order.discount_amount,
+    total: order.total,
+    payment_method: order.payment_method,
+    tracking_number: order.tracking_number,
+    courier_name: order.courier_name,
+  }
+}
+
+function CancelItemsModal({ order, invoices, onClose, onConfirm, loading }: {
+  order: Order
+  invoices: Invoice[]
+  onClose: () => void
+  onConfirm: (productIds: string[]) => void
+  loading: boolean
+}) {
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const eligibleItems = order.items.filter(item => canCancelItem(item, invoices))
+  const selectedIds = eligibleItems.filter(item => selected[item.product_id]).map(item => item.product_id)
+  const allSelected = eligibleItems.length > 0 && selectedIds.length === eligibleItems.length
+
+  const toggleAll = (checked: boolean) => {
+    setSelected(Object.fromEntries(eligibleItems.map(item => [item.product_id, checked])))
+  }
+
+  return (
+    <Modal title="Cancel Products" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          Select the products to cancel. Their quantities and the order total will be updated; the order number will stay the same.
+        </p>
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+          This updates the order and invoice totals but does not automatically refund a payment.
+        </p>
+        {eligibleItems.length > 0 && (
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <input type="checkbox" checked={allSelected} onChange={e => toggleAll(e.target.checked)} />
+            Select all cancellable products
+          </label>
+        )}
+        <div className="space-y-2 max-h-72 overflow-y-auto">
+          {order.items.map(item => {
+            const eligible = canCancelItem(item, invoices)
+            return (
+              <label key={item.product_id} className={`flex items-center gap-3 border rounded-lg p-3 ${eligible ? 'border-gray-200 cursor-pointer' : 'border-gray-100 bg-gray-50'}`}>
+                <input type="checkbox" checked={eligible && !!selected[item.product_id]} disabled={!eligible}
+                  onChange={e => setSelected(current => ({ ...current, [item.product_id]: e.target.checked }))} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium text-gray-900">{item.name}</span>
+                  <span className="block text-xs text-gray-500">Qty: {item.quantity} · {formatCurrency(item.price * item.quantity)}</span>
+                  {!eligible && <span className="block text-xs text-amber-700 mt-1">Already shipped or fulfilled; this product cannot be cancelled.</span>}
+                </span>
+              </label>
+            )
+          })}
+          {order.items.length === 0 && <p className="text-sm text-gray-500">There are no active products to cancel.</p>}
+        </div>
+        <div className="flex gap-3 justify-end">
+          <button onClick={onClose} disabled={loading} className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Close</button>
+          <button onClick={() => onConfirm(selectedIds)} disabled={loading || selectedIds.length === 0}
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+            {loading && <Loader2 size={13} className="animate-spin" />} Cancel Selected
+          </button>
+        </div>
       </div>
     </Modal>
   )
@@ -292,7 +395,7 @@ function GenerateInvoiceModal({ order, invoices, onClose, onSuccess }: {
   const items = order.items ?? []
 
   const fulfilledQty = (productId: string) =>
-    invoices.flatMap(inv => inv.invoice_items ?? [])
+    invoices.filter(inv => inv.status !== 'cancelled').flatMap(inv => inv.invoice_items ?? [])
       .filter(ii => ii.product_id === productId)
       .reduce((s, ii) => s + ii.fulfilled_qty, 0)
 
@@ -819,7 +922,7 @@ export default function OrderDetail() {
   const qc = useQueryClient()
 
   const { data: order, isLoading, error } = useOrderData(id!)
-  const { data: invoices = [] } = useInvoices(id!)
+  const { data: invoices = [], isLoading: invoicesLoading, error: invoicesError } = useInvoices(id!)
   const { data: history  = [] } = useOrderHistory(id!)
 
   const [modal,       setModal]       = useState<string | null>(null)
@@ -832,14 +935,209 @@ export default function OrderDetail() {
     try {
       await updateDoc(doc(db, 'orders', order.id), { ...updates, updated_at: Timestamp.now() })
       await logHistory(order.id, action, order.status, newStatus ?? null)
-      // Admin status updates (processing, cancel, markpaid, etc.) are NOT new orders.
-      // No order-creation email is sent here. Email is only sent once on order creation.
+      // Administrative order updates are not new orders and do not send confirmation emails.
       qc.invalidateQueries({ queryKey: ['orders', order.id] })
       qc.invalidateQueries({ queryKey: ['orders'] })
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Update failed')
     } finally {
       setBusy(false); setModal(null)
+    }
+  }
+
+  const cancelSelectedItems = async (productIds: string[]) => {
+    if (!order) return
+    const selectedIds = new Set(productIds)
+    const selectedItems = order.items.filter(item => selectedIds.has(item.product_id))
+    if (selectedItems.length === 0) {
+      setActionError('Select at least one product to cancel.')
+      return
+    }
+    if (selectedItems.some(item => !canCancelItem(item, invoices))) {
+      setActionError('A selected product has already shipped or been fulfilled. Refresh the order and try again.')
+      return
+    }
+
+    setBusy(true)
+    setActionError(null)
+    const cancelledAt = Timestamp.now()
+    try {
+      const orderRef = doc(db, 'orders', order.id)
+      const invoiceRefs = invoices.map(invoice => doc(db, 'invoices', invoice.id))
+      const productIdsToRestore = [...new Set(selectedItems.map(item => item.product_id))]
+      const productRefs = productIdsToRestore.map(productId => doc(db, 'products', productId))
+      const historyRef = doc(collection(db, 'order_status_history'))
+      const updatedOrder = await runTransaction(db, async transaction => {
+        const orderSnap = await transaction.get(orderRef)
+        if (!orderSnap.exists()) throw new Error('Order no longer exists.')
+        const invoiceSnaps = await Promise.all(invoiceRefs.map(ref => transaction.get(ref)))
+        const productSnaps = await Promise.all(productRefs.map(ref => transaction.get(ref)))
+        const currentOrder = toOrder(orderSnap.id, orderSnap.data() as Record<string, unknown>)
+        const currentSelectedItems = currentOrder.items.filter(item => selectedIds.has(item.product_id))
+        if (currentSelectedItems.length === 0 || productIdsToRestore.some(productId =>
+          !currentSelectedItems.some(item => item.product_id === productId)
+        )) {
+          throw new Error('The order changed while you were cancelling products. Refresh and try again.')
+        }
+
+        const currentInvoices = invoiceSnaps
+          .filter(snapshot => snapshot.exists())
+          .map(snapshot => toInvoice(snapshot.id, snapshot.data() as Record<string, unknown>))
+        if (currentSelectedItems.some(item => !canCancelItem(item, currentInvoices))) {
+          throw new Error('A selected product has shipped or been fulfilled and can no longer be cancelled.')
+        }
+
+        const remainingItems = currentOrder.items.filter(item => !selectedIds.has(item.product_id))
+        const cancelledItems = [...(currentOrder.cancelled_items ?? []), ...currentSelectedItems]
+        const activeSubtotal = remainingItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
+        const currentItemSubtotal = currentOrder.items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+        const currentSubtotal = Number.isFinite(currentOrder.subtotal) ? currentOrder.subtotal : currentItemSubtotal
+        const shippingCharge = remainingItems.length ? currentOrder.shipping_charge : 0
+        const totalDiscount = Math.max(0, currentSubtotal + currentOrder.shipping_charge - currentOrder.total)
+        const savedCouponDiscount = currentOrder.coupon_discount == null
+          ? (currentOrder.coupon_code ? totalDiscount : 0)
+          : Math.min(totalDiscount, Math.max(0, currentOrder.coupon_discount))
+        const otherDiscount = Math.max(0, totalDiscount - savedCouponDiscount)
+        const remainingRatio = currentSubtotal > 0 ? Math.min(1, activeSubtotal / currentSubtotal) : 0
+        const couponDiscount = Math.round(savedCouponDiscount * remainingRatio * 100) / 100
+        const proratedOtherDiscount = Math.round(otherDiscount * remainingRatio * 100) / 100
+        const total = Math.max(0, activeSubtotal + shippingCharge - couponDiscount - proratedOtherDiscount)
+        const newStatus = remainingItems.length ? currentOrder.status : 'cancelled'
+        const updates: Record<string, unknown> = {
+          items: remainingItems,
+          cancelled_items: cancelledItems,
+          subtotal: activeSubtotal,
+          shipping_charge: shippingCharge,
+          customer_shipping_charge: remainingItems.length ? currentOrder.customer_shipping_charge : 0,
+          total,
+          coupon_discount: currentOrder.coupon_code ? couponDiscount : currentOrder.coupon_discount ?? null,
+          discount_amount: proratedOtherDiscount,
+          status: newStatus,
+          invoice_email_status: 'pending',
+          invoice_email_sent_at: null,
+          updated_at: cancelledAt,
+          ...(remainingItems.length ? {} : { cancelled_at: cancelledAt, fulfillment_status: 'cancelled' }),
+        }
+
+        transaction.update(orderRef, updates)
+        invoiceSnaps.forEach(snapshot => {
+          if (!snapshot.exists()) return
+          const invoice = toInvoice(snapshot.id, snapshot.data() as Record<string, unknown>)
+          if (invoice.status !== 'pending_shipment') return
+          const invoiceItems = invoice.invoice_items ?? []
+          if (!invoiceItems.some(item => selectedIds.has(item.product_id))) return
+          const remainingInvoiceItems = invoiceItems.filter(item => !selectedIds.has(item.product_id))
+          transaction.update(snapshot.ref, {
+            invoice_items: remainingInvoiceItems,
+            ...(remainingInvoiceItems.length ? {} : { status: 'cancelled' }),
+            updated_at: cancelledAt,
+          })
+        })
+        productSnaps.forEach((snapshot, index) => {
+          if (!snapshot.exists()) return
+          const inventoryCount: unknown = snapshot.data().inventory_count
+          if (typeof inventoryCount !== 'number' || !Number.isFinite(inventoryCount)) return
+          const quantity = currentSelectedItems
+            .filter(item => item.product_id === productIdsToRestore[index])
+            .reduce((sum, item) => sum + item.quantity, 0)
+          transaction.update(snapshot.ref, { inventory_count: inventoryCount + quantity })
+        })
+        transaction.set(historyRef, {
+          order_id: order.id,
+          action: 'Products Cancelled',
+          old_status: currentOrder.status,
+          new_status: newStatus,
+          remarks: currentSelectedItems.map(item => `${item.name} × ${item.quantity}`).join(', '),
+          created_at: cancelledAt,
+        })
+
+        return {
+          ...currentOrder,
+          items: remainingItems,
+          cancelled_items: cancelledItems,
+          subtotal: activeSubtotal,
+          shipping_charge: shippingCharge,
+          customer_shipping_charge: remainingItems.length ? currentOrder.customer_shipping_charge : 0,
+          total,
+          coupon_discount: currentOrder.coupon_code ? couponDiscount : currentOrder.coupon_discount ?? null,
+          discount_amount: proratedOtherDiscount,
+          status: newStatus as Order['status'],
+          cancelled_at: remainingItems.length ? currentOrder.cancelled_at : cancelledAt.toDate().toISOString(),
+          invoice_email_status: 'pending' as const,
+          invoice_email_sent_at: null,
+          updated_at: cancelledAt.toDate().toISOString(),
+        }
+      })
+
+      setModal(null)
+      qc.invalidateQueries({ queryKey: ['orders', order.id] })
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      qc.invalidateQueries({ queryKey: ['invoices', order.id] })
+      qc.invalidateQueries({ queryKey: ['analytics'] })
+
+      try {
+        await sendOrderUpdatedInvoiceEmail(emailOrderSnapshot(updatedOrder))
+      } catch (emailError) {
+        setActionError(`Products were cancelled, but the updated invoice email could not be sent: ${emailError instanceof Error ? emailError.message : 'Email delivery failed'}. Use “Resend Updated Invoice” to retry.`)
+        return
+      }
+
+      const sentAt = Timestamp.now()
+      try {
+        await updateDoc(doc(db, 'orders', order.id), {
+          invoice_email_status: 'sent',
+          invoice_email_sent_at: sentAt,
+          updated_at: sentAt,
+        })
+      } catch (recordError) {
+        setActionError(`The updated invoice was emailed, but its delivery status could not be saved: ${recordError instanceof Error ? recordError.message : 'Database update failed'}. Refresh before retrying.`)
+        return
+      }
+      qc.invalidateQueries({ queryKey: ['orders', order.id] })
+      try {
+        await logHistory(order.id, 'Updated Invoice Emailed', updatedOrder.status, updatedOrder.status, `Updated invoice sent for order ${order.order_number}`)
+      } catch (historyError) {
+        setActionError(`The updated invoice was sent, but the audit entry could not be saved: ${historyError instanceof Error ? historyError.message : 'History update failed'}.`)
+      }
+    } catch (e) {
+      setModal(null)
+      setActionError(e instanceof Error ? e.message : 'Could not cancel the selected products.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const resendUpdatedInvoice = async () => {
+    if (!order) return
+    setBusy(true)
+    setActionError(null)
+    let emailSent = false
+    try {
+      const currentSnap = await getDoc(doc(db, 'orders', order.id))
+      if (!currentSnap.exists()) throw new Error('Order no longer exists.')
+      const currentOrder = toOrder(currentSnap.id, currentSnap.data() as Record<string, unknown>)
+      if (!currentOrder.cancelled_items?.length) throw new Error('There is no cancelled-product invoice to resend.')
+      await sendOrderUpdatedInvoiceEmail(emailOrderSnapshot(currentOrder))
+      emailSent = true
+      const sentAt = Timestamp.now()
+      await updateDoc(doc(db, 'orders', order.id), {
+        invoice_email_status: 'sent',
+        invoice_email_sent_at: sentAt,
+        updated_at: sentAt,
+      })
+      qc.invalidateQueries({ queryKey: ['orders', order.id] })
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      try {
+        await logHistory(order.id, 'Updated Invoice Emailed', currentOrder.status, currentOrder.status, `Updated invoice resent for order ${currentOrder.order_number}`)
+      } catch (historyError) {
+        setActionError(`The updated invoice was sent, but the audit entry could not be saved: ${historyError instanceof Error ? historyError.message : 'History update failed'}.`)
+      }
+    } catch (e) {
+      setActionError(emailSent
+        ? `The updated invoice was emailed, but its delivery status could not be saved: ${e instanceof Error ? e.message : 'Database update failed'}. Refresh before retrying.`
+        : e instanceof Error ? e.message : 'Could not send the updated invoice email.')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -866,7 +1164,7 @@ export default function OrderDetail() {
   const hasCouponDiscount = Number.isFinite(couponDiscount)
 
   const fulfilledQtyMap: Record<string, number> = {}
-  invoices.forEach(inv => {
+  invoices.filter(inv => inv.status !== 'cancelled').forEach(inv => {
     (inv.invoice_items ?? []).forEach(ii => {
       fulfilledQtyMap[ii.product_id] = (fulfilledQtyMap[ii.product_id] ?? 0) + ii.fulfilled_qty
     })
@@ -929,6 +1227,26 @@ export default function OrderDetail() {
             </span>
           </div>
         </div>
+
+        {actionError && (
+          <p className="text-sm text-red-700 bg-red-50 border border-red-200 px-4 py-3 rounded-lg flex items-start gap-2">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" />{actionError}
+          </p>
+        )}
+        {invoicesError && canCancel && (
+          <p className="text-sm text-red-700 bg-red-50 border border-red-200 px-4 py-3 rounded-lg">
+            Invoice records could not be loaded. Refresh before cancelling products.
+          </p>
+        )}
+        {(order.cancelled_items?.length ?? 0) > 0 && order.invoice_email_status !== 'sent' && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-amber-900">The revised invoice email is pending delivery.</p>
+            <button onClick={resendUpdatedInvoice} disabled={busy}
+              className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-60">
+              {busy && <Loader2 size={13} className="animate-spin" />} Resend Updated Invoice
+            </button>
+          </div>
+        )}
 
         {/* 3-column cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -993,9 +1311,25 @@ export default function OrderDetail() {
                   <td className="px-5 py-4 text-right font-semibold">{formatCurrency(item.price * item.quantity)}</td>
                 </tr>
               ))}
+              {order.items.length === 0 && (
+                <tr><td colSpan={5} className="px-5 py-6 text-center text-sm text-gray-500">All products in this order have been cancelled.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
+        {(order.cancelled_items?.length ?? 0) > 0 && (
+          <div className="bg-white rounded-xl border border-red-100 p-5 space-y-3">
+            <h2 className="font-semibold text-red-800 text-sm">Cancelled Products</h2>
+            <div className="divide-y divide-gray-100">
+              {order.cancelled_items!.map((item, idx) => (
+                <div key={`${item.product_id}-${idx}`} className="flex justify-between gap-4 py-2 text-sm">
+                  <span className="text-gray-700">{item.name} <span className="text-gray-500">× {item.quantity}</span></span>
+                  <span className="text-gray-500 line-through">{formatCurrency(item.price * item.quantity)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Notes + Summary */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -1023,6 +1357,11 @@ export default function OrderDetail() {
                     : '- Nil'}
                 </span>
               </div>
+              {(order.discount_amount ?? 0) > 0 && (
+                <div className="flex justify-between text-green-600">
+                    <span>Additional Discount</span><span>-{formatCurrency(order.discount_amount ?? 0)}</span>
+                </div>
+              )}
               <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-900">
                 <span>Total</span><span>{formatCurrency(order.total)}</span>
               </div>
@@ -1047,16 +1386,11 @@ export default function OrderDetail() {
         {/* Action buttons */}
         {!['cancelled', 'completed'].includes(order.status) && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-            {actionError && (
-              <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg flex items-center gap-2">
-                <AlertTriangle size={13} />{actionError}
-              </p>
-            )}
             <div className="flex flex-wrap items-center gap-3">
               {canCancel && (
-                <button onClick={() => setModal('cancel')}
+                <button onClick={() => setModal('cancel')} disabled={busy || invoicesLoading || Boolean(invoicesError)}
                   className="px-5 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">
-                  Cancel Order
+                  Cancel Products
                 </button>
               )}
               {canMarkProcessing && (
@@ -1104,9 +1438,8 @@ export default function OrderDetail() {
 
       {/* Modals */}
       {modal === 'cancel' && (
-        <ConfirmModal title="Cancel Order" message="Are you sure you want to cancel this order?"
-          onClose={() => setModal(null)} loading={busy}
-          onConfirm={() => doUpdate({ status: 'cancelled', cancelled_at: Timestamp.now() }, 'Order Cancelled', 'cancelled')} />
+        <CancelItemsModal order={order} invoices={invoices} onClose={() => setModal(null)}
+          onConfirm={cancelSelectedItems} loading={busy} />
       )}
       {modal === 'markpaid' && (
         <MarkPaidModal totalPayable={order.total}

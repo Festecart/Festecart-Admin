@@ -49,9 +49,13 @@ export interface Order {
   note: string | null
   coupon_code: string | null
   coupon_discount?: number | null
+  discount_amount?: number | null
   billing_address?: ShippingAddress | string | null
   shipping_address: ShippingAddress | null
   items: OrderItem[]
+  cancelled_items?: OrderItem[]
+  invoice_email_status?: 'pending' | 'sent'
+  invoice_email_sent_at?: string | null
   tracking_number: string | null
   courier_name: string | null
   confirmed_at: string | null

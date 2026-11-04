@@ -38,9 +38,10 @@ function doPost(e) {
     }
 
     const order = payload.order || {};
+    const updateType = payload.updateType || 'confirmed';
     const emails = Array.isArray(payload.emails)
       ? payload.emails
-      : buildConfirmationEmails(order, payload.invoicePdfBase64);
+      : buildConfirmationEmails(order, payload.invoicePdfBase64, updateType);
     if (!emails.length || emails.length > 2) {
       throw new Error('Expected one or two email messages.');
     }
@@ -110,13 +111,14 @@ function sendHtmlEmail(message) {
   MailApp.sendEmail(message.to, message.subject, 'Please view this email in an HTML-compatible email client.', options);
 }
 
-function buildConfirmationEmails(order, invoicePdfBase64) {
+function buildConfirmationEmails(order, invoicePdfBase64, updateType) {
   const orderNumber = order.order_number || '—';
   const orderId = order.id || '';
   const adminLink = orderId ? ADMIN_URL + '/orders/' + orderId : ADMIN_URL + '/orders';
+  const isUpdated = updateType === 'items_cancelled';
   const messages = [{
     to: ADMIN_EMAIL,
-    subject: 'New Order ' + orderNumber + ' — Festecart',
+    subject: (isUpdated ? 'Order Updated ' : 'New Order ') + orderNumber + ' — Festecart',
     html: buildAdminOrderEmail(order, adminLink),
     kind: 'admin',
   }];
@@ -125,13 +127,13 @@ function buildConfirmationEmails(order, invoicePdfBase64) {
   if (customerEmail && customerEmail.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
     const customerMessage = {
       to: customerEmail,
-      subject: 'Order Confirmed — Festecart (#' + orderNumber + ')',
-      html: buildCustomerConfirmationEmail(order),
+      subject: (isUpdated ? 'Updated Invoice — Festecart (Order #' : 'Order Confirmed — Festecart (#') + orderNumber + ')',
+      html: buildCustomerConfirmationEmail(order, isUpdated),
       kind: 'customer',
     };
     if (invoicePdfBase64) {
       customerMessage.attachments = [{
-        filename: 'Invoice-' + orderNumber + '.pdf',
+        filename: (isUpdated ? 'Updated-Invoice-' : 'Invoice-') + orderNumber + '.pdf',
         content: invoicePdfBase64,
         contentType: 'application/pdf',
       }];
@@ -178,6 +180,7 @@ function buildAdminOrderEmail(order, linkHref) {
     : (order.payment_method || '').toUpperCase();
   const couponCode = order.coupon_code || null;
   const couponDiscount = getCouponDiscount(order);
+  const otherDiscount = Math.max(0, Number(order.discount_amount || 0));
   const addrName = (addr && addr.name) || custName;
   const addrStreet = (addr && addr.address) || '';
   const addrCity = (addr && addr.city) || '';
@@ -248,6 +251,10 @@ function buildAdminOrderEmail(order, linkHref) {
       ? '<tr><td colspan="3" style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#16a34a;">Coupon (' + couponCode + ')</td>'
         + '<td style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#16a34a;">-&#8377; ' + couponDiscount.toLocaleString('en-IN') + '</td></tr>'
       : '')
+    + (otherDiscount > 0
+      ? '<tr><td colspan="3" style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#16a34a;">Discount</td>'
+        + '<td style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#16a34a;">-&#8377; ' + otherDiscount.toLocaleString('en-IN') + '</td></tr>'
+      : '')
     + '<tr><td colspan="3" style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#111;">Grand Total</td>'
     + '<td style="padding:10px 8px;text-align:right;border:1px solid #d9d9d9;font-size:13px;font-weight:bold;color:#111;">&#8377;<br/>' + total.toLocaleString('en-IN') + '</td></tr>'
     + '</tbody></table>'
@@ -257,7 +264,7 @@ function buildAdminOrderEmail(order, linkHref) {
     + '</body></html>';
 }
 
-function buildCustomerConfirmationEmail(order) {
+function buildCustomerConfirmationEmail(order, isUpdated) {
   const orderNum = order.order_number || '—';
   const custName = order.guest_name || (order.shipping_address && order.shipping_address.name) || 'Customer';
   const total = Number(order.total || 0);
@@ -271,6 +278,7 @@ function buildCustomerConfirmationEmail(order) {
   const items = order.items || [];
   const couponCode = order.coupon_code || null;
   const couponDiscount = getCouponDiscount(order);
+  const otherDiscount = Math.max(0, Number(order.discount_amount || 0));
   const itemRows = items.map(function(item) {
     const quantity = item.quantity || 1;
     const price = Number(item.price || 0);
@@ -288,8 +296,11 @@ function buildCustomerConfirmationEmail(order) {
       + '<td style="padding:12px 0 12px 16px;border-bottom:1px solid #f0f0f0;text-align:right;vertical-align:middle;font-size:14px;font-weight:600;color:#111;white-space:nowrap;">&#8377; ' + (price * quantity).toLocaleString('en-IN') + '</td>'
       + '</tr>';
   }).join('');
+  const cancelledRows = (order.cancelled_items || []).map(function(item) {
+    return '<li>' + (item.name || 'Product') + ' × ' + Number(item.quantity || 0) + '</li>';
+  }).join('');
 
-  return '<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Order Confirmed</title></head>'
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>' + (isUpdated ? 'Order Updated' : 'Order Confirmed') + '</title></head>'
     + '<body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">'
     + '<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:32px 16px;"><tr><td align="center">'
     + '<table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:12px;overflow:hidden;">'
@@ -297,14 +308,15 @@ function buildCustomerConfirmationEmail(order) {
     + '<img src="' + LOGO_URL + '" alt="Festecart" height="144" style="height:144px;" />'
     + '</td></tr>'
     + '<tr><td style="padding:32px 32px 24px;">'
-    + '<p style="margin:0 0 4px;font-size:22px;font-weight:bold;color:#1a1a2e;">Thank you for your order! &#127881;</p>'
-    + '<p style="margin:0 0 24px;font-size:14px;color:#555;">Hi ' + custName + ', your order has been confirmed. Your invoice is attached as a PDF.</p>'
+    + '<p style="margin:0 0 4px;font-size:22px;font-weight:bold;color:#1a1a2e;">' + (isUpdated ? 'Your order has been updated' : 'Thank you for your order! &#127881;') + '</p>'
+    + '<p style="margin:0 0 24px;font-size:14px;color:#555;">Hi ' + custName + ', ' + (isUpdated ? 'the selected product(s) have been cancelled. Your updated invoice is attached. Your order number has not changed.' : 'your order has been confirmed. Your invoice is attached as a PDF.') + '</p>'
     + '<div style="background:#f8f9ff;border:1px solid #e0e4ff;border-radius:8px;padding:14px 18px;margin-bottom:24px;text-align:center;">'
     + '<p style="margin:0;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;">Order Number</p>'
     + '<p style="margin:4px 0 0;font-size:20px;font-weight:bold;color:#1a1a2e;">#' + orderNum + '</p>'
     + '</div>'
     + '<p style="margin:0 0 12px;font-size:14px;font-weight:bold;color:#1a1a2e;">Items Ordered</p>'
     + '<table width="100%" cellpadding="0" cellspacing="0">' + itemRows + '</table>'
+    + (isUpdated && cancelledRows ? '<div style="margin-top:16px;padding:12px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;"><p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#9a3412;">Cancelled products</p><ul style="margin:0;padding-left:20px;font-size:13px;color:#7c2d12;">' + cancelledRows + '</ul></div>' : '')
     + '<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;font-size:13px;">'
     + '<tr><td colspan="2" style="border-top:1px solid #eee;padding-top:6px;"></td></tr>'
     + '<tr><td style="padding:5px 0;color:#555;">Subtotal</td><td style="text-align:right;color:#111;">&#8377; ' + subtotal.toLocaleString('en-IN') + '</td></tr>'
@@ -313,6 +325,9 @@ function buildCustomerConfirmationEmail(order) {
       : '<tr><td style="padding:5px 0;color:#555;">Shipping</td><td style="text-align:right;color:#16a34a;font-weight:600;">Free</td></tr>')
     + (couponCode && couponDiscount > 0
       ? '<tr><td style="padding:5px 0;color:#16a34a;">Coupon (' + couponCode + ')</td><td style="text-align:right;color:#16a34a;font-weight:600;">-&#8377; ' + couponDiscount.toLocaleString('en-IN') + '</td></tr>'
+      : '')
+    + (otherDiscount > 0
+      ? '<tr><td style="padding:5px 0;color:#16a34a;">Discount</td><td style="text-align:right;color:#16a34a;font-weight:600;">-&#8377; ' + otherDiscount.toLocaleString('en-IN') + '</td></tr>'
       : '')
     + '<tr><td style="padding:5px 0;font-weight:bold;font-size:15px;color:#1a1a2e;">Grand Total</td>'
     + '<td style="text-align:right;font-weight:bold;font-size:15px;color:#1a1a2e;">&#8377; ' + total.toLocaleString('en-IN') + '</td></tr>'

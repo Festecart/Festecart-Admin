@@ -30,15 +30,23 @@ export interface OrderForEmail {
   customer_email: string | null;
   guest_email: string | null;
   guest_name: string | null;
+  guest_phone?: string | null;
+  user_id?: string | null;
   shipping_address: {
     name?: string; phone?: string; address?: string;
     city?: string; state?: string; pincode?: string;
   } | null;
+  billing_address?: {
+    name?: string; phone?: string; address?: string;
+    city?: string; state?: string; pincode?: string;
+  } | string | null;
   items: { name: string; price: number; quantity: number; image?: string | null }[];
+  cancelled_items?: { name: string; price: number; quantity: number; image?: string | null }[];
   subtotal: number;
   shipping_charge: number;
   coupon_code?: string | null;
   coupon_discount?: number | null;
+  discount_amount?: number | null;
   total: number;
   payment_method: string;
   tracking_number?: string | null;
@@ -82,6 +90,13 @@ export async function sendOrderStatusEmail(
   } : null;
 
   await callEmailFunction(order, newStatus, invoice);
+}
+
+export async function sendOrderUpdatedInvoiceEmail(order: OrderForEmail): Promise<void> {
+  if (!(order.customer_email || order.guest_email)) {
+    throw new Error('No customer email is available for this order.')
+  }
+  await callEmailFunction(order, 'items_cancelled');
 }
 
 // ── Send order confirmation email on placement ─────────────────

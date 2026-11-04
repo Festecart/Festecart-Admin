@@ -10,6 +10,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  writeBatch,
   query,
   where,
   orderBy,
@@ -43,7 +44,7 @@ export const storage = getStorage(app)
 
 // Re-export Firestore helpers so callers only import from this file
 export {
-  collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
+  collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, writeBatch,
   query, where, orderBy, limit, startAfter, onSnapshot,
   serverTimestamp, Timestamp, runTransaction,
 }

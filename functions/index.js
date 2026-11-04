@@ -85,6 +85,7 @@ function generateInvoicePdf(order, logoImageBuffer) {
     var subtotal  = items.reduce(function(s, i) { return s + Number(i.price || 0) * (i.quantity || 1) }, 0)
     var couponCode     = order.coupon_code || null
     var couponDiscount = getCouponDiscount(order)
+    var otherDiscount = Math.max(0, Number(order.discount_amount || 0))
     var custEmail = order.customer_email || order.guest_email || ''
     var payment   = order.payment_method === 'cod' ? 'Cash on Delivery'
                   : order.payment_method === 'self_pickup' ? 'Self Pickup'
@@ -251,6 +252,13 @@ function generateInvoicePdf(order, logoImageBuffer) {
       doc.rect(40, y, W, rowH).fillAndStroke('#f0fff4', '#ddd')
       doc.fillColor('#16a34a').fontSize(8).font('Helvetica-Bold').text('Coupon (' + couponCode + '):', 390, y + 3)
       doc.font('Helvetica').text('-' + couponDiscount.toFixed(2), col.total, y + 3)
+      doc.fillColor('#000')
+      y += rowH
+    }
+    if (otherDiscount > 0) {
+      doc.rect(40, y, W, rowH).fillAndStroke('#f0fff4', '#ddd')
+      doc.fillColor('#16a34a').fontSize(8).font('Helvetica-Bold').text('Discount:', 390, y + 3)
+      doc.font('Helvetica').text('-' + otherDiscount.toFixed(2), col.total, y + 3)
       doc.fillColor('#000')
       y += rowH
     }
@@ -456,7 +464,7 @@ function buildCustomerConfirmationEmail(order) {
 }
 
 
-async function sendEmailsViaAppsScript(order, invoicePdfBase64) {
+async function sendEmailsViaAppsScript(order, invoicePdfBase64, updateType) {
   var token = process.env.GOOGLE_APPS_SCRIPT_TOKEN
   if (!token) {
     throw new Error('Google Apps Script email token is missing. Configure the GOOGLE_APPS_SCRIPT_TOKEN secret.')
@@ -465,7 +473,7 @@ async function sendEmailsViaAppsScript(order, invoicePdfBase64) {
   var response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: token, order: order, invoicePdfBase64: invoicePdfBase64 }),
+    body: JSON.stringify({ token: token, order: order, invoicePdfBase64: invoicePdfBase64, updateType: updateType || 'confirmed' }),
   })
   var result = await response.json().catch(function() { return null })
   if (!response.ok || !result || result.ok !== true) {
@@ -476,17 +484,18 @@ async function sendEmailsViaAppsScript(order, invoicePdfBase64) {
 
 
 // ── doSendEmail ──────────────────────────────────────────────────
-// Sends two emails on every confirmed order:
-//   1. Admin notification  → festecartdesi@gmail.com (admin template)
-//   2. Customer confirmation → customer email (customer template + PDF invoice)
-// Only fires for 'confirmed' status — all other statuses are ignored.
+// Sends order confirmation emails and revised-invoice emails after item cancellation.
 async function doSendEmail(order, new_status) {
-  if (new_status !== 'confirmed') {
-    console.log('[email] status "' + new_status + '" — no email sent (only confirmed triggers emails)')
+  var isItemsCancelled = new_status === 'items_cancelled'
+  if (new_status !== 'confirmed' && !isItemsCancelled) {
+    console.log('[email] status "' + new_status + '" — no email sent')
     return { skipped: true }
   }
 
   var customerEmail = order.customer_email || order.guest_email || null
+  if (isItemsCancelled && !customerEmail) {
+    throw new Error('Cannot send updated invoice: no customer email is available')
+  }
   var invoicePdfBase64 = null
 
   // ── 2. Customer confirmation (with PDF invoice) ──────────────
@@ -510,12 +519,16 @@ async function doSendEmail(order, new_status) {
       pdfBase64 = pdfBuffer.toString('base64')
     } catch (pdfErr) {
       console.warn('[email] PDF generation failed:', pdfErr.message)
+      if (isItemsCancelled) throw new Error('Updated invoice PDF generation failed: ' + pdfErr.message)
     }
 
     invoicePdfBase64 = pdfBase64
   }
 
-  return await sendEmailsViaAppsScript(order, invoicePdfBase64)
+  if (isItemsCancelled && !invoicePdfBase64) {
+    throw new Error('Updated invoice PDF could not be generated')
+  }
+  return await sendEmailsViaAppsScript(order, invoicePdfBase64, isItemsCancelled ? 'items_cancelled' : 'confirmed')
 }
 
 // ── HTTP endpoint ────────────────────────────────────────────────
