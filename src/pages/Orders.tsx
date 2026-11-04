@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Search, X, Plus, Download, FileDown, Loader2, ChevronDown, FileText } from 'lucide-react'
+import { Search, X, Plus, Download, FileDown, Loader2, ChevronDown, FileText, ArrowLeftRight } from 'lucide-react'
 import { useOrders, isOrderPaid } from '@/hooks/useOrders'
 import { StatusBadge } from '@/components/StatusBadge'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
@@ -65,6 +65,8 @@ function localDateString(): string {
 
 export default function Orders() {
   const navigate = useNavigate()
+  const tableScrollRef = useRef<HTMLDivElement>(null)
+  const tableRef = useRef<HTMLTableElement>(null)
   const [search, setSearch] = useState('')
   const [statusMode, setStatusMode] = useState<'include' | 'exclude'>('include')
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
@@ -73,6 +75,7 @@ export default function Orders() {
   const [logisticsExportError, setLogisticsExportError] = useState('')
   const [isExportingLogistics, setIsExportingLogistics] = useState(false)
   const [isLogisticsExportMenuOpen, setIsLogisticsExportMenuOpen] = useState(false)
+  const [horizontalScroll, setHorizontalScroll] = useState({ position: 0, max: 0 })
 
   const { data: filteredOrders, isLoading } = useOrders({
     search,
@@ -101,6 +104,33 @@ export default function Orders() {
     setSelectedStatuses(current => current.includes(value)
       ? current.filter(statusValue => statusValue !== value)
       : [...current, value])
+  }
+
+  useEffect(() => {
+    const scrollElement = tableScrollRef.current
+    const tableElement = tableRef.current
+    if (!scrollElement || !tableElement) return
+
+    const updateScrollControl = () => {
+      const max = Math.max(0, scrollElement.scrollWidth - scrollElement.clientWidth)
+      setHorizontalScroll({ position: Math.min(scrollElement.scrollLeft, max), max })
+    }
+
+    const resizeObserver = new ResizeObserver(updateScrollControl)
+    resizeObserver.observe(scrollElement)
+    resizeObserver.observe(tableElement)
+    scrollElement.addEventListener('scroll', updateScrollControl, { passive: true })
+    updateScrollControl()
+
+    return () => {
+      resizeObserver.disconnect()
+      scrollElement.removeEventListener('scroll', updateScrollControl)
+    }
+  }, [orders.length])
+
+  const setTableHorizontalScroll = (position: number) => {
+    if (tableScrollRef.current) tableScrollRef.current.scrollLeft = position
+    setHorizontalScroll(current => ({ ...current, position }))
   }
 
   const exportLogisticsData = async (format: 'pdf' | 'csv') => {
@@ -313,12 +343,13 @@ export default function Orders() {
         {isLoading ? (
           <div className="p-8 text-center text-gray-400">Loading orders…</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-100">
+          <>
+          <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto">
+            <table ref={tableRef} className="w-full min-w-[1800px] text-sm">
+              <thead className="border-b border-gray-100">
                 <tr>
                   {['Order No', 'Order Date', 'Customer Name', 'Phone', 'Items', 'Products', 'Product Cost', 'Coupon Name', 'Coupon Amount', 'Shipment Cost', 'Total Payable', 'Paid to Logistics', 'Actual Paid', 'Earned Value', 'Payment Method', 'Payment Status', 'Order Status'].map(h => (
-                    <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                    <th key={h} className="sticky top-0 z-10 bg-gray-50 text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide shadow-[0_1px_0_0_rgba(243,244,246,1)]">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -368,6 +399,29 @@ export default function Orders() {
               </tbody>
             </table>
           </div>
+          {horizontalScroll.max > 0 && (
+            <div className="flex items-center gap-3 border-t border-gray-100 bg-white px-4 py-2.5">
+              <ArrowLeftRight size={15} className="shrink-0 text-gray-500" aria-hidden="true" />
+              <label htmlFor="orders-horizontal-scroll" className="shrink-0 text-xs font-medium text-gray-600">
+                Scroll columns
+              </label>
+              <input
+                id="orders-horizontal-scroll"
+                type="range"
+                min={0}
+                max={horizontalScroll.max}
+                step={Math.max(1, Math.floor(horizontalScroll.max / 100))}
+                value={horizontalScroll.position}
+                onChange={event => setTableHorizontalScroll(Number(event.target.value))}
+                aria-label="Scroll orders table horizontally"
+                className="h-2 w-full cursor-ew-resize accent-gray-800"
+              />
+              <span className="shrink-0 text-xs tabular-nums text-gray-400">
+                {Math.round((horizontalScroll.position / horizontalScroll.max) * 100)}%
+              </span>
+            </div>
+          )}
+          </>
         )}
       </div>
     </div>
