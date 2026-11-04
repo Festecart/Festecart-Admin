@@ -1,19 +1,23 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Search, X, Plus, Download, FileDown, Loader2, ChevronDown, FileText } from 'lucide-react'
 import { useOrders, isOrderPaid } from '@/hooks/useOrders'
 import { StatusBadge } from '@/components/StatusBadge'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import { downloadLogisticsCsv, downloadLogisticsPdf } from '@/lib/logisticsPdf'
-import type { Order, OrderStatus } from '@/types'
+import type { Order } from '@/types'
 
-const STATUS_OPTIONS: { value: OrderStatus | 'all'; label: string }[] = [
-  { value: 'all', label: 'All Statuses' },
+const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'confirmed', label: 'Confirmed' },
+  { value: 'processing', label: 'Processing' },
+  { value: 'partially_fulfilled', label: 'Partially Fulfilled' },
+  { value: 'fulfilled', label: 'Fulfilled' },
   { value: 'shipped', label: 'Shipped' },
   { value: 'out_for_delivery', label: 'Out for Delivery' },
+  { value: 'partially_delivered', label: 'Partially Delivered' },
   { value: 'delivered', label: 'Delivered' },
   { value: 'cancelled', label: 'Cancelled' },
+  { value: 'completed', label: 'Completed' },
 ]
 
 function customerName(order: Order): string {
@@ -62,21 +66,42 @@ function localDateString(): string {
 export default function Orders() {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<OrderStatus | 'all'>('all')
+  const [statusMode, setStatusMode] = useState<'include' | 'exclude'>('include')
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [logisticsExportError, setLogisticsExportError] = useState('')
   const [isExportingLogistics, setIsExportingLogistics] = useState(false)
   const [isLogisticsExportMenuOpen, setIsLogisticsExportMenuOpen] = useState(false)
 
-  const { data: orders, isLoading } = useOrders({
-    status, search,
+  const { data: filteredOrders, isLoading } = useOrders({
+    search,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
   })
 
-  const clearFilters = () => { setSearch(''); setStatus('all'); setDateFrom(''); setDateTo('') }
-  const hasFilters = !!(search || status !== 'all' || dateFrom || dateTo)
+  const orders = useMemo(() => {
+    const selected = new Set(selectedStatuses)
+    if (selected.size === 0) return filteredOrders ?? []
+    return (filteredOrders ?? []).filter(order =>
+      statusMode === 'include' ? selected.has(order.status) : !selected.has(order.status)
+    )
+  }, [filteredOrders, selectedStatuses, statusMode])
+
+  const clearFilters = () => {
+    setSearch('')
+    setSelectedStatuses([])
+    setStatusMode('include')
+    setDateFrom('')
+    setDateTo('')
+  }
+  const hasFilters = !!(search || selectedStatuses.length || dateFrom || dateTo)
+
+  const toggleStatus = (value: string) => {
+    setSelectedStatuses(current => current.includes(value)
+      ? current.filter(statusValue => statusValue !== value)
+      : [...current, value])
+  }
 
   const exportLogisticsData = async (format: 'pdf' | 'csv') => {
     setLogisticsExportError('')
@@ -230,10 +255,42 @@ export default function Orders() {
               value={search} onChange={e => setSearch(e.target.value)}
               className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" />
           </div>
-          <select value={status} onChange={e => setStatus(e.target.value as OrderStatus | 'all')}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 bg-white text-gray-700 min-w-[160px]">
-            {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <label htmlFor="orders-status-mode" className="sr-only">Status filter mode</label>
+            <select id="orders-status-mode" value={statusMode}
+              onChange={e => setStatusMode(e.target.value as 'include' | 'exclude')}
+              className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 bg-white text-gray-700">
+              <option value="include">Include</option>
+              <option value="exclude">Exclude</option>
+            </select>
+            <details className="relative group">
+              <summary className="list-none cursor-pointer select-none px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700">
+                Statuses{selectedStatuses.length ? ` (${selectedStatuses.length})` : ' (all)'}
+                <ChevronDown size={13} className="inline ml-2" />
+              </summary>
+              <div className="absolute left-0 z-30 mt-2 w-60 max-h-72 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                <p className="px-2 py-1 text-xs text-gray-500">
+                  {selectedStatuses.length
+                    ? `${statusMode === 'include' ? 'Only' : 'All except'} selected statuses`
+                    : 'No statuses selected; showing all orders'}
+                </p>
+                {STATUS_OPTIONS.map(option => (
+                  <label key={option.value} className="flex items-center gap-2 rounded-md px-2 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={selectedStatuses.includes(option.value)}
+                      onChange={() => toggleStatus(option.value)}
+                      className="rounded border-gray-300 text-gray-900 focus:ring-gray-900" />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+                {selectedStatuses.length > 0 && (
+                  <button type="button" onClick={() => setSelectedStatuses([])}
+                    className="mt-1 w-full border-t border-gray-100 px-2 py-2 text-left text-xs font-medium text-red-600 hover:bg-gray-50">
+                    Clear selected statuses
+                  </button>
+                )}
+              </div>
+            </details>
+          </div>
           <label htmlFor="orders-date-from" className="text-xs text-gray-500">From</label>
           <input id="orders-date-from" type="date" value={dateFrom} max={dateTo || undefined}
             onChange={e => setDateFrom(e.target.value)} aria-label="Filter orders from date"
@@ -266,7 +323,7 @@ export default function Orders() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {(orders ?? []).map(order => (
+                {orders.map(order => (
                   <tr key={order.id} onClick={() => navigate(`/orders/${order.id}`)}
                     className="hover:bg-gray-50 cursor-pointer transition-colors">
                     <td className="px-5 py-3 whitespace-nowrap">
@@ -305,7 +362,7 @@ export default function Orders() {
                     <td className="px-5 py-3"><StatusBadge status={order.status} /></td>
                   </tr>
                 ))}
-                {(orders ?? []).length === 0 && (
+                {orders.length === 0 && (
                   <tr><td colSpan={17} className="px-5 py-12 text-center text-gray-400">No orders match your filters</td></tr>
                 )}
               </tbody>
