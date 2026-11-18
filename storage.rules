@@ -12,6 +12,15 @@ service firebase.storage {
       return request.resource.contentType.matches('image/.*') ||
              request.resource.contentType == 'application/pdf';
     }
+    function isAccountsAdmin() {
+      return request.auth != null && request.auth.token.accounts_admin == true;
+    }
+    function isReceipt() {
+      return request.resource.contentType == 'application/pdf' ||
+             request.resource.contentType == 'image/jpeg' ||
+             request.resource.contentType == 'image/png' ||
+             request.resource.contentType == 'image/webp';
+    }
 
     // ── 1. HOME BANNERS ────────────────────────────────────────────────
     // Admin panel uploads. Any signed-in user (only admins can log in).
@@ -64,6 +73,16 @@ service firebase.storage {
       allow read:   if true;
       allow write:  if isSignedIn() && isImage() && isUnder2MB();
       allow delete: if isSignedIn();
+    }
+
+    match /financial-receipts/{uploaderUid}/{expenseId}/{fileName} {
+      allow read: if isAccountsAdmin();
+      allow create: if isAccountsAdmin() &&
+        request.auth.uid == uploaderUid &&
+        request.resource.size > 0 &&
+        request.resource.size < 10 * 1024 * 1024 &&
+        isReceipt();
+      allow update, delete: if false;
     }
 
   }

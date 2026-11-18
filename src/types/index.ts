@@ -22,6 +22,7 @@ export type OrderStatus =
   | 'fulfilled'
   | 'shipped'
   | 'out_for_delivery'
+  | 'partially_delivered'
   | 'delivered'
   | 'cancelled'
   | 'completed'
@@ -50,6 +51,8 @@ export interface Order {
   coupon_code: string | null
   coupon_discount?: number | null
   discount_amount?: number | null
+  admin_discount_type?: 'fixed' | 'percentage' | null
+  admin_discount_value?: number | null
   billing_address?: ShippingAddress | string | null
   shipping_address: ShippingAddress | null
   items: OrderItem[]

@@ -239,5 +239,92 @@ service cloud.firestore {
         (isAffiliate() && resource.data.affiliate_id == request.auth.uid);
       allow write: if false;
     }
+
+    match /financial_accounts/{accountId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.name is string &&
+        request.resource.data.type in ['cash', 'bank', 'upi', 'petty_cash'] &&
+        request.resource.data.opening_balance_paise is int &&
+        request.resource.data.opening_balance_paise >= 0 &&
+        request.resource.data.balance_paise is int &&
+        request.resource.data.balance_paise >= 0;
+      allow update: if isAdmin() &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.balance_paise is int &&
+        request.resource.data.balance_paise >= 0 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'balance_paise', 'active', 'updated_at', 'updated_by'
+        ]);
+      allow delete: if false;
+    }
+
+    match /financial_transactions/{transactionId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.type in ['income', 'expense', 'transfer', 'opening_balance'] &&
+        request.resource.data.transaction_date is timestamp &&
+        request.resource.data.account_id is string &&
+        request.resource.data.amount_paise is int &&
+        request.resource.data.amount_paise > 0;
+      allow update: if isAdmin() &&
+        resource.data.type != 'opening_balance' &&
+        resource.data.linked_order_id == null &&
+        resource.data.linked_expense_id == null &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.transaction_date is timestamp &&
+        request.resource.data.description is string &&
+        request.resource.data.description.size() <= 250 &&
+        request.resource.data.category_name is string &&
+        request.resource.data.category_name.size() <= 80 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'transaction_date', 'description', 'category_name',
+          'updated_at', 'updated_by', 'updated_by_name', 'audit'
+        ]);
+      allow delete: if false;
+    }
+
+    match /financial_expenses/{expenseId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.amount_paise is int &&
+        request.resource.data.amount_paise > 0 &&
+        request.resource.data.paid_paise is int &&
+        request.resource.data.paid_paise >= 0 &&
+        request.resource.data.outstanding_paise is int &&
+        request.resource.data.outstanding_paise >= 0;
+      allow update: if isAdmin() &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.paid_paise is int &&
+        request.resource.data.outstanding_paise is int &&
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['receipt_paths']) ||
+          (
+            request.resource.data.receipt_paths is list &&
+            request.resource.data.receipt_paths.hasAll(resource.data.get('receipt_paths', []))
+          )
+        ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'paid_paise', 'outstanding_paise', 'payment_status',
+          'updated_at', 'updated_by', 'audit', 'receipt_paths'
+        ]);
+      allow delete: if false;
+    }
+
+    match /financial_categories/{categoryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.type in ['income', 'expense'] &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 80;
+      allow update: if isAdmin() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']);
+      allow delete: if false;
+    }
   }
 }

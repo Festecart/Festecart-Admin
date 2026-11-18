@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  db, collection, doc, getDoc, getDocs, addDoc, updateDoc,
+  db, collection, doc, getDoc, getDocs, addDoc, updateDoc, runTransaction,
   query, where, orderBy, limit, Timestamp,
   type QueryConstraint,
 } from '@/lib/firebase'
@@ -40,6 +40,8 @@ function toOrder(id: string, data: Record<string, unknown>): Order {
     coupon_code:          (data.coupon_code as string | null) ?? null,
     coupon_discount:      data.coupon_discount == null ? null : Number(data.coupon_discount),
     discount_amount:      data.discount_amount == null ? null : Number(data.discount_amount),
+    admin_discount_type:  data.admin_discount_type === 'percentage' ? 'percentage' : data.admin_discount_type === 'fixed' ? 'fixed' : null,
+    admin_discount_value: data.admin_discount_value == null ? null : Number(data.admin_discount_value),
     billing_address:      (data.billing_address as Order['billing_address']) ?? null,
     shipping_address:     (data.shipping_address as Order['shipping_address']) ?? null,
     items:                (data.items as Order['items']) ?? [],
@@ -230,6 +232,7 @@ export function isOrderPaid(order: { payment_method: string; payment_status?: st
 
 interface UpdateStatusPayload {
   orderId: string
+  currentStatus: OrderStatus
   status: OrderStatus
   tracking_number?: string
   courier_name?: string
@@ -238,27 +241,50 @@ interface UpdateStatusPayload {
 export function useUpdateOrderStatus() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ orderId, status, tracking_number, courier_name }: UpdateStatusPayload) => {
+    mutationFn: async ({ orderId, currentStatus, status, tracking_number, courier_name }: UpdateStatusPayload) => {
       const timestampField: Partial<Record<OrderStatus, string>> = {
         shipped:          'shipped_at',
         out_for_delivery: 'out_for_delivery_at',
         delivered:        'delivered_at',
         cancelled:        'cancelled_at',
       }
+      const timestamp = Timestamp.now()
       const updates: Record<string, unknown> = {
         status,
-        updated_at: Timestamp.now(),
+        updated_at: timestamp,
       }
       const tsField = timestampField[status]
-      if (tsField) updates[tsField] = Timestamp.now()
+      if (tsField) updates[tsField] = timestamp
       if (tracking_number !== undefined) updates.tracking_number = tracking_number
       if (courier_name    !== undefined) updates.courier_name    = courier_name
 
-      await updateDoc(doc(db, 'orders', orderId), updates)
+      await runTransaction(db, async transaction => {
+        const orderRef = doc(db, 'orders', orderId)
+        const orderSnap = await transaction.get(orderRef)
+        if (!orderSnap.exists()) throw new Error('Order not found')
+
+        const oldStatus = (orderSnap.data().status as OrderStatus | undefined) ?? 'confirmed'
+        if (oldStatus !== currentStatus) {
+          throw new Error('This order status changed elsewhere. Refresh the board and try again.')
+        }
+        if (oldStatus === status) return
+
+        const historyRef = doc(collection(db, 'order_status_history'))
+        transaction.update(orderRef, updates)
+        transaction.set(historyRef, {
+          order_id: orderId,
+          action: 'Status Changed',
+          old_status: oldStatus,
+          new_status: status,
+          remarks: null,
+          created_at: timestamp,
+        })
+      })
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['orders'] })
       qc.invalidateQueries({ queryKey: ['orders', variables.orderId] })
+      qc.invalidateQueries({ queryKey: ['order-history', variables.orderId] })
       qc.invalidateQueries({ queryKey: ['dashboard-stats'] })
     },
   })

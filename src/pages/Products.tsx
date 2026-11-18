@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { writeBatch } from 'firebase/firestore'
@@ -12,6 +12,10 @@ import {
   Search, Plus, MoreVertical, Pencil,
   Trash2, GripVertical
 } from 'lucide-react'
+import {
+  ManageTableColumns,
+  useTableColumnPreferences,
+} from '@/components/ManageTableColumns'
 
 interface Product {
   id: string
@@ -98,9 +102,26 @@ const STATUS_BADGE: Record<string, string> = {
   rejected: 'text-red-600',
 }
 
+const PRODUCT_TABLE_COLUMNS = [
+  { id: 'selection', label: 'Selection', canHide: false },
+  { id: 'move', label: 'Move', canHide: false },
+  { id: 'name', label: 'Name' },
+  { id: 'sku', label: 'SKU' },
+  { id: 'price', label: 'Price' },
+  { id: 'stock', label: 'Stock' },
+  { id: 'category', label: 'Category' },
+  { id: 'status', label: 'Status' },
+  { id: 'order', label: 'Order' },
+  { id: 'action', label: 'Action', canHide: false },
+]
+
 export default function Products() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const columnPreferences = useTableColumnPreferences(
+    'festecart-admin:table-columns:products',
+    PRODUCT_TABLE_COLUMNS,
+  )
 
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
@@ -313,6 +334,8 @@ export default function Products() {
             Reset
           </button>
 
+          <ManageTableColumns preferences={columnPreferences} />
+
         </div>
       </div>
 
@@ -345,62 +368,30 @@ export default function Products() {
 
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-
-                  <th className="w-10 px-4 py-3">
-                    <input
-                      type="checkbox"
-                      onChange={e =>
-                        setSelected(
-                          e.target.checked
-                            ? new Set(filtered.map(p => p.id))
-                            : new Set()
-                        )
-                      }
-                    />
-                  </th>
-
-                  <th
-                    className="w-10 px-2 py-3"
-                    title="Drag to reorder"
-                  >
-                    Move
-                  </th>
-
-                  <th
-                    className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase"
-                    colSpan={2}
-                  >
-                    Name
-                  </th>
-
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                    SKU
-                  </th>
-
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                    Price
-                  </th>
-
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                    Stock
-                  </th>
-
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                    Category
-                  </th>
-
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                    Status
-                  </th>
-
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                    Order
-                  </th>
-
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase">
-                    Action
-                  </th>
-
+                  {columnPreferences.columns.map(column => (
+                    <th
+                      key={column.id}
+                      colSpan={column.id === 'name' ? 2 : 1}
+                      title={column.id === 'move' ? 'Drag to reorder' : undefined}
+                      className={`text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase ${
+                        column.id === 'selection' || column.id === 'move' ? 'w-10' : ''
+                      }`}
+                    >
+                      {column.id === 'selection' ? (
+                        <input
+                          type="checkbox"
+                          aria-label="Select all products"
+                          onChange={e =>
+                            setSelected(
+                              e.target.checked
+                                ? new Set(filtered.map(p => p.id))
+                                : new Set()
+                            )
+                          }
+                        />
+                      ) : column.id === 'move' ? 'Move' : column.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
 
@@ -446,213 +437,157 @@ export default function Products() {
                       }`}
                   >
 
-                    {/* Checkbox */}
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(product.id)}
-                        onChange={() =>
-                          toggleSelect(product.id)
-                        }
-                      />
-                    </td>
-
-                    {/* Drag Handle */}
-                    <td className="px-2 py-3">
-                      <span
-                        draggable={canReorder}
-
-                        title={
-                          canReorder
-                            ? 'Drag to change product order'
-                            : 'Clear filters to reorder'
-                        }
-
-                        onDragStart={e => {
-                          if (!canReorder) {
-                            e.preventDefault()
-                            return
-                          }
-
-                          e.dataTransfer.effectAllowed = 'move'
-
-                          e.dataTransfer.setData(
-                            'text/plain',
-                            product.id
+                    {columnPreferences.columns.map(column => {
+                      switch (column.id) {
+                        case 'selection':
+                          return (
+                            <td key={column.id} className="px-4 py-3">
+                              <input
+                                type="checkbox"
+                                checked={selected.has(product.id)}
+                                onChange={() => toggleSelect(product.id)}
+                              />
+                            </td>
                           )
-
-                          setDraggedId(product.id)
-                        }}
-
-                        onDragEnd={() => {
-                          setDraggedId(null)
-                          setOverId(null)
-                        }}
-
-                        className={`inline-flex p-1 rounded text-gray-400 ${canReorder
-                          ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100'
-                          : 'cursor-not-allowed opacity-40'
-                          }`}
-
-                        aria-label={`Move ${product.name}`}
-                      >
-                        <GripVertical size={17} />
-                      </span>
-                    </td>
-
-                    {/* Product Image */}
-                    <td className="px-4 py-3 w-14">
-                      {product.images?.[0] ? (
-                        <img
-                          src={product.images[0]}
-                          alt={product.name}
-                          className="w-10 h-10 rounded-lg object-cover border border-gray-200"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs">
-                          No img
-                        </div>
-                      )}
-                    </td>
-
-                    {/* Product Name */}
-                    <td className="px-2 py-3">
-                      <p className="font-medium text-gray-900 text-sm">
-                        {product.name}
-                      </p>
-                    </td>
-
-                    {/* SKU */}
-                    <td className="px-4 py-3 text-gray-500 text-xs">
-                      {product.sku || '—'}
-                    </td>
-
-                    {/* Price */}
-                    <td className="px-4 py-3 font-medium">
-                      {formatCurrency(product.price)}
-                    </td>
-
-                    {/* Stock */}
-                    <td className="px-4 py-3 text-gray-500">
-                      <div className="flex flex-col items-start gap-1">
-
-                        <span
-                          className={
-                            product.inventory_count !== null &&
-                              product.inventory_count <= 0
-                              ? 'text-red-600 font-medium'
-                              : 'text-gray-700'
-                          }
-                        >
-                          {product.inventory_count ?? '—'}
-                        </span>
-
-                        {product.inventory_count !== null && (
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded-full ${product.inventory_count <= 0
-                              ? 'bg-red-100 text-red-700'
-                              : 'bg-amber-100 text-amber-700'
-                              }`}
-                          >
-                            {getProductStockStatusText({
-                              inventoryCount: product.inventory_count,
-                              lowStockThreshold: product.low_stock_threshold ?? null,
-                              lowStockMessage: product.low_stock_message ?? 'Order soon'
-                            })}
-                          </span>
-                        )}
-
-                      </div>
-                    </td>
-
-                    {/* Category */}
-                    <td className="px-4 py-3 text-gray-600 text-xs">
-                      {catMap[product.category_id ?? ''] || '—'}
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-4 py-3">
-                      <span
-                        className={`flex items-center gap-1 text-xs font-medium ${STATUS_BADGE[product.status] ??
-                          'text-gray-500'
-                          }`}
-                      >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${product.status === 'published'
-                            ? 'bg-green-500'
-                            : product.status === 'rejected'
-                              ? 'bg-red-500'
-                              : 'bg-gray-400'
-                            }`}
-                        />
-
-                        {product.status.charAt(0).toUpperCase() +
-                          product.status.slice(1)}
-                      </span>
-                    </td>
-
-                    {/* Automatically Updated Order */}
-                    <td className="px-4 py-3 text-center">
-                      <span
-                        className={`text-xs font-mono px-2 py-0.5 rounded ${product.display_order > 0
-                          ? 'bg-gray-900 text-white'
-                          : 'text-gray-400'
-                          }`}
-                      >
-                        {product.display_order > 0
-                          ? `#${product.display_order}`
-                          : '—'}
-                      </span>
-                    </td>
-
-                    {/* Existing Edit/Delete Actions */}
-                    <td className="px-4 py-3">
-                      <div className="relative">
-
-                        <button
-                          onClick={() =>
-                            setMenuId(
-                              menuId === product.id
-                                ? null
-                                : product.id
-                            )
-                          }
-                          className="p-1.5 rounded hover:bg-gray-100 text-gray-500"
-                        >
-                          <MoreVertical size={16} />
-                        </button>
-
-                        {menuId === product.id && (
-                          <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-
-                            <button
-                              onClick={() => {
-                                navigate(
-                                  `/catalog/products/${product.id}/edit`
-                                )
-                                setMenuId(null)
-                              }}
-                              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                            >
-                              <Pencil size={13} />
-                              Edit
-                            </button>
-
-                            <button
-                              onClick={() =>
-                                deleteProduct(product.id)
-                              }
-                              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-                            >
-                              <Trash2 size={13} />
-                              Delete
-                            </button>
-
-                          </div>
-                        )}
-
-                      </div>
-                    </td>
+                        case 'move':
+                          return (
+                            <td key={column.id} className="px-2 py-3">
+                              <span
+                                draggable={canReorder}
+                                title={canReorder ? 'Drag to change product order' : 'Clear filters to reorder'}
+                                onDragStart={e => {
+                                  if (!canReorder) {
+                                    e.preventDefault()
+                                    return
+                                  }
+                                  e.dataTransfer.effectAllowed = 'move'
+                                  e.dataTransfer.setData('text/plain', product.id)
+                                  setDraggedId(product.id)
+                                }}
+                                onDragEnd={() => {
+                                  setDraggedId(null)
+                                  setOverId(null)
+                                }}
+                                className={`inline-flex p-1 rounded text-gray-400 ${canReorder
+                                  ? 'cursor-grab active:cursor-grabbing hover:bg-gray-100'
+                                  : 'cursor-not-allowed opacity-40'
+                                  }`}
+                                aria-label={`Move ${product.name}`}
+                              >
+                                <GripVertical size={17} />
+                              </span>
+                            </td>
+                          )
+                        case 'name':
+                          return (
+                            <Fragment key={column.id}>
+                              <td className="px-4 py-3 w-14">
+                                {product.images?.[0] ? (
+                                  <img
+                                    src={product.images[0]}
+                                    alt={product.name}
+                                    className="w-10 h-10 rounded-lg object-cover border border-gray-200"
+                                  />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs">
+                                    No img
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-2 py-3">
+                                <p className="font-medium text-gray-900 text-sm">{product.name}</p>
+                              </td>
+                            </Fragment>
+                          )
+                        case 'sku':
+                          return <td key={column.id} className="px-4 py-3 text-gray-500 text-xs">{product.sku || '—'}</td>
+                        case 'price':
+                          return <td key={column.id} className="px-4 py-3 font-medium">{formatCurrency(product.price)}</td>
+                        case 'stock':
+                          return (
+                            <td key={column.id} className="px-4 py-3 text-gray-500">
+                              <div className="flex flex-col items-start gap-1">
+                                <span className={product.inventory_count !== null && product.inventory_count <= 0 ? 'text-red-600 font-medium' : 'text-gray-700'}>
+                                  {product.inventory_count ?? '—'}
+                                </span>
+                                {product.inventory_count !== null && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${product.inventory_count <= 0
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-amber-100 text-amber-700'
+                                    }`}>
+                                    {getProductStockStatusText({
+                                      inventoryCount: product.inventory_count,
+                                      lowStockThreshold: product.low_stock_threshold ?? null,
+                                      lowStockMessage: product.low_stock_message ?? 'Order soon'
+                                    })}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          )
+                        case 'category':
+                          return <td key={column.id} className="px-4 py-3 text-gray-600 text-xs">{catMap[product.category_id ?? ''] || '—'}</td>
+                        case 'status':
+                          return (
+                            <td key={column.id} className="px-4 py-3">
+                              <span className={`flex items-center gap-1 text-xs font-medium ${STATUS_BADGE[product.status] ?? 'text-gray-500'}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${product.status === 'published'
+                                  ? 'bg-green-500'
+                                  : product.status === 'rejected'
+                                    ? 'bg-red-500'
+                                    : 'bg-gray-400'
+                                  }`} />
+                                {product.status.charAt(0).toUpperCase() + product.status.slice(1)}
+                              </span>
+                            </td>
+                          )
+                        case 'order':
+                          return (
+                            <td key={column.id} className="px-4 py-3 text-center">
+                              <span className={`text-xs font-mono px-2 py-0.5 rounded ${product.display_order > 0
+                                ? 'bg-gray-900 text-white'
+                                : 'text-gray-400'
+                                }`}>
+                                {product.display_order > 0 ? `#${product.display_order}` : '—'}
+                              </span>
+                            </td>
+                          )
+                        case 'action':
+                          return (
+                            <td key={column.id} className="px-4 py-3">
+                              <div className="relative">
+                                <button
+                                  onClick={() => setMenuId(menuId === product.id ? null : product.id)}
+                                  className="p-1.5 rounded hover:bg-gray-100 text-gray-500"
+                                >
+                                  <MoreVertical size={16} />
+                                </button>
+                                {menuId === product.id && (
+                                  <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                                    <button
+                                      onClick={() => {
+                                        navigate(`/catalog/products/${product.id}/edit`)
+                                        setMenuId(null)
+                                      }}
+                                      className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                                    >
+                                      <Pencil size={13} />
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={() => deleteProduct(product.id)}
+                                      className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                                    >
+                                      <Trash2 size={13} />
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          )
+                      }
+                    })}
 
                   </tr>
                 ))}
@@ -660,7 +595,10 @@ export default function Products() {
                 {filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={columnPreferences.columns.reduce(
+                        (count, column) => count + (column.id === 'name' ? 2 : 1),
+                        0,
+                      )}
                       className="px-4 py-10 text-center text-gray-400"
                     >
                       No products found

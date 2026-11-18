@@ -4,7 +4,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { BadgePercent, LogOut } from 'lucide-react'
 
 export function Layout() {
-  const { logout, isAffiliate } = useAuth()
+  const { logout, isAffiliate, isAdmin, isAccountsAdmin } = useAuth()
 
   if (isAffiliate) {
     return (
@@ -47,8 +47,8 @@ export function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
-      <Sidebar onLogout={logout} />
-      <main className="flex-1 overflow-y-auto bg-gray-50">
+      <Sidebar onLogout={logout} showAccounts={isAccountsAdmin} accountsOnly={!isAdmin && isAccountsAdmin} />
+      <main className="admin-content h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-gray-50">
         <Outlet />
       </main>
     </div>

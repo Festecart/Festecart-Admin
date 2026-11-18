@@ -9,6 +9,10 @@ import {
     Search,
     X,
 } from 'lucide-react'
+import {
+    ManageTableColumns,
+    useTableColumnPreferences,
+} from '@/components/ManageTableColumns'
 
 type Data = Record<string, unknown>
 
@@ -51,6 +55,18 @@ const HEADERS = [
     'No of Orders',
     'No of Products',
     'Business Value',
+]
+
+const CUSTOMER_TABLE_COLUMNS = [
+    { id: 'name', label: 'Name' },
+    { id: 'phone', label: 'Ph' },
+    { id: 'email', label: 'Email' },
+    { id: 'billing_address', label: 'Billing Address' },
+    { id: 'shipping_address', label: 'Shipping Address' },
+    { id: 'shipping_pin_code', label: 'Shipping Pin Code' },
+    { id: 'no_of_orders', label: 'No of Orders' },
+    { id: 'no_of_products', label: 'No of Products' },
+    { id: 'business_value', label: 'Business Value' },
 ]
 
 function obj(value: unknown): Data {
@@ -458,6 +474,11 @@ function csvValue(value: unknown): string {
 }
 
 export default function Customers() {
+    const columnPreferences = useTableColumnPreferences(
+        'festecart-admin:table-columns:customers',
+        CUSTOMER_TABLE_COLUMNS,
+    )
+
     const [orders, setOrders] =
         useState<RecordItem[]>([])
 
@@ -688,6 +709,8 @@ export default function Customers() {
                         )}
                     </div>
 
+                    <ManageTableColumns preferences={columnPreferences} />
+
                     <button
                         type="button"
                         onClick={exportCustomers}
@@ -771,13 +794,13 @@ export default function Customers() {
 
                         <thead className="sticky top-0 z-20 border-b border-gray-200 bg-gray-50 shadow-sm">
                             <tr>
-                                {HEADERS.map(header => (
+                                {columnPreferences.columns.map(column => (
                                     <th
-                                        key={header}
+                                        key={column.id}
                                         scope="col"
                                         className="bg-gray-50 px-4 py-3 text-xs font-semibold uppercase text-gray-500"
                                     >
-                                        {header}
+                                        {column.label}
                                     </th>
                                 ))}
                             </tr>
@@ -788,7 +811,7 @@ export default function Customers() {
                             {loading ? (
                                 <tr>
                                     <td
-                                        colSpan={9}
+                                        colSpan={columnPreferences.columns.length}
                                         className="p-10 text-center"
                                     >
                                         <Loader2
@@ -800,7 +823,7 @@ export default function Customers() {
                             ) : ordersError ? (
                                 <tr>
                                     <td
-                                        colSpan={9}
+                                        colSpan={columnPreferences.columns.length}
                                         className="p-10 text-center text-red-600"
                                     >
                                         Unable to load customer orders
@@ -809,7 +832,7 @@ export default function Customers() {
                             ) : filteredCustomers.length === 0 ? (
                                 <tr>
                                     <td
-                                        colSpan={9}
+                                        colSpan={columnPreferences.columns.length}
                                         className="p-10 text-center text-gray-400"
                                     >
                                         <Users
@@ -828,43 +851,28 @@ export default function Customers() {
                                         key={customer.id}
                                         className="hover:bg-gray-50"
                                     >
-
-                                        <td className="px-4 py-4 font-medium text-gray-900">
-                                            {customer.name || '—'}
-                                        </td>
-
-                                        <td className="px-4 py-4 whitespace-nowrap">
-                                            {customer.phone || '—'}
-                                        </td>
-
-                                        <td className="px-4 py-4">
-                                            {customer.email || '—'}
-                                        </td>
-
-                                        <td className="px-4 py-4 min-w-[220px] max-w-[350px] whitespace-pre-wrap break-words align-top">
-                                            {customer.billing_address || '—'}
-                                        </td>
-
-                                        <td className="px-4 py-4 min-w-[220px] max-w-[350px] whitespace-pre-wrap break-words align-top">
-                                            {customer.shipping_address || '—'}
-                                        </td>
-
-                                        <td className="px-4 py-4 whitespace-nowrap">
-                                            {customer.shipping_pin_code || '—'}
-                                        </td>
-
-                                        <td className="px-4 py-4 font-medium">
-                                            {customer.no_of_orders}
-                                        </td>
-
-                                        <td className="px-4 py-4 font-medium">
-                                            {customer.no_of_products}
-                                        </td>
-
-                                        <td className="px-4 py-4 font-semibold whitespace-nowrap">
-                                            {currency(customer.business_value)}
-                                        </td>
-
+                                        {columnPreferences.columns.map(column => {
+                                            switch (column.id) {
+                                                case 'name':
+                                                    return <td key={column.id} className="px-4 py-4 font-medium text-gray-900">{customer.name || '—'}</td>
+                                                case 'phone':
+                                                    return <td key={column.id} className="px-4 py-4 whitespace-nowrap">{customer.phone || '—'}</td>
+                                                case 'email':
+                                                    return <td key={column.id} className="px-4 py-4">{customer.email || '—'}</td>
+                                                case 'billing_address':
+                                                    return <td key={column.id} className="px-4 py-4 min-w-[220px] max-w-[350px] whitespace-pre-wrap break-words align-top">{customer.billing_address || '—'}</td>
+                                                case 'shipping_address':
+                                                    return <td key={column.id} className="px-4 py-4 min-w-[220px] max-w-[350px] whitespace-pre-wrap break-words align-top">{customer.shipping_address || '—'}</td>
+                                                case 'shipping_pin_code':
+                                                    return <td key={column.id} className="px-4 py-4 whitespace-nowrap">{customer.shipping_pin_code || '—'}</td>
+                                                case 'no_of_orders':
+                                                    return <td key={column.id} className="px-4 py-4 font-medium">{customer.no_of_orders}</td>
+                                                case 'no_of_products':
+                                                    return <td key={column.id} className="px-4 py-4 font-medium">{customer.no_of_products}</td>
+                                                case 'business_value':
+                                                    return <td key={column.id} className="px-4 py-4 font-semibold whitespace-nowrap">{currency(customer.business_value)}</td>
+                                            }
+                                        })}
                                     </tr>
                                 ))
                             )}

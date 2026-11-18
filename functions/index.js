@@ -5,6 +5,7 @@ const { setGlobalOptions } = require('firebase-functions/v2')
 const { initializeApp } = require('firebase-admin/app')
 const { getAuth } = require('firebase-admin/auth')
 const { getFirestore, Timestamp, FieldPath } = require('firebase-admin/firestore')
+const { getStorage } = require('firebase-admin/storage')
 const PDFDocument = require('pdfkit')
 
 const firebaseApp = initializeApp()
@@ -567,6 +568,90 @@ function requireSuperAdmin(request) {
     }
   })
 }
+
+function getAccountsRoleFlags(roleData) {
+  const roles = roleData && Array.isArray(roleData.roles) ? roleData.roles : []
+  const role = roleData && typeof roleData.role === 'string' ? roleData.role : ''
+  return {
+    accountsAdmin: role === 'admin' || role === 'super_admin' ||
+      roles.includes('admin') || roles.includes('super_admin'),
+    accountsSuperAdmin: role === 'super_admin' || roles.includes('super_admin'),
+  }
+}
+
+async function setAccountsAdminClaims(uid, roleData) {
+  const user = await adminAuth.getUser(uid)
+  const claims = Object.assign({}, user.customClaims || {})
+  const flags = getAccountsRoleFlags(roleData)
+  if (flags.accountsAdmin) claims.accounts_admin = true
+  else delete claims.accounts_admin
+  if (flags.accountsSuperAdmin) claims.accounts_super_admin = true
+  else delete claims.accounts_super_admin
+  await adminAuth.setCustomUserClaims(uid, claims)
+  return flags
+}
+
+exports.syncAccountsAdminClaims = onDocumentWritten(
+  { document: 'user_roles/{uid}', database: 'festecart', region: 'asia-south1' },
+  async function(event) {
+    const uid = event.params.uid
+    const roleData = event.data && event.data.after.exists ? event.data.after.data() : null
+    try {
+      await setAccountsAdminClaims(uid, roleData)
+    } catch (error) {
+      if (error && error.code === 'auth/user-not-found') return
+      console.error('[accounts] Could not sync admin claims:', error)
+      throw error
+    }
+  },
+)
+
+exports.refreshAccountsAdminClaims = onCall(async function(request) {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in with an admin account.')
+  const roleSnapshot = await db.collection('user_roles').doc(request.auth.uid).get()
+  const roleData = roleSnapshot.exists ? roleSnapshot.data() : null
+  const flags = getAccountsRoleFlags(roleData)
+  if (!flags.accountsAdmin) {
+    throw new HttpsError('permission-denied', 'Accounts access is limited to admin and super-admin users.')
+  }
+  await setAccountsAdminClaims(request.auth.uid, roleData)
+  return { accountsAdmin: true }
+})
+
+exports.getFinancialReceiptDownloadUrl = onCall(async function(request) {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in with an admin account.')
+  const roleSnapshot = await db.collection('user_roles').doc(request.auth.uid).get()
+  const roleData = roleSnapshot.exists ? roleSnapshot.data() : null
+  if (!getAccountsRoleFlags(roleData).accountsAdmin) {
+    throw new HttpsError('permission-denied', 'Only admin and super-admin users can access financial receipts.')
+  }
+  const path = request.data && typeof request.data.path === 'string' ? request.data.path : ''
+  const parts = path.split('/')
+  if (parts.length !== 4 || parts[0] !== 'financial-receipts' || !parts[1] || !parts[2] || !parts[3]) {
+    throw new HttpsError('invalid-argument', 'The receipt path is invalid.')
+  }
+  const [expenseSnapshot, transactionSnapshot] = await Promise.all([
+    db.collection('financial_expenses').doc(parts[2]).get(),
+    db.collection('financial_transactions').doc(parts[2]).get(),
+  ])
+  const expensePaths = expenseSnapshot.exists && Array.isArray(expenseSnapshot.data().receipt_paths)
+    ? expenseSnapshot.data().receipt_paths
+    : []
+  const transactionPaths = transactionSnapshot.exists && Array.isArray(transactionSnapshot.data().receipt_paths)
+    ? transactionSnapshot.data().receipt_paths
+    : []
+  if (!expensePaths.includes(path) && !transactionPaths.includes(path)) {
+    throw new HttpsError('not-found', 'This receipt is not attached to a financial record.')
+  }
+  const file = getStorage(firebaseApp).bucket().file(path)
+  const [exists] = await file.exists()
+  if (!exists) throw new HttpsError('not-found', 'The receipt file was not found.')
+  const [url] = await file.getSignedUrl({
+    action: 'read',
+    expires: Date.now() + 5 * 60 * 1000,
+  })
+  return { url }
+})
 
 function validRequiredString(value, maxLength) {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= maxLength

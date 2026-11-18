@@ -10,12 +10,13 @@ import {
 } from 'firebase/auth'
 import { auth, db, doc, getDoc, setDoc, Timestamp } from '@/lib/firebase'
 
-type UserRole = 'super_admin' | 'affiliate' | null
+type UserRole = 'super_admin' | 'admin' | 'affiliate' | null
 
 interface AuthState {
   user:    User | null
   session: User | null
   isAdmin: boolean
+  isAccountsAdmin: boolean
   isAffiliate: boolean
   role: UserRole
   affiliateId: string | null
@@ -46,6 +47,9 @@ async function getUserRole(user: User): Promise<{ role: UserRole; affiliateId: s
     if (primaryRole === 'super_admin' || roles.includes('super_admin')) {
       return { role: 'super_admin', affiliateId: null }
     }
+    if (primaryRole === 'admin' || roles.includes('admin')) {
+      return { role: 'admin', affiliateId: null }
+    }
     if (primaryRole === 'affiliate' || roles.includes('affiliate')) {
       const affiliateId = roleData?.affiliate_id
       if (affiliateId !== user.uid) return { role: null, affiliateId: null }
@@ -66,6 +70,7 @@ export function useAuth() {
     user:    null,
     session: null,
     isAdmin: false,
+    isAccountsAdmin: false,
     isAffiliate: false,
     role: null,
     affiliateId: null,
@@ -77,7 +82,7 @@ export function useAuth() {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setState({
-          user: null, session: null, isAdmin: false, isAffiliate: false,
+          user: null, session: null, isAdmin: false, isAccountsAdmin: false, isAffiliate: false,
           role: null, affiliateId: null, loading: false, error: null,
         })
         return
@@ -86,7 +91,7 @@ export function useAuth() {
       if (!role) {
         await firebaseSignOut(auth)
         setState({
-          user: null, session: null, isAdmin: false, isAffiliate: false,
+          user: null, session: null, isAdmin: false, isAccountsAdmin: false, isAffiliate: false,
           role: null, affiliateId: null, loading: false,
           error: 'Access denied. An authorized admin or affiliate account is required.',
         })
@@ -96,6 +101,7 @@ export function useAuth() {
         user,
         session: user,
         isAdmin: role === 'super_admin',
+        isAccountsAdmin: role === 'admin' || role === 'super_admin',
         isAffiliate: role === 'affiliate',
         role,
         affiliateId,
@@ -148,7 +154,7 @@ export function useAuth() {
   const logout = useCallback(async () => {
     await firebaseSignOut(auth)
     setState({
-      user: null, session: null, isAdmin: false, isAffiliate: false,
+      user: null, session: null, isAdmin: false, isAccountsAdmin: false, isAffiliate: false,
       role: null, affiliateId: null, loading: false, error: null,
     })
   }, [])

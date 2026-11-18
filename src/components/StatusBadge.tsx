@@ -7,6 +7,7 @@ const config: Record<string, { label: string; dot: string }> = {
   fulfilled:           { label: 'Fulfilled',            dot: 'bg-green-400' },
   shipped:             { label: 'Shipped',              dot: 'bg-gray-600' },
   out_for_delivery:    { label: 'Out for Delivery',     dot: 'bg-gray-800' },
+  partially_delivered: { label: 'Partially Delivered', dot: 'bg-orange-400' },
   delivered:           { label: 'Delivered',            dot: 'bg-black' },
   cancelled:           { label: 'Cancelled',            dot: 'bg-gray-300' },
   completed:           { label: 'Completed',            dot: 'bg-black' },

@@ -13,11 +13,20 @@ export default function Shipments() {
   const { data: shipments, isLoading, refetch } = useActiveShipments()
   const updateStatus = useUpdateOrderStatus()
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState('')
 
   const markDelivered = async (orderId: string) => {
+    const order = shipments?.find(item => item.id === orderId)
+    if (!order) return
     setUpdatingId(orderId)
-    try { await updateStatus.mutateAsync({ orderId, status: 'delivered' }) }
-    finally { setUpdatingId(null) }
+    setUpdateError('')
+    try {
+      await updateStatus.mutateAsync({ orderId, currentStatus: order.status, status: 'delivered' })
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : 'Could not mark the shipment as delivered.')
+    } finally {
+      setUpdatingId(null)
+    }
   }
 
   return (
@@ -31,6 +40,12 @@ export default function Shipments() {
           <RefreshCw size={14} /> Refresh
         </button>
       </div>
+
+      {updateError && (
+        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {updateError}
+        </p>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {isLoading ? (

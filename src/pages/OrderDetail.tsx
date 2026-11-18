@@ -6,6 +6,13 @@ import {
 } from '@/lib/firebase'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { isOrderPaid } from '@/hooks/useOrders'
+import { useAuth } from '@/hooks/useAuth'
+import {
+  calculateAdminDiscountAmount,
+  calculateOrderTotal,
+  getOrderDiscountBreakdown,
+  type AdminDiscountType,
+} from '@/lib/orderDiscount'
 import type { Order, Invoice, OrderItem, ShippingAddress } from '@/types'
 import { sendOrderStatusEmail, sendOrderUpdatedInvoiceEmail, type OrderForEmail } from '@/lib/emailService'
 import {
@@ -95,6 +102,8 @@ function toOrder(id: string, data: Record<string, unknown>): Order {
     coupon_code:         (data.coupon_code as string | null) ?? null,
     coupon_discount:     (data.coupon_discount as number | null) ?? null,
     discount_amount:     data.discount_amount == null ? null : Number(data.discount_amount),
+    admin_discount_type: data.admin_discount_type === 'percentage' ? 'percentage' : data.admin_discount_type === 'fixed' ? 'fixed' : null,
+    admin_discount_value: data.admin_discount_value == null ? null : Number(data.admin_discount_value),
     billing_address:     (data.billing_address as Order['billing_address']) ?? null,
     shipping_address:    (data.shipping_address as Order['shipping_address']) ?? null,
     items:               (data.items as Order['items']) ?? [],
@@ -313,6 +322,107 @@ function MarkPaidModal({ totalPayable, onClose, onConfirm, loading }: {
   )
 }
 
+function EditDiscountModal({ order, onClose, onSave, onRemove, loading, error }: {
+  order: Order
+  onClose: () => void
+  onSave: (type: AdminDiscountType, value: number) => void
+  onRemove: () => void
+  loading: boolean
+  error: string | null
+}) {
+  const breakdown = getOrderDiscountBreakdown(order)
+  const [type, setType] = useState<AdminDiscountType>(order.admin_discount_type ?? 'fixed')
+  const [value, setValue] = useState(() => String(
+    order.admin_discount_value ?? breakdown.manualDiscount,
+  ))
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  let previewDiscount = 0
+  let previewError: string | null = null
+  if (value.trim()) {
+    try {
+      previewDiscount = calculateAdminDiscountAmount(breakdown.eligibleSubtotal, type, Number(value))
+    } catch (previewValidationError) {
+      previewError = previewValidationError instanceof Error ? previewValidationError.message : 'Invalid discount'
+    }
+  }
+  const previewTotal = calculateOrderTotal(
+    breakdown.subtotal,
+    breakdown.shippingCharge,
+    breakdown.couponDiscount,
+    previewDiscount,
+  )
+
+  const save = () => {
+    if (!value.trim()) {
+      setValidationError('Enter a discount value')
+      return
+    }
+    try {
+      calculateAdminDiscountAmount(breakdown.eligibleSubtotal, type, Number(value))
+      setValidationError(null)
+      onSave(type, Number(value))
+    } catch (validation) {
+      setValidationError(validation instanceof Error ? validation.message : 'Invalid discount')
+    }
+  }
+
+  return (
+    <Modal title="Edit Discount" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          The discount applies to the eligible product subtotal after the existing coupon. Shipping is not discounted, and the coupon will remain unchanged.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="admin-discount-type" className="block text-xs font-medium text-gray-700 mb-1">Discount Type</label>
+            <select id="admin-discount-type" value={type} onChange={event => setType(event.target.value as AdminDiscountType)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="fixed">Fixed Amount (₹)</option>
+              <option value="percentage">Percentage (%)</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="admin-discount-value" className="block text-xs font-medium text-gray-700 mb-1">
+              {type === 'fixed' ? 'Amount (₹)' : 'Percentage (%)'}
+            </label>
+            <input id="admin-discount-value" type="number" min="0" max={type === 'fixed' ? breakdown.eligibleSubtotal : 100}
+              step="0.01" value={value} onChange={event => setValue(event.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+        <p className="text-xs text-gray-500">Eligible subtotal after coupon: {formatCurrency(breakdown.eligibleSubtotal)}</p>
+        {(validationError || previewError || error) && (
+          <p className="text-sm text-red-600" role="alert">{validationError || previewError || error}</p>
+        )}
+        <div className="rounded-lg bg-gray-50 p-3 space-y-1.5 text-sm">
+          <div className="flex justify-between text-gray-600"><span>Original subtotal</span><span>{formatCurrency(breakdown.subtotal)}</span></div>
+          {breakdown.couponDiscount > 0 && (
+            <div className="flex justify-between text-gray-600"><span>Coupon discount</span><span>-{formatCurrency(breakdown.couponDiscount)}</span></div>
+          )}
+          <div className="flex justify-between text-gray-600"><span>Shipping</span><span>{formatCurrency(breakdown.shippingCharge)}</span></div>
+          <div className="flex justify-between text-green-700"><span>Admin discount</span><span>-{formatCurrency(previewDiscount)}</span></div>
+          <div className="border-t border-gray-200 pt-2 flex justify-between font-semibold text-gray-900"><span>Updated total</span><span>{formatCurrency(previewTotal)}</span></div>
+        </div>
+        <div className="flex flex-wrap justify-between gap-2">
+          <button onClick={onRemove} disabled={loading || breakdown.manualDiscount === 0}
+            className="px-4 py-2 border border-red-200 text-red-700 rounded-lg text-sm hover:bg-red-50 disabled:opacity-50">
+            Remove Discount
+          </button>
+          <div className="flex gap-2">
+            <button onClick={onClose} disabled={loading}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+            <button onClick={save} disabled={loading || !!previewError}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-800 disabled:opacity-60">
+              {loading ? 'Saving…' : 'Save Discount'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ── Firebase hooks ────────────────────────────────────────────
 function useOrderData(id: string) {
   return useQuery({
@@ -363,6 +473,29 @@ async function logHistory(orderId: string, action: string, oldStatus: string | n
   })
 }
 
+function discountEditBlockReason(order: Order, invoices: Invoice[]): string | null {
+  if (order.status === 'cancelled') return 'Discounts cannot be changed on cancelled orders.'
+  if (isOrderPaid(order) || order.amount_paid > 0) {
+    return 'This order has a payment recorded. Use a payment/refund adjustment before changing its discount.'
+  }
+  if (invoices.length > 0) {
+    return 'This order has invoice records. Its invoice and payment amounts must be adjusted before changing the discount.'
+  }
+  if (
+    order.shipped_at ||
+    order.out_for_delivery_at ||
+    order.delivered_at ||
+    ['shipped', 'out_for_delivery', 'partially_delivered', 'delivered', 'completed'].includes(order.status) ||
+    ['shipped', 'partially_delivered', 'delivered'].includes(order.fulfillment_status ?? '')
+  ) {
+    return 'Discounts are locked after shipping or delivery. Use an invoice/payment adjustment workflow.'
+  }
+  if (!['confirmed', 'processing'].includes(order.status)) {
+    return 'Discounts can only be changed on confirmed or processing orders before invoicing.'
+  }
+  return null
+}
+
 async function sendStatusEmail(order: Order, newStatus: string, invoice?: Partial<Invoice>) {
   const emailOrder: OrderForEmail = {
     id:               order.id,
@@ -376,6 +509,7 @@ async function sendStatusEmail(order: Order, newStatus: string, invoice?: Partia
     shipping_charge:  order.shipping_charge,
     coupon_code:      order.coupon_code ?? null,
     coupon_discount:  order.coupon_discount ?? null,
+    discount_amount:  order.discount_amount ?? null,
     total:            order.total,
     payment_method:   order.payment_method,
     tracking_number:  order.tracking_number,
@@ -755,6 +889,12 @@ function downloadInvoicePdf(invoice: Invoice, order: Order) {
   const items = invoice.invoice_items ?? []
   const total = items.reduce((s, i) => s + i.price * i.fulfilled_qty, 0)
   const shippingCharge = order.shipping_charge ?? 0
+  const discountBreakdown = getOrderDiscountBreakdown(order)
+  const couponDiscount = discountBreakdown.couponDiscount
+  const additionalDiscount = discountBreakdown.manualDiscount
+  const additionalDiscountLabel = order.admin_discount_type === 'percentage' && order.admin_discount_value != null
+    ? `Additional Discount (${order.admin_discount_value}%)`
+    : 'Additional Discount'
   const addr = order.shipping_address
   const custName  = order.guest_name  || addr?.name  || '—'
   const custEmail = order.customer_email || order.guest_email || '—'
@@ -767,18 +907,6 @@ function downloadInvoicePdf(invoice: Invoice, order: Order) {
     : addr
 
   const couponCode = order.coupon_code?.trim() || null
-  const savedCouponDiscount = Number(order.coupon_discount)
-  const calculatedCouponDiscount = Math.max(
-    0,
-    Math.round(
-      (order.subtotal + shippingCharge - order.total + Number.EPSILON) * 100
-    ) / 100,
-  )
-  const couponDiscount = couponCode
-    ? Number.isFinite(savedCouponDiscount) && savedCouponDiscount > 0
-      ? savedCouponDiscount
-      : calculatedCouponDiscount
-    : 0
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invoice.invoice_number}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:12px;padding:32px;}
@@ -821,6 +949,7 @@ td{padding:7px 9px;border:1px solid #ddd;}
   <tr><td colspan="3" class="tr">Subtotal:</td><td class="tr">₹${total.toFixed(2)}</td></tr>
   <tr><td colspan="3" class="tr">Shipping Charge:</td><td class="tr">₹${shippingCharge.toFixed(2)}</td></tr>
   ${couponCode && couponDiscount > 0 ? `<tr><td colspan="3" class="tr" style="color:#16a34a;">Coupon (${couponCode}):</td><td class="tr" style="color:#16a34a;">-₹${couponDiscount.toFixed(2)}</td></tr>` : ''}
+  ${additionalDiscount > 0 ? `<tr><td colspan="3" class="tr" style="color:#16a34a;">${escapeHtml(additionalDiscountLabel)}:</td><td class="tr" style="color:#16a34a;">-₹${additionalDiscount.toFixed(2)}</td></tr>` : ''}
   <tr class="total-row"><td colspan="3" class="tr">Grand Total:</td><td class="tr">₹${order.total.toFixed(2)}</td></tr>
 </tfoot></table>
 <p style="font-size:11px;margin:6px 0;"><strong>Mode of Payment:</strong> ${payMode}</p>
@@ -920,6 +1049,7 @@ export default function OrderDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { user } = useAuth()
 
   const { data: order, isLoading, error } = useOrderData(id!)
   const { data: invoices = [], isLoading: invoicesLoading, error: invoicesError } = useInvoices(id!)
@@ -927,6 +1057,7 @@ export default function OrderDetail() {
 
   const [modal,       setModal]       = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [discountError, setDiscountError] = useState<string | null>(null)
   const [busy,        setBusy]        = useState(false)
 
   const doUpdate = async (updates: Record<string, unknown>, action: string, newStatus?: string) => {
@@ -942,6 +1073,93 @@ export default function OrderDetail() {
       setActionError(e instanceof Error ? e.message : 'Update failed')
     } finally {
       setBusy(false); setModal(null)
+    }
+  }
+
+  const saveOrderDiscount = async (input: { type: AdminDiscountType; value: number } | null) => {
+    if (!order) return
+    if (!user) {
+      setDiscountError('The admin user could not be verified. Sign in again before changing a discount.')
+      return
+    }
+
+    setBusy(true)
+    setDiscountError(null)
+    try {
+      const orderRef = doc(db, 'orders', order.id)
+      const historyRef = doc(collection(db, 'order_status_history'))
+      const timestamp = Timestamp.now()
+      const currentInvoiceSnap = await getDocs(
+        query(collection(db, 'invoices'), where('order_id', '==', order.id))
+      )
+      const currentInvoices = currentInvoiceSnap.docs.map(invoice =>
+        toInvoice(invoice.id, invoice.data() as Record<string, unknown>)
+      )
+      await runTransaction(db, async transaction => {
+        const orderSnap = await transaction.get(orderRef)
+        if (!orderSnap.exists()) throw new Error('Order no longer exists.')
+
+        const currentOrder = toOrder(orderSnap.id, orderSnap.data() as Record<string, unknown>)
+        const blockReason = discountEditBlockReason(currentOrder, currentInvoices)
+        if (blockReason) throw new Error(blockReason)
+
+        const breakdown = getOrderDiscountBreakdown(currentOrder)
+        const discountAmount = input
+          ? calculateAdminDiscountAmount(breakdown.eligibleSubtotal, input.type, input.value)
+          : 0
+        const total = calculateOrderTotal(
+          breakdown.subtotal,
+          breakdown.shippingCharge,
+          breakdown.couponDiscount,
+          discountAmount,
+        )
+        const previousDiscount = breakdown.manualDiscount
+        const nextType = discountAmount > 0 && input ? input.type : null
+        const nextValue = nextType === 'percentage' && input ? input.value : null
+        const previousType = previousDiscount > 0 ? currentOrder.admin_discount_type ?? 'fixed' : null
+        const previousValue = previousType === 'percentage'
+          ? currentOrder.admin_discount_value
+          : previousDiscount
+        const previousTypeLabel = previousType === 'percentage' && previousValue != null
+          ? ` (${previousValue}%)`
+          : ''
+        const nextTypeLabel = nextType === 'percentage' ? ` (${nextValue}%)` : ''
+
+        transaction.update(orderRef, {
+          discount_amount: discountAmount,
+          admin_discount_type: nextType,
+          admin_discount_value: nextValue,
+          total,
+          updated_at: timestamp,
+        })
+        transaction.set(historyRef, {
+          order_id: order.id,
+          action: discountAmount > 0 ? 'Discount Updated' : 'Discount Removed',
+          old_status: null,
+          new_status: null,
+          remarks: `Previous discount${previousTypeLabel}: ${formatCurrency(previousDiscount)}; New discount${nextTypeLabel}: ${formatCurrency(discountAmount)}`,
+          previous_discount_amount: previousDiscount,
+          previous_discount_type: previousType,
+          previous_discount_value: previousValue,
+          new_discount_amount: discountAmount,
+          new_discount_type: nextType,
+          new_discount_value: nextValue,
+          admin_user_id: user.uid,
+          admin_email: user.email ?? null,
+          created_at: timestamp,
+        })
+      })
+
+      qc.invalidateQueries({ queryKey: ['orders', order.id] })
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      qc.invalidateQueries({ queryKey: ['order-history', order.id] })
+      qc.invalidateQueries({ queryKey: ['analytics'] })
+      qc.invalidateQueries({ queryKey: ['dashboard-stats'] })
+      setModal(null)
+    } catch (discountSaveError) {
+      setDiscountError(discountSaveError instanceof Error ? discountSaveError.message : 'Discount update failed')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -990,17 +1208,13 @@ export default function OrderDetail() {
         const remainingItems = currentOrder.items.filter(item => !selectedIds.has(item.product_id))
         const cancelledItems = [...(currentOrder.cancelled_items ?? []), ...currentSelectedItems]
         const activeSubtotal = remainingItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
-        const currentItemSubtotal = currentOrder.items.reduce((sum, item) => sum + item.price * item.quantity, 0)
-        const currentSubtotal = Number.isFinite(currentOrder.subtotal) ? currentOrder.subtotal : currentItemSubtotal
         const shippingCharge = remainingItems.length ? currentOrder.shipping_charge : 0
-        const totalDiscount = Math.max(0, currentSubtotal + currentOrder.shipping_charge - currentOrder.total)
-        const savedCouponDiscount = currentOrder.coupon_discount == null
-          ? (currentOrder.coupon_code ? totalDiscount : 0)
-          : Math.min(totalDiscount, Math.max(0, currentOrder.coupon_discount))
-        const otherDiscount = Math.max(0, totalDiscount - savedCouponDiscount)
-        const remainingRatio = currentSubtotal > 0 ? Math.min(1, activeSubtotal / currentSubtotal) : 0
-        const couponDiscount = Math.round(savedCouponDiscount * remainingRatio * 100) / 100
-        const proratedOtherDiscount = Math.round(otherDiscount * remainingRatio * 100) / 100
+        const discountBreakdown = getOrderDiscountBreakdown(currentOrder)
+        const remainingRatio = discountBreakdown.subtotal > 0
+          ? Math.min(1, activeSubtotal / discountBreakdown.subtotal)
+          : 0
+        const couponDiscount = Math.round(discountBreakdown.couponDiscount * remainingRatio * 100) / 100
+        const proratedOtherDiscount = Math.round(discountBreakdown.manualDiscount * remainingRatio * 100) / 100
         const total = Math.max(0, activeSubtotal + shippingCharge - couponDiscount - proratedOtherDiscount)
         const newStatus = remainingItems.length ? currentOrder.status : 'cancelled'
         const updates: Record<string, unknown> = {
@@ -1012,6 +1226,10 @@ export default function OrderDetail() {
           total,
           coupon_discount: currentOrder.coupon_code ? couponDiscount : currentOrder.coupon_discount ?? null,
           discount_amount: proratedOtherDiscount,
+          admin_discount_type: remainingItems.length ? currentOrder.admin_discount_type ?? null : null,
+          admin_discount_value: remainingItems.length && currentOrder.admin_discount_type === 'percentage'
+            ? currentOrder.admin_discount_value ?? null
+            : null,
           status: newStatus,
           invoice_email_status: 'pending',
           invoice_email_sent_at: null,
@@ -1061,6 +1279,10 @@ export default function OrderDetail() {
           total,
           coupon_discount: currentOrder.coupon_code ? couponDiscount : currentOrder.coupon_discount ?? null,
           discount_amount: proratedOtherDiscount,
+          admin_discount_type: remainingItems.length ? currentOrder.admin_discount_type ?? null : null,
+          admin_discount_value: remainingItems.length && currentOrder.admin_discount_type === 'percentage'
+            ? currentOrder.admin_discount_value ?? null
+            : null,
           status: newStatus as Order['status'],
           cancelled_at: remainingItems.length ? currentOrder.cancelled_at : cancelledAt.toDate().toISOString(),
           invoice_email_status: 'pending' as const,
@@ -1160,8 +1382,20 @@ export default function OrderDetail() {
   const paid = isOrderPaid(order)
   const customerShippingCharge = order.customer_shipping_charge ?? order.shipping_charge
   const couponCode = order.coupon_code?.trim() || null
-  const couponDiscount = order.coupon_discount == null ? Number.NaN : Number(order.coupon_discount)
-  const hasCouponDiscount = Number.isFinite(couponDiscount)
+  const discountBreakdown = getOrderDiscountBreakdown(order)
+  const couponDiscount = discountBreakdown.couponDiscount
+  const additionalDiscount = discountBreakdown.manualDiscount
+  const hasCouponDiscount = order.coupon_discount != null || couponDiscount > 0
+  const additionalDiscountLabel = order.admin_discount_type === 'percentage' && order.admin_discount_value != null
+    ? `Additional Discount (${order.admin_discount_value}%)`
+    : 'Additional Discount'
+  const discountBlockReason = invoicesLoading
+    ? 'Checking invoice records…'
+    : invoicesError
+      ? 'Invoice records could not be verified. Refresh before changing a discount.'
+      : !user
+        ? 'An authenticated admin is required to change a discount.'
+        : discountEditBlockReason(order, invoices)
 
   const fulfilledQtyMap: Record<string, number> = {}
   invoices.filter(inv => inv.status !== 'cancelled').forEach(inv => {
@@ -1338,7 +1572,15 @@ export default function OrderDetail() {
             <p className="text-sm text-gray-500">{order.note || '—'}</p>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h2 className="font-semibold text-gray-900 mb-4 text-sm">Summary</h2>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h2 className="font-semibold text-gray-900 text-sm">Summary</h2>
+              <button onClick={() => { setDiscountError(null); setModal('discount') }}
+                disabled={busy || Boolean(discountBlockReason)}
+                title={discountBlockReason ?? 'Edit this order discount'}
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                Edit Discount
+              </button>
+            </div>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>{formatCurrency(order.subtotal)}</span></div>
               <div className="flex justify-between text-gray-600">
@@ -1357,9 +1599,9 @@ export default function OrderDetail() {
                     : '- Nil'}
                 </span>
               </div>
-              {(order.discount_amount ?? 0) > 0 && (
+              {additionalDiscount > 0 && (
                 <div className="flex justify-between text-green-600">
-                    <span>Additional Discount</span><span>-{formatCurrency(order.discount_amount ?? 0)}</span>
+                    <span>{additionalDiscountLabel}</span><span>-{formatCurrency(additionalDiscount)}</span>
                 </div>
               )}
               <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-900">
@@ -1370,6 +1612,9 @@ export default function OrderDetail() {
               <span className="text-sm font-medium">Amount Payable</span>
               <span className="font-bold text-base">{formatCurrency(order.total)}</span>
             </div>
+            {discountBlockReason && (
+              <p className="mt-3 text-xs text-gray-500">{discountBlockReason}</p>
+            )}
           </div>
         </div>
 
@@ -1420,13 +1665,14 @@ export default function OrderDetail() {
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
             <h2 className="font-semibold text-gray-900 text-sm flex items-center gap-2"><History size={15} /> Audit Trail</h2>
             <div className="space-y-2">
-              {(history as Array<{ id: string; action: string; new_status: string | null; remarks: string | null; created_at: unknown }>).map(h => (
+              {(history as Array<{ id: string; action: string; new_status: string | null; remarks: string | null; admin_email?: string | null; admin_user_id?: string | null; created_at: unknown }>).map(h => (
                 <div key={h.id} className="flex items-center justify-between text-xs py-1.5 border-b border-gray-50 last:border-0">
                   <div className="flex items-center gap-2">
                     <Clock size={11} className="text-gray-400" />
                     <span className="font-medium text-gray-800">{h.action}</span>
                     {h.new_status && <span className="text-gray-400">→ {STATUS_LABEL[h.new_status] ?? h.new_status}</span>}
                     {h.remarks    && <span className="text-gray-400">({h.remarks})</span>}
+                    {(h.admin_email || h.admin_user_id) && <span className="text-gray-400">by {h.admin_email || h.admin_user_id}</span>}
                   </div>
                   <span className="text-gray-400 whitespace-nowrap ml-4">{formatDate(tsToStr(h.created_at))}</span>
                 </div>
@@ -1449,6 +1695,11 @@ export default function OrderDetail() {
             amount_paid: amountPaid,
             paid_at: Timestamp.now(),
           }, 'Payment Received', order.status)} />
+      )}
+      {modal === 'discount' && (
+        <EditDiscountModal order={order} onClose={() => setModal(null)} loading={busy} error={discountError}
+          onSave={(type, value) => saveOrderDiscount({ type, value })}
+          onRemove={() => saveOrderDiscount(null)} />
       )}
       {modal === 'processing' && (
         <ConfirmModal title="Mark as Processing" message="Mark this order as processing?"

@@ -30,7 +30,40 @@
 }
 
 @layer utilities {
+  html:has([data-orders-board]),
+  body:has([data-orders-board]),
+  #root:has([data-orders-board]) {
+    overflow: clip;
+  }
+
+  .admin-content:has([data-orders-board]) {
+    overflow: hidden;
+  }
+
   .scrollbar-thin {
     scrollbar-width: thin;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: rgb(156 163 175);
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }

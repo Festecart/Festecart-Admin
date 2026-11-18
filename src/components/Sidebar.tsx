@@ -12,11 +12,14 @@ import {
   Layout,
   BarChart2,
   Users,
+  Wallet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
   onLogout: () => void
+  showAccounts: boolean
+  accountsOnly: boolean
 }
 
 function NavGroup({
@@ -90,7 +93,7 @@ function Sub({
   )
 }
 
-export function Sidebar({ onLogout }: SidebarProps) {
+export function Sidebar({ onLogout, showAccounts, accountsOnly }: SidebarProps) {
   return (
     <aside className="w-64 bg-gray-900 text-white flex flex-col min-h-screen shrink-0">
 
@@ -115,6 +118,8 @@ export function Sidebar({ onLogout }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        {!accountsOnly && (
+          <>
 
         {/* Orders Group */}
         <NavGroup
@@ -216,6 +221,25 @@ export function Sidebar({ onLogout }: SidebarProps) {
           <Users size={18} />
           Customers
         </NavLink>
+
+          </>
+        )}
+
+        {/* Accounts */}
+        {showAccounts && <NavLink
+          to="/accounts"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+              isActive
+                ? 'bg-red-600 text-white'
+                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+            )
+          }
+        >
+          <Wallet size={18} />
+          Accounts
+        </NavLink>}
 
       </nav>
 

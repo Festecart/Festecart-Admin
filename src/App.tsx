@@ -2,7 +2,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Layout } from '@/components/Layout'
-import { AdminOnlyRoute, AffiliateOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
+import { AccountsOnlyRoute, AdminOnlyRoute, AffiliateOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import Login from '@/pages/Login'
 import Orders from '@/pages/Orders'
 import OrderDetail from '@/pages/OrderDetail'
@@ -36,6 +36,8 @@ import CouponForm from '@/pages/CouponForm'
 import CouponAnalytics from '@/pages/CouponAnalytics'
 import AffiliateDashboard from '@/pages/AffiliateDashboard'
 import Analytics from '@/pages/Analytics'
+import Accounts from '@/pages/Accounts'
+import { useAuth } from '@/hooks/useAuth'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,6 +49,12 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+function HomeRedirect() {
+  const { isAdmin, isAccountsAdmin, isAffiliate } = useAuth()
+  const destination = isAdmin ? '/orders' : isAccountsAdmin ? '/accounts' : isAffiliate ? '/affiliate' : '/login'
+  return <Navigate to={destination} replace />
+}
 
 export default function App() {
   return (
@@ -67,17 +75,13 @@ export default function App() {
             }
           >
 
+            <Route index element={<HomeRedirect />} />
+
             <Route element={<AffiliateOnlyRoute />}>
               <Route path="affiliate" element={<AffiliateDashboard />} />
             </Route>
 
             <Route element={<AdminOnlyRoute />}>
-            {/* Dashboard */}
-            <Route
-              index
-              element={<Navigate to="/orders" replace />}
-            />
-
             {/* Orders */}
             <Route path="orders" element={<Orders />} />
             <Route path="orders/:id" element={<OrderDetail />} />
@@ -219,6 +223,11 @@ export default function App() {
               path="analytics"
               element={<Analytics />}
             />
+
+            </Route>
+
+            <Route element={<AccountsOnlyRoute />}>
+              <Route path="accounts" element={<Accounts />} />
             </Route>
 
           </Route>

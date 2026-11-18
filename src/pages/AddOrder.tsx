@@ -39,6 +39,14 @@ function firstString(...values: unknown[]): string {
   return ''
 }
 
+function formatCustomerAddress(address: CustomerAddress): string {
+  return [
+    address.address,
+    [address.city, address.state].filter(Boolean).join(', '),
+    address.pincode,
+  ].filter(Boolean).join(', ')
+}
+
 function normalizeCustomerAddress(raw: unknown, fallback: CustomerAddress): CustomerAddress | null {
   const address = typeof raw === 'string' ? raw.trim() : ''
   const value = record(raw)
@@ -183,6 +191,10 @@ export default function AddOrder() {
   const [customerSearch,  setCustomerSearch]  = useState('')
   const [customerResults, setCustomerResults] = useState<CustomerProfile[]>([])
   const [selectedCustomer,setSelectedCustomer]= useState<CustomerProfile | null>(null)
+  const [orderShippingAddress, setOrderShippingAddress] = useState<CustomerAddress | null>(null)
+  const [addressDraft, setAddressDraft] = useState<CustomerAddress>({ name: '', phone: '', address: '', city: '', state: '', pincode: '' })
+  const [editingAddress, setEditingAddress] = useState(false)
+  const [addressError, setAddressError] = useState<string | null>(null)
   const [walkin,          setWalkin]          = useState<WalkInCustomer>({ name: '', email: '', phone: '', address: '', pincode: '' })
   const [searchingCust,   setSearchingCust]   = useState(false)
   const [productSearch,   setProductSearch]   = useState('')
@@ -192,12 +204,13 @@ export default function AddOrder() {
   const [items,           setItems]           = useState<OrderItem[]>([])
   const [notes,           setNotes]           = useState('')
   const [additionalDiscount, setAdditionalDiscount] = useState('')
-  const [shippingCharge,  setShippingCharge]  = useState('0')
+  const [shippingCharge,  setShippingCharge]  = useState('')
   const [formError,       setFormError]       = useState<string | null>(null)
   const [showSaveModal,   setShowSaveModal]   = useState(false)
   const [modalError,      setModalError]      = useState<string | null>(null)
   const [saving,          setSaving]          = useState(false)
   const productSearchRef = useRef<HTMLInputElement>(null)
+  const summarySectionRef = useRef<HTMLDivElement>(null)
 
   // Customer search
   useEffect(() => {
@@ -253,7 +266,7 @@ export default function AddOrder() {
   const buildShippingAddress = () => {
     const isWalkin = mode === 'walkin'
     if (isWalkin) return { name: walkin.name, phone: walkin.phone, address: walkin.address, city: '', state: '', pincode: walkin.pincode.trim() }
-    return selectedCustomer?.shippingAddress ?? null
+    return orderShippingAddress
   }
 
   const buildBillingAddress = () => {
@@ -263,11 +276,18 @@ export default function AddOrder() {
 
   const handleSaveAsOrderClick = () => {
     if (items.length === 0)                         { setFormError('Add at least one product'); return }
+    if (mode === 'customer' && !selectedCustomer)   { setFormError('Select a customer'); return }
     if (mode === 'walkin' && !walkin.name.trim())   { setFormError('Customer name is required'); return }
     setFormError(null); setModalError(null); setShowSaveModal(true)
   }
 
   const handleModalConfirm = async (opts: SaveModalResult) => {
+    const shippingAddr = buildShippingAddress()
+    if (opts.deliveryType === 'delivery' && (!shippingAddr?.address.trim() || !shippingAddr.pincode.trim())) {
+      setModalError('A delivery address and pincode are required for delivery')
+      return
+    }
+
     setSaving(true); setModalError(null)
     try {
       const isWalkin    = mode === 'walkin'
@@ -275,7 +295,6 @@ export default function AddOrder() {
       const guestEmail  = isWalkin ? walkin.email : (selectedCustomer?.email ?? null)
       const guestPhone  = isWalkin ? walkin.phone : (selectedCustomer?.phone ?? null)
       const userId      = isWalkin ? null : (selectedCustomer?.user_id ?? null)
-      const shippingAddr = buildShippingAddress()
       const billingAddr = buildBillingAddress()
       const order_number = await nextOrderNumber()
       const now = Timestamp.now()
@@ -380,6 +399,17 @@ export default function AddOrder() {
     finally { setSaving(false) }
   }
 
+  const savedAddresses: { label: string; address: CustomerAddress }[] = []
+  if (selectedCustomer?.shippingAddress) {
+    savedAddresses.push({ label: 'Shipping address', address: selectedCustomer.shippingAddress })
+  }
+  if (
+    selectedCustomer?.billingAddress &&
+    !savedAddresses.some(({ address }) => JSON.stringify(address) === JSON.stringify(selectedCustomer.billingAddress))
+  ) {
+    savedAddresses.push({ label: 'Billing address', address: selectedCustomer.billingAddress })
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-200 px-6 py-4">
@@ -408,7 +438,14 @@ export default function AddOrder() {
         <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
           <div className="flex gap-2">
             {(['customer', 'walkin'] as CustomerMode[]).map(m => (
-              <button key={m} onClick={() => { setMode(m); setSelectedCustomer(null); setCustomerSearch('') }}
+              <button key={m} onClick={() => {
+                setMode(m)
+                setSelectedCustomer(null)
+                setOrderShippingAddress(null)
+                setEditingAddress(false)
+                setAddressError(null)
+                setCustomerSearch('')
+              }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${mode === m ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
                 {m === 'customer' ? 'Customer' : 'Walk-In'}
               </button>
@@ -426,7 +463,14 @@ export default function AddOrder() {
                 {customerResults.length > 0 && (
                   <div className="absolute z-20 w-full mt-1 bg-gray-900 rounded-lg shadow-xl overflow-hidden">
                     {customerResults.map(c => (
-                      <button key={c.user_id} onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomerResults([]) }}
+                      <button key={c.user_id} onClick={() => {
+                        setSelectedCustomer(c)
+                        setOrderShippingAddress(c.shippingAddress)
+                        setEditingAddress(false)
+                        setAddressError(null)
+                        setCustomerSearch('')
+                        setCustomerResults([])
+                      }}
                         className="w-full text-left px-4 py-3 text-sm text-white hover:bg-gray-700 border-b border-gray-700 last:border-0">
                         <span className="font-medium">{c.name}</span>
                         {c.email && <span className="text-gray-300 ml-2">[{c.email}]</span>}
@@ -464,7 +508,12 @@ export default function AddOrder() {
               <div className="bg-gray-50 rounded-xl p-4 space-y-2">
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-xs font-semibold text-gray-500 uppercase">Customer Details</p>
-                  <button onClick={() => setSelectedCustomer(null)} className="text-xs text-gray-400 hover:text-gray-700">Change</button>
+                  <button onClick={() => {
+                    setSelectedCustomer(null)
+                    setOrderShippingAddress(null)
+                    setEditingAddress(false)
+                    setAddressError(null)
+                  }} className="text-xs text-gray-400 hover:text-gray-700">Change</button>
                 </div>
                 <div className="flex items-center gap-2 text-sm"><User size={13} className="text-gray-400" /><span>{selectedCustomer.name}</span></div>
                 {selectedCustomer.email && <div className="flex items-center gap-2 text-sm"><Mail size={13} className="text-gray-400" /><span>{selectedCustomer.email}</span></div>}
@@ -563,8 +612,108 @@ export default function AddOrder() {
           )}
         </div>
 
+        {mode === 'customer' && selectedCustomer && (
+          <section className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-gray-900 text-sm">Delivery Address</h2>
+                <p className="text-xs text-gray-500 mt-1">Choose a saved address or add one for this order.</p>
+              </div>
+              {!editingAddress && (
+                <button onClick={() => {
+                  setAddressDraft(orderShippingAddress ?? {
+                    name: selectedCustomer.name ?? '',
+                    phone: selectedCustomer.phone ?? '',
+                    address: '',
+                    city: '',
+                    state: '',
+                    pincode: '',
+                  })
+                  setAddressError(null)
+                  setEditingAddress(true)
+                }} className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                  Add New Address
+                </button>
+              )}
+            </div>
+
+            {editingAddress ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {([
+                    { field: 'name' as const, label: 'Recipient name', placeholder: 'Full name' },
+                    { field: 'phone' as const, label: 'Phone', placeholder: 'Phone number' },
+                    { field: 'address' as const, label: 'Street address *', placeholder: 'House, street, area' },
+                    { field: 'city' as const, label: 'City', placeholder: 'City' },
+                    { field: 'state' as const, label: 'State', placeholder: 'State' },
+                    { field: 'pincode' as const, label: 'Pincode *', placeholder: 'Postal code' },
+                  ]).map(({ field, label, placeholder }) => (
+                    <label key={field} className="block text-xs font-medium text-gray-700">
+                      {label}
+                      <input value={addressDraft[field]} onChange={e => setAddressDraft(address => ({ ...address, [field]: e.target.value }))}
+                        autoComplete={field === 'pincode' ? 'postal-code' : undefined}
+                        inputMode={field === 'pincode' ? 'numeric' : undefined}
+                        placeholder={placeholder}
+                        className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                    </label>
+                  ))}
+                </div>
+                {addressError && <p className="text-sm text-red-600">{addressError}</p>}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => { setEditingAddress(false); setAddressError(null) }}
+                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                  <button onClick={() => {
+                    if (!addressDraft.address.trim() || !addressDraft.pincode.trim()) {
+                      setAddressError('Street address and pincode are required')
+                      return
+                    }
+                    setOrderShippingAddress({
+                      ...addressDraft,
+                      name: addressDraft.name.trim(),
+                      phone: addressDraft.phone.trim(),
+                      address: addressDraft.address.trim(),
+                      city: addressDraft.city.trim(),
+                      state: addressDraft.state.trim(),
+                      pincode: addressDraft.pincode.trim(),
+                    })
+                    setEditingAddress(false)
+                    setAddressError(null)
+                    summarySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-800">
+                    Save Address &amp; Continue
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {savedAddresses.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {savedAddresses.map(({ label, address }, index) => {
+                      const selected = orderShippingAddress !== null &&
+                        JSON.stringify(orderShippingAddress) === JSON.stringify(address)
+                      return (
+                        <button key={label} onClick={() => setOrderShippingAddress(address)}
+                          className={`px-3 py-2 border rounded-lg text-sm ${selected ? 'border-gray-900 bg-gray-50' : 'border-gray-300 hover:bg-gray-50'}`}>
+                          {label}{index === 0 ? ' (default)' : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {orderShippingAddress
+                  ? <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+                      {orderShippingAddress.name && <p className="font-medium">{orderShippingAddress.name}</p>}
+                      <p>{formatCustomerAddress(orderShippingAddress)}</p>
+                      {orderShippingAddress.phone && <p className="text-gray-500">{orderShippingAddress.phone}</p>}
+                    </div>
+                  : <p className="text-sm text-gray-500">No delivery address selected.</p>}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Notes + Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div ref={summarySectionRef} className="grid grid-cols-1 md:grid-cols-2 gap-5 scroll-mt-6">
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
             <h2 className="font-semibold text-gray-900 text-sm">Notes</h2>
             <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4} placeholder="Add a note for this order…"
@@ -572,16 +721,40 @@ export default function AddOrder() {
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-2 text-sm">
             <h2 className="font-semibold text-gray-900 mb-3">Summary</h2>
+            {items.length > 0 && (
+              <div className="border-b border-gray-100 pb-3 space-y-2">
+                <p className="text-xs font-semibold uppercase text-gray-500">Selected Products</p>
+                {items.map(item => (
+                  <div key={item.product_id} className="flex justify-between gap-3 text-gray-700">
+                    <span>{item.name} × {item.quantity}</span>
+                    <span>{formatCurrency(item.price * item.quantity)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(mode === 'customer' || buildShippingAddress()) && (
+              <div className="border-b border-gray-100 pb-3">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-1">Delivery Address</p>
+                {buildShippingAddress()
+                  ? <p className="text-gray-700">
+                      {buildShippingAddress()?.name && <>{buildShippingAddress()?.name}<br /></>}
+                      {formatCustomerAddress(buildShippingAddress()!)}
+                    </p>
+                  : <p className="text-gray-500">No address selected</p>}
+              </div>
+            )}
             <div className="flex justify-between text-gray-600"><span>Order Total</span><span>{formatCurrency(subtotalOrig)}</span></div>
             {itemDiscount > 0 && <div className="flex justify-between text-red-600"><span>Item Discount</span><span>(-) {formatCurrency(itemDiscount)}</span></div>}
             <div className="flex justify-between items-center text-gray-600">
               <span>Additional Discount</span>
-              <input type="number" value={additionalDiscount} onChange={e => setAdditionalDiscount(e.target.value)} min="0" placeholder="0"
+              <input type="number" value={additionalDiscount} onChange={e => setAdditionalDiscount(e.target.value)}
+                onBlur={e => { if (e.target.value.trim() && Number(e.target.value) === 0) setAdditionalDiscount('') }} min="0" placeholder="0"
                 className="w-24 px-2 py-1 text-xs border border-gray-200 rounded text-right focus:outline-none" />
             </div>
             <div className="flex justify-between items-center text-gray-600">
               <span>Shipping Charges</span>
-              <input type="number" value={shippingCharge} onChange={e => setShippingCharge(e.target.value)} min="0" placeholder="0"
+              <input type="number" value={shippingCharge} onChange={e => setShippingCharge(e.target.value)}
+                onBlur={e => { if (e.target.value.trim() && Number(e.target.value) === 0) setShippingCharge('') }} min="0" placeholder="0"
                 className="w-24 px-2 py-1 text-xs border border-gray-200 rounded text-right focus:outline-none" />
             </div>
             <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-900"><span>Total</span><span>{formatCurrency(total)}</span></div>
