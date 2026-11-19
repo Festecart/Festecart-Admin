@@ -5,8 +5,10 @@ import { Layout } from '@/components/Layout'
 import { AccountsOnlyRoute, AdminOnlyRoute, AffiliateOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import Login from '@/pages/Login'
 import Orders from '@/pages/Orders'
+import OrdersDashboard from '@/pages/OrdersDashboard'
 import OrderDetail from '@/pages/OrderDetail'
 import Shipments from '@/pages/Shipments'
+import ShippingDashboard from '@/pages/ShippingDashboard'
 import DeliveryZones from '@/pages/DeliveryZones'
 import ShippingZones from '@/pages/ShippingZones'
 import ShippingZoneForm from '@/pages/ShippingZoneForm'
@@ -22,6 +24,7 @@ import ContactEnquiries from '@/pages/ContactEnquiries'
 
 import Categories from '@/pages/Categories'
 import Products from '@/pages/Products'
+import CatalogDashboard from '@/pages/CatalogDashboard'
 import ProductForm from '@/pages/ProductForm'
 
 import SiteNavigation from '@/pages/SiteNavigation'
@@ -84,11 +87,13 @@ export default function App() {
 
             <Route element={<AdminOnlyRoute />}>
             {/* Orders */}
+            <Route path="orders/dashboard" element={<OrdersDashboard />} />
             <Route path="orders" element={<Orders />} />
             <Route path="orders/:id" element={<OrderDetail />} />
             <Route path="orders/add" element={<AddOrder />} />
 
             {/* Shipments */}
+            <Route path="shipments/dashboard" element={<ShippingDashboard />} />
             <Route path="shipments" element={<Shipments />} />
 
             {/* Delivery Zones */}
@@ -158,6 +163,7 @@ export default function App() {
             />
 
             {/* Catalog */}
+            <Route path="catalog/dashboard" element={<CatalogDashboard />} />
             <Route
               path="catalog/categories"
               element={<Categories />}

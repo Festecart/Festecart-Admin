@@ -128,6 +128,7 @@ export function Sidebar({ onLogout, showAccounts, accountsOnly }: SidebarProps) 
           basePath="/orders"
         >
           <Sub to="/orders" label="Orders" />
+          <Sub to="/orders/dashboard" label="Orders Dashboard" />
           <Sub to="/abandoned-cart" label="Abandoned Cart" />
           <Sub to="/contact-enquiries" label="Contact Enquires" />
           <Sub to="/coupons" label="Coupons" />
@@ -139,8 +140,20 @@ export function Sidebar({ onLogout, showAccounts, accountsOnly }: SidebarProps) 
           label="Catalog"
           basePath="/catalog"
         >
+          <Sub to="/catalog/dashboard" label="Catalog Dashboard" />
           <Sub to="/catalog/products" label="Products" />
           <Sub to="/catalog/categories" label="Categories" />
+        </NavGroup>
+
+        {/* Shipping */}
+        <NavGroup
+          icon={Truck}
+          label="Shipping"
+          basePath="/ship"
+        >
+          <Sub to="/shipments/dashboard" label="Shipping Dashboard" />
+          <Sub to="/shipments" label="Shipments" />
+          <Sub to="/shipping-zones" label="Shipping Zones" />
         </NavGroup>
 
         {/* Website Group */}
@@ -188,22 +201,6 @@ export function Sidebar({ onLogout, showAccounts, accountsOnly }: SidebarProps) 
         >
           <BarChart2 size={18} />
           Analytics
-        </NavLink>
-
-        {/* Shipping Zones */}
-        <NavLink
-          to="/shipping-zones"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-              isActive
-                ? 'bg-red-600 text-white'
-                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-            )
-          }
-        >
-          <Truck size={18} />
-          Shipping Zones
         </NavLink>
 
         {/* Customers - New Menu */}
