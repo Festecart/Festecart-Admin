@@ -37,7 +37,7 @@ import CouponAnalytics from '@/pages/CouponAnalytics'
 import AffiliateDashboard from '@/pages/AffiliateDashboard'
 import Analytics from '@/pages/Analytics'
 import Accounts from '@/pages/Accounts'
-import { useAuth } from '@/hooks/useAuth'
+import { AuthProvider, useAuth } from '@/hooks/useAuth'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,8 +59,9 @@ function HomeRedirect() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
 
           {/* Public Route */}
           <Route path="/login" element={<Login />} />
@@ -238,8 +239,9 @@ export default function App() {
             element={<Navigate to="/" replace />}
           />
 
-        </Routes>
-      </BrowserRouter>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </QueryClientProvider>
   )
 }

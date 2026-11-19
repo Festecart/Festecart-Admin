@@ -12,7 +12,7 @@ const inputCls =
   'w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent'
 
 export default function Login() {
-  const { user, isAdmin, isAffiliate, loading, error, login, loginWithGoogle, resetPassword } = useAuth()
+  const { user, isAdmin, isAccountsAdmin, isAffiliate, loading, error, login, loginWithGoogle, resetPassword } = useAuth()
 
   const [view,         setView]         = useState<View>('login')
   const [email,        setEmail]        = useState('')
@@ -32,8 +32,9 @@ export default function Login() {
     return () => clearTimeout(t)
   }, [cooldown])
 
-  if (!loading && user && (isAdmin || isAffiliate)) {
-    return <Navigate to={isAffiliate ? '/affiliate' : '/'} replace />
+  if (!loading && user && (isAdmin || isAccountsAdmin || isAffiliate)) {
+    const destination = isAdmin ? '/' : isAccountsAdmin ? '/accounts' : '/affiliate'
+    return <Navigate to={destination} replace />
   }
 
   const switchView = (next: View) => {
