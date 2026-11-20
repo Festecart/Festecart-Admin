@@ -48,6 +48,7 @@ const TRANSACTIONS = 'financial_transactions'
 const EXPENSES = 'financial_expenses'
 const CATEGORIES = 'financial_categories'
 const PAGE_SIZE = 100
+const ACCOUNTS_FUNCTION_REGION = 'us-central1'
 export const PETTY_CASH_TRANSACTION_ACCOUNT_ID = '__petty_cash_spending__'
 export const UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID = '__unallocated_expense_payment__'
 
@@ -169,7 +170,9 @@ function readExpense(id: string, data: DocumentData): FinancialExpense {
   const festivalTag = normalizeFestivalTag(data.festival_tag, `Expense ${id} festival tag`)
   return {
     id,
-    expense_id: typeof data.expense_id === 'string' && data.expense_id.trim() ? data.expense_id : id,
+    expense_id: typeof data.expense_id === 'string' && data.expense_id.trim()
+      ? data.expense_id.trim()
+      : '',
     description: String(data.description ?? ''),
     category_name: String(data.category_name ?? ''),
     vendor_id: (data.vendor_id as string | null) ?? null,
@@ -246,11 +249,23 @@ export async function deleteFinancialTransaction(transaction: FinancialTransacti
       transaction.id.includes('/') || transaction.id.length > 200) {
     throw new Error('The selected transaction could not be identified. Refresh and try again.')
   }
+  const functionName = 'deleteFinancialTransaction'
+  const collectionPath = 'financial_transactions'
   const deleteRecord = httpsCallable<{ transaction_id: string; petty_cash_spending: boolean }, { success: boolean }>(
-    getFunctions(app, 'us-central1'),
-    'deleteFinancialTransaction',
+    getFunctions(app, ACCOUNTS_FUNCTION_REGION),
+    functionName,
   )
-  await deleteRecord({ transaction_id: transaction.id, petty_cash_spending: pettyCashSpending })
+  try {
+    await deleteRecord({ transaction_id: transaction.id, petty_cash_spending: pettyCashSpending })
+  } catch (error) {
+    logDeleteCallableError(error, {
+      functionName,
+      transactionDocumentId: transaction.id,
+      transactionType: transaction.type,
+      collectionPath,
+    })
+    throw error
+  }
 }
 
 export async function editFinancialExpense(expense: FinancialExpense, input: EditExpenseInput): Promise<void> {
@@ -266,11 +281,50 @@ export async function deleteFinancialExpense(expense: FinancialExpense): Promise
       expense.id.includes('/') || expense.id.length > 200) {
     throw new Error('The selected expense could not be identified. Refresh and try again.')
   }
+  const functionName = 'deleteFinancialExpense'
+  const collectionPath = 'financial_expenses'
   const deleteRecord = httpsCallable<{ expense_id: string }, { success: boolean }>(
-    getFunctions(app, 'us-central1'),
-    'deleteFinancialExpense',
+    getFunctions(app, ACCOUNTS_FUNCTION_REGION),
+    functionName,
   )
-  await deleteRecord({ expense_id: expense.id })
+  try {
+    await deleteRecord({ expense_id: expense.id })
+  } catch (error) {
+    logDeleteCallableError(error, {
+      functionName,
+      transactionDocumentId: expense.id,
+      transactionType: 'expense',
+      collectionPath,
+    })
+    throw error
+  }
+}
+
+function logDeleteCallableError(
+  error: unknown,
+  context: {
+    functionName: string
+    transactionDocumentId: string
+    transactionType: string
+    collectionPath: string
+  },
+): void {
+  let errorCode = 'unknown'
+  let errorMessage = 'Unknown Firebase error'
+  if (error && typeof error === 'object') {
+    if ('code' in error && typeof error.code === 'string') errorCode = error.code
+    if ('message' in error && typeof error.message === 'string') errorMessage = error.message
+  } else if (typeof error === 'string') {
+    errorMessage = error
+  }
+  console.error('Firebase transaction deletion failed.', {
+    ...context,
+    firestoreDocumentPath: `${context.collectionPath}/${context.transactionDocumentId}`,
+    firebaseProjectId: app.options.projectId || 'unknown',
+    functionRegion: ACCOUNTS_FUNCTION_REGION,
+    errorCode,
+    errorMessage,
+  })
 }
 
 export async function fetchTransactionPage(
@@ -323,15 +377,41 @@ export async function fetchReportTransactions(range: AccountDateRange): Promise<
   return documents.filter(item => item.data().is_deleted !== true).map(item => readTransaction(item.id, item.data()))
 }
 
+function logExpenseReadError(source: string, error: unknown): void {
+  const details = error && typeof error === 'object'
+    ? error as { code?: unknown; message?: unknown }
+    : {}
+  console.error('[accounts] Firestore expense read failed', {
+    sourceCollection: source,
+    projectId: app.options.projectId || 'unknown',
+    databaseId: 'festecart',
+    errorCode: typeof details.code === 'string' || typeof details.code === 'number' ? details.code : 'unknown',
+    errorMessage: typeof details.message === 'string'
+      ? details.message
+      : error === undefined ? 'Unknown error' : String(error),
+    error,
+  })
+}
+
+async function loadExpenses(baseQuery: Query<DocumentData>, source: string): Promise<FinancialExpense[]> {
+  try {
+    const documents = await fetchAllPages(baseQuery)
+    return documents
+      .filter(item => item.data().is_deleted !== true)
+      .map(item => readExpense(item.id, item.data()))
+  } catch (error) {
+    logExpenseReadError(source, error)
+    throw error
+  }
+}
+
 export async function fetchReportExpenses(range: AccountDateRange): Promise<FinancialExpense[]> {
   const baseQuery = query(collection(db, EXPENSES), ...rangeConstraints(range), orderBy('transaction_date', 'desc'))
-  const documents = await fetchAllPages(baseQuery)
-  return documents.filter(item => item.data().is_deleted !== true).map(item => readExpense(item.id, item.data()))
+  return loadExpenses(baseQuery, 'financial_expenses (reports)')
 }
 
 export async function fetchExpenses(): Promise<FinancialExpense[]> {
-  const documents = await fetchAllPages(query(collection(db, EXPENSES), orderBy('transaction_date', 'desc')))
-  return documents.filter(item => item.data().is_deleted !== true).map(item => readExpense(item.id, item.data()))
+  return loadExpenses(query(collection(db, EXPENSES), orderBy('transaction_date', 'desc')), EXPENSES)
 }
 
 export async function fetchFestivalTags(): Promise<FestivalTag[]> {
@@ -1085,26 +1165,75 @@ export async function createExpense(input: NewExpenseInput): Promise<void> {
   assertPaise(input.amount_paise, 'Expense amount')
   if (!input.category_name.trim()) throw new Error('Choose an expense category.')
   if (!input.payment_method.trim()) throw new Error('Choose a payment method.')
+  const expenseId = input.expense_id.trim()
+  if (expenseId && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId)) {
+    throw new Error('Enter an Expense ID using only letters, numbers, and hyphens.')
+  }
   const enteredFestivalTag = normalizeFestivalTag(input.festival_tag, 'Festival tag')
   const festivalTagIdValue = normalizeFestivalTagId(input.festival_tag_id, enteredFestivalTag, 'Festival tag')
   if (!festivalTagIdValue) throw new Error('Please select a created tag before saving the expense.')
-  if (!input.expense_id.trim()) throw new Error('The Expense ID is not ready. Please try again.')
   const createRecord = httpsCallable<{ input: NewExpenseInput }, { success: boolean }>(
     getFunctions(app, 'us-central1'),
     'createFinancialExpense',
   )
-  await createRecord({ input: { ...input, festival_tag: enteredFestivalTag, festival_tag_id: festivalTagIdValue } })
+  try {
+    await createRecord({
+      input: {
+        ...input,
+        expense_id: expenseId,
+        festival_tag: enteredFestivalTag,
+        festival_tag_id: festivalTagIdValue,
+      },
+    })
+  } catch (error) {
+    const failure = logExpenseCallableError('createFinancialExpense', error)
+    if (failure.errorCode === 'functions/already-exists' || failure.errorCode === 'already-exists') {
+      throw new Error('This Expense ID already exists. Please enter a different ID.')
+    }
+    if (failure.errorCode === 'functions/unauthenticated') {
+      throw new Error('Sign in with an admin account before saving an expense.')
+    }
+    if (failure.errorCode === 'functions/permission-denied') {
+      throw new Error('Your account does not have permission to save expenses.')
+    }
+    if ([
+      'functions/invalid-argument',
+      'functions/failed-precondition',
+      'functions/not-found',
+      'functions/resource-exhausted',
+    ].includes(failure.errorCode)) {
+      throw new Error(failure.errorMessage)
+    }
+    throw new Error('The expense service is unavailable. Please try again shortly.')
+  }
 }
 
-export async function generateExpenseId(): Promise<string> {
-  requireActor()
-  const generateId = httpsCallable<Record<string, never>, { expense_id: string }>(
-    getFunctions(app, 'us-central1'),
-    'generateFinancialExpenseId',
-  )
-  const result = await generateId({})
-  if (!result.data.expense_id) throw new Error('An Expense ID could not be generated.')
-  return result.data.expense_id
+function logExpenseCallableError(
+  functionName: string,
+  error: unknown,
+): { errorCode: string; errorMessage: string } {
+  const details = error && typeof error === 'object'
+    ? error as { code?: unknown; message?: unknown }
+    : {}
+  const errorCode = typeof details.code === 'string' || typeof details.code === 'number'
+    ? String(details.code)
+    : 'unknown'
+  const errorMessage = typeof details.message === 'string'
+    ? details.message
+    : error === undefined ? 'Unknown error' : String(error)
+  console.error(`[accounts] ${functionName} failed`, {
+    functionName,
+    operation: functionName,
+    collectionPath: EXPENSES,
+    projectId: app.options.projectId || 'unknown',
+    functionRegion: ACCOUNTS_FUNCTION_REGION,
+    databaseId: 'festecart',
+    isAuthenticated: Boolean(auth.currentUser),
+    errorCode,
+    errorMessage,
+    error,
+  })
+  return { errorCode, errorMessage }
 }
 
 export async function recordExpensePayment(

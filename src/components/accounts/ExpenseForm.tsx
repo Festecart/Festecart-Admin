@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, X } from 'lucide-react'
-import { generateExpenseId } from '@/lib/accounts'
 import { festivalTagId } from '@/lib/festivalProducts'
 import type { EditExpenseInput, FinancialCategory, FinancialExpense, NewExpenseInput, VendorOption } from '@/types/accounts'
 import type { FestivalTag } from '@/types/accounts'
 
 const CATEGORIES = ['Purchases', 'Packaging', 'Transportation', 'Marketing', 'Salaries', 'Delivery', 'Utilities', 'Miscellaneous']
-const PAYMENT_METHODS = ['Cash', 'UPI', 'Bank Transfer', 'Debit/Credit Card', 'Other']
+const PAYMENT_METHODS = ['Cash', 'UPI', 'Bank Transfer']
 
 function dateInput(value: FinancialExpense['transaction_date']): string {
   const date = value.toDate()
@@ -76,9 +75,7 @@ export function ExpenseForm({
   const [date, setDate] = useState(initialExpense ? dateInput(initialExpense.transaction_date) : '')
   const [category, setCategory] = useState(initialExpense?.category_name ?? CATEGORIES[0])
   const [customCategory, setCustomCategory] = useState('')
-  const [expenseId, setExpenseId] = useState(initialExpense?.expense_id ?? initialExpense?.id ?? '')
-  const [expenseIdError, setExpenseIdError] = useState('')
-  const [expenseIdRequest, setExpenseIdRequest] = useState(0)
+  const [expenseId, setExpenseId] = useState(initialExpense?.expense_id ?? '')
   const [description, setDescription] = useState(initialExpense?.description ?? '')
   const [festivalTagIdValue, setFestivalTagIdValue] = useState(
     initialExpense?.festival_tag_id ?? (initialExpense?.festival_tag ? festivalTagId(initialExpense.festival_tag) : ''),
@@ -88,23 +85,7 @@ export function ExpenseForm({
   const [paymentMethod, setPaymentMethod] = useState(initialExpense?.payment_method ?? '')
   const [error, setError] = useState('')
   const isSubmitting = useRef(false)
-  const editingExpenseId = initialExpense?.id
-  useEffect(() => {
-    if (initialExpense) {
-      setExpenseId(initialExpense.expense_id || initialExpense.id)
-      setExpenseIdError('')
-      return
-    }
-    let active = true
-    setExpenseId('')
-    setExpenseIdError('')
-    void generateExpenseId().then(id => {
-      if (active) setExpenseId(id)
-    }).catch(reason => {
-      if (active) setExpenseIdError(reason instanceof Error ? reason.message : 'An Expense ID could not be generated.')
-    })
-    return () => { active = false }
-  }, [editingExpenseId, expenseIdRequest])
+  const datePickerRef = useRef<HTMLInputElement>(null)
   const vendor = vendors.find(item => item.id === vendorId)
   const createdTags = festivalTags.filter(tag => tag.is_custom)
   const existingTagId = initialExpense?.festival_tag_id ?? (initialExpense?.festival_tag ? festivalTagId(initialExpense.festival_tag) : '')
@@ -121,8 +102,9 @@ export function ExpenseForm({
   const hasValidTag = initialExpense
     ? Boolean(festivalTagIdValue && festivalTagName)
     : Boolean(hasCreatedTag && festivalTagName)
+  const hasValidExpenseId = Boolean(initialExpense) || !expenseId.trim() || /^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())
   const canSave = !saving && !isSubmitting.current &&
-    Boolean(expenseId && validDate && isValidCategory && isValidAmount && paymentMethod.trim() && hasValidTag)
+    Boolean(hasValidExpenseId && validDate && isValidCategory && isValidAmount && paymentMethod.trim() && hasValidTag)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -136,7 +118,9 @@ export function ExpenseForm({
         throw new Error('Please select a created tag before saving the expense.')
       }
       if (!paymentMethod.trim()) throw new Error('Select a payment method.')
-      if (!expenseId) throw new Error('The Expense ID is not ready. Please try again.')
+      if (!initialExpense && expenseId.trim() && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())) {
+        throw new Error('Enter an Expense ID using only letters, numbers, and hyphens.')
+      }
       const amountValue = paise(amount, 'amount')
       if (category === '__custom') {
         if (!categoryName) throw new Error('Enter a category name.')
@@ -158,7 +142,7 @@ export function ExpenseForm({
         })
       } else {
         await onSave({
-          expense_id: expenseId,
+          expense_id: expenseId.trim(),
           description,
           category_name: categoryName,
           vendor_id: vendorId || null,
@@ -185,17 +169,15 @@ export function ExpenseForm({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="expense-form-title" className="text-lg font-semibold text-slate-900">{initialExpense ? 'Edit expense' : 'Record an expense'}</h2>
-            <p className="mt-1 text-sm text-slate-500">The full amount is recorded as spending. No account balance is changed.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block text-sm font-medium text-slate-700">Expense ID
-            <input type="text" value={expenseId || (expenseIdError ? 'Unavailable' : 'Generating…')} readOnly
-              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2.5 font-normal text-slate-700" />
-            {expenseIdError && <span role="alert" className="mt-1 block text-xs text-rose-700">{expenseIdError}
-              <button type="button" onClick={() => setExpenseIdRequest(value => value + 1)} className="ml-2 font-semibold underline">Retry</button>
-            </span>}
+          <label className="block text-sm font-medium text-slate-700">Expense ID (Optional)
+            <input type="text" value={expenseId} onChange={event => setExpenseId(event.target.value)}
+              placeholder="Enter Expense ID" maxLength={64} pattern="[A-Za-z0-9-]{1,64}" title="Use only letters, numbers, and hyphens."
+              readOnly={Boolean(initialExpense)}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal text-slate-700 read-only:bg-slate-50" />
           </label>
           <label className="block text-sm font-medium text-slate-700">Expense Date
             <span className="mt-1.5 flex gap-2">
@@ -203,11 +185,20 @@ export function ExpenseForm({
                 onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required
                 aria-invalid={Boolean(date && !validDate)}
                 className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-              <span className="relative grid w-12 shrink-0 place-items-center rounded-xl border border-slate-300 text-slate-600">
-                <CalendarDays size={18} aria-hidden="true" />
-                <input type="date" aria-label="Choose expense date from calendar" value={validDate}
+              <span className="relative grid w-12 shrink-0 place-items-center">
+                <button type="button" aria-label="Open expense date calendar"
+                  onClick={() => {
+                    const picker = datePickerRef.current
+                    if (!picker) return
+                    if (typeof picker.showPicker === 'function') picker.showPicker()
+                    else picker.click()
+                  }}
+                  className="grid h-full w-full place-items-center rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50">
+                  <CalendarDays size={18} aria-hidden="true" />
+                </button>
+                <input ref={datePickerRef} type="date" aria-label="Choose expense date from calendar" value={validDate}
                   onChange={event => setDate(isoToDate(event.target.value))}
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
+                  tabIndex={-1} className="pointer-events-none absolute h-px w-px opacity-0" />
               </span>
             </span>
             {date && !validDate && <span role="alert" className="mt-1 block text-xs text-rose-700">Enter a real date in DD/MM/YYYY format.</span>}
@@ -249,7 +240,9 @@ export function ExpenseForm({
             <select value={paymentMethod} onChange={event => setPaymentMethod(event.target.value)} required
               className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
               <option value="">Select a payment method</option>
-              {initialExpense?.payment_method && !PAYMENT_METHODS.includes(initialExpense.payment_method) && <option value={initialExpense.payment_method}>{initialExpense.payment_method}</option>}
+              {initialExpense?.payment_method && !PAYMENT_METHODS.includes(initialExpense.payment_method) && (
+                <option value={initialExpense.payment_method} disabled>Existing: {initialExpense.payment_method} (unchanged)</option>
+              )}
               {PAYMENT_METHODS.map(item => <option key={item}>{item}</option>)}
             </select>
           </label>
@@ -261,7 +254,7 @@ export function ExpenseForm({
               {vendors.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
-          <label className="block text-sm font-medium text-slate-700 sm:col-span-2">Invoice / Reference (Optional)
+          <label className="block text-sm font-medium text-slate-700 sm:col-span-2">Reference Number (Optional)
             <input value={reference} onChange={event => setReference(event.target.value)} maxLength={200}
               className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
           </label>

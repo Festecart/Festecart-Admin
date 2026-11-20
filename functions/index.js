@@ -8,10 +8,16 @@ const { getFirestore, Timestamp, FieldPath, FieldValue } = require('firebase-adm
 const { getStorage } = require('firebase-admin/storage')
 const PDFDocument = require('pdfkit')
 
+const FUNCTION_REGION = 'us-central1'
+const ACCOUNTS_CORS_ORIGINS = [
+  'https://tempadmin.festecart.com',
+  'http://localhost:5175',
+  'http://localhost:5176',
+]
 const firebaseApp = initializeApp()
 const db = getFirestore(firebaseApp, 'festecart')
 const adminAuth = getAuth(firebaseApp)
-setGlobalOptions({ region: 'us-central1' })
+setGlobalOptions({ region: FUNCTION_REGION })
 
 const LOGO_URL   = 'https://admin.festecart.org/logo.png'
 const ADMIN_URL  = 'https://admin.festecart.org'
@@ -608,7 +614,7 @@ exports.syncAccountsAdminClaims = onDocumentWritten(
   },
 )
 
-exports.refreshAccountsAdminClaims = onCall(async function(request) {
+exports.refreshAccountsAdminClaims = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in with an admin account.')
   const roleSnapshot = await db.collection('user_roles').doc(request.auth.uid).get()
   const roleData = roleSnapshot.exists ? roleSnapshot.data() : null
@@ -620,7 +626,7 @@ exports.refreshAccountsAdminClaims = onCall(async function(request) {
   return { accountsAdmin: true }
 })
 
-exports.getFinancialReceiptDownloadUrl = onCall(async function(request) {
+exports.getFinancialReceiptDownloadUrl = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in with an admin account.')
   const roleSnapshot = await db.collection('user_roles').doc(request.auth.uid).get()
   const roleData = roleSnapshot.exists ? roleSnapshot.data() : null
@@ -789,7 +795,7 @@ function expensePaymentStatus(paid, total) {
   return paid === 0 ? 'unpaid' : paid >= total ? 'paid' : 'partially_paid'
 }
 
-exports.editFinancialTransaction = onCall(async function(request) {
+exports.editFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   const actor = await requireAccountsAdmin(request)
   const transactionId = requireRecordId(request.data && request.data.transaction_id, 'Transaction ID')
   const input = request.data && request.data.input
@@ -976,17 +982,19 @@ exports.editFinancialTransaction = onCall(async function(request) {
   return { success: true }
 })
 
-exports.deleteFinancialTransaction = onCall(async function(request) {
+exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   const actor = await requireAccountsAdmin(request)
   const transactionId = requireRecordId(request.data && request.data.transaction_id, 'Transaction ID')
   const transactionRef = db.collection('financial_transactions').doc(transactionId)
   const now = Timestamp.now()
+  let transactionType = 'unknown'
 
   await db.runTransaction(async function(transaction) {
     const snapshot = await transaction.get(transactionRef)
     if (!snapshot.exists) throw new HttpsError('not-found', 'The transaction no longer exists.')
     const current = snapshot.data()
     if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'This transaction has already been deleted.')
+    transactionType = typeof current.type === 'string' ? current.type : 'unknown'
     if (current.type === 'opening_balance') throw new HttpsError('failed-precondition', 'Opening balances cannot be deleted as transactions.')
     let isPettyCashSpending = current.is_petty_cash_spending === true
     if (isPettyCashSpending && (current.type !== 'expense' || current.linked_order_id || current.linked_expense_id)) {
@@ -1036,6 +1044,16 @@ exports.deleteFinancialTransaction = onCall(async function(request) {
       linkedExpense.is_full_amount_spending === true &&
       current.is_unallocated_expense_payment === true,
     )
+    const linkedExpenseIdValue = linkedExpense && typeof linkedExpense.expense_id === 'string' &&
+      /^[A-Za-z0-9-]{1,64}$/.test(linkedExpense.expense_id)
+      ? linkedExpense.expense_id
+      : null
+    const linkedExpenseIdRegistryRef = isFullAmountExpense && linkedExpenseIdValue
+      ? db.collection('financial_expense_id_registry').doc(linkedExpenseIdValue.toUpperCase())
+      : null
+    const linkedExpenseIdRegistrySnapshot = linkedExpenseIdRegistryRef
+      ? await transaction.get(linkedExpenseIdRegistryRef)
+      : null
     if (isFullAmountExpense) {
       const linkedTransactions = await transaction.get(
         db.collection('financial_transactions').where('linked_expense_id', '==', current.linked_expense_id),
@@ -1090,27 +1108,10 @@ exports.deleteFinancialTransaction = onCall(async function(request) {
     }
 
     if (!isPettyCashSpending) await applyAccountDeltas(transaction, deltas, actor, now)
-    transaction.update(transactionRef, {
-      is_deleted: true,
-      ...(isPettyCashSpending ? { is_petty_cash_spending: true } : {}),
-      deleted_at: now,
-      deleted_by: actor.uid,
-      deleted_by_name: actor.name,
-      updated_by: actor.uid,
-      updated_by_name: actor.name,
-      updated_at: now,
-      audit: FieldValue.arrayUnion({
-        action: 'deleted',
-        admin_user_id: actor.uid,
-        admin_user_name: actor.name,
-        created_at: now,
-        amount_paise: current.amount_paise,
-      }),
-    })
-    if (orderUpdate && orderRef) transaction.update(orderRef, { ...orderUpdate, updated_at: now })
-    if (expenseUpdate && expenseRef) transaction.update(expenseRef, expenseUpdate)
-    if (isFullAmountExpense && expenseRef) {
-      transaction.update(expenseRef, {
+    if (current.type === 'expense' || isPettyCashSpending) {
+      transaction.delete(transactionRef)
+    } else {
+      transaction.update(transactionRef, {
         is_deleted: true,
         deleted_at: now,
         deleted_by: actor.uid,
@@ -1119,52 +1120,80 @@ exports.deleteFinancialTransaction = onCall(async function(request) {
         updated_by_name: actor.name,
         updated_at: now,
         audit: FieldValue.arrayUnion({
-          action: 'deleted_with_transaction',
-          linked_transaction_id: transactionId,
+          action: 'deleted',
           admin_user_id: actor.uid,
           admin_user_name: actor.name,
           created_at: now,
-          amount_paise: linkedExpense.amount_paise,
+          amount_paise: current.amount_paise,
         }),
       })
     }
+    if (orderUpdate && orderRef) transaction.update(orderRef, { ...orderUpdate, updated_at: now })
+    if (expenseUpdate && expenseRef) transaction.update(expenseRef, expenseUpdate)
+    if (isFullAmountExpense && expenseRef) {
+      if (linkedExpenseIdRegistryRef && linkedExpenseIdRegistrySnapshot && !linkedExpenseIdRegistrySnapshot.exists) {
+        transaction.create(linkedExpenseIdRegistryRef, {
+          expense_id: linkedExpenseIdValue,
+          expense_document_id: expenseRef.id,
+          created_by: actor.uid,
+          created_at: now,
+          deleted_at: now,
+          deleted_by: actor.uid,
+        })
+      }
+      transaction.delete(expenseRef)
+    }
+  }).catch(function(error) {
+    const errorCode = error && (typeof error.code === 'string' || typeof error.code === 'number')
+      ? error.code
+      : 'unknown'
+    const errorMessage = error && typeof error.message === 'string'
+      ? error.message
+      : String(error)
+    console.error('[accounts] deleteFinancialTransaction failed', {
+      errorCode,
+      errorMessage,
+      functionName: 'deleteFinancialTransaction',
+      firebaseProjectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'unknown',
+      functionRegion: FUNCTION_REGION,
+      transactionDocumentId: transactionId,
+      transactionType,
+      firestoreDocumentPath: `financial_transactions/${transactionId}`,
+    })
+    throw error
   })
   return { success: true }
 })
 
-exports.generateFinancialExpenseId = onCall(async function(request) {
-  await requireAccountsAdmin(request)
-  const sequenceRef = db.collection('financial_expense_sequences').doc('global')
-  const expenseCollection = db.collection('financial_expenses')
-  const expenseId = await db.runTransaction(async function(transaction) {
-    const sequenceSnapshot = await transaction.get(sequenceRef)
-    const storedNumber = sequenceSnapshot.exists ? sequenceSnapshot.data().next_number : 0
-    if (!Number.isSafeInteger(storedNumber) || storedNumber < 0) {
-      throw new HttpsError('failed-precondition', 'The expense ID sequence is invalid; ask an administrator to review it.')
-    }
-    let nextNumber = storedNumber
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      nextNumber += 1
-      const candidate = `EXP-${String(nextNumber).padStart(6, '0')}`
-      const existing = await transaction.get(expenseCollection.doc(candidate))
-      if (existing.exists) continue
-      transaction.set(sequenceRef, { next_number: nextNumber, updated_at: Timestamp.now() }, { merge: true })
-      return candidate
-    }
-    throw new HttpsError('resource-exhausted', 'A unique Expense ID could not be generated. Please try again.')
-  })
-  return { expense_id: expenseId }
-})
-
-exports.createFinancialExpense = onCall(async function(request) {
-  const actor = await requireAccountsAdmin(request)
+exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  let actor
+  try {
+    actor = await requireAccountsAdmin(request)
+  } catch (error) {
+    const errorCode = error && (typeof error.code === 'string' || typeof error.code === 'number')
+      ? error.code
+      : 'unknown'
+    const errorMessage = error && typeof error.message === 'string'
+      ? error.message
+      : String(error)
+    console.error('[accounts] createFinancialExpense authorization failed', {
+      errorCode,
+      errorMessage,
+      functionName: 'createFinancialExpense',
+      operation: 'createFinancialExpense',
+      collectionPath: 'financial_expenses',
+      firebaseProjectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'unknown',
+      functionRegion: FUNCTION_REGION,
+      firestoreDatabaseId: 'festecart',
+      isAuthenticated: Boolean(request.auth),
+      adminAuthorizationSucceeded: false,
+    })
+    throw error
+  }
   const input = request.data && request.data.input
   if (!input || typeof input !== 'object') throw new HttpsError('invalid-argument', 'Expense details are required.')
-  const expenseId = requireText(input.expense_id, 'Expense ID', 32, false)
-  const expenseIdMatch = /^EXP-(\d{6,})$/.exec(expenseId)
-  if (!expenseIdMatch) throw new HttpsError('invalid-argument', 'The Expense ID is invalid.')
-  const expenseNumber = Number(expenseIdMatch[1])
-  if (!Number.isSafeInteger(expenseNumber) || expenseNumber <= 0) {
+  const expenseId = requireText(input.expense_id, 'Expense ID', 64, true)
+  if (expenseId && !/^[A-Za-z0-9-]+$/.test(expenseId)) {
     throw new HttpsError('invalid-argument', 'The Expense ID is invalid.')
   }
   const description = requireText(input.description, 'Description', 250, true)
@@ -1175,31 +1204,37 @@ exports.createFinancialExpense = onCall(async function(request) {
   const date = requireDate(input.transaction_date, 'Expense date')
   const amount = requirePaise(input.amount_paise, 'Expense amount', false)
   const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
+  if (!['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod)) {
+    throw new HttpsError('invalid-argument', 'Choose Cash, UPI or Bank Transfer as the payment method.')
+  }
   const festivalTag = requireFestivalTag(input.festival_tag)
   const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
   if (!festivalTagId) throw new HttpsError('invalid-argument', 'Please select a created tag.')
 
-  const sequenceRef = db.collection('financial_expense_sequences').doc('global')
-  const expenseRef = db.collection('financial_expenses').doc(expenseId)
-  const paymentRef = db.collection('financial_transactions').doc(`expense_payment_${expenseId}`)
+  const expenseCollection = db.collection('financial_expenses')
+  const expenseRef = expenseCollection.doc()
+  const expenseDocumentId = expenseRef.id
+  const expenseIdKey = expenseId.toUpperCase()
+  const expenseIdRef = expenseId ? db.collection('financial_expense_id_registry').doc(expenseIdKey) : null
+  const existingExpenseQueries = expenseId ? [expenseCollection.where('expense_id', '==', expenseId)] : []
+  if (expenseId && expenseIdKey !== expenseId) {
+    existingExpenseQueries.push(expenseCollection.where('expense_id', '==', expenseIdKey))
+  }
+  const paymentRef = db.collection('financial_transactions').doc()
   const vendorRef = vendorId ? db.collection('vendors').doc(vendorId) : null
   const tagsRef = db.collection('site_config').doc('financial_festivals')
   const now = Timestamp.now()
 
   await db.runTransaction(async function(transaction) {
-    const [sequenceSnapshot, expenseSnapshot, paymentSnapshot, vendorSnapshot, tagsSnapshot] = await Promise.all([
-      transaction.get(sequenceRef),
-      transaction.get(expenseRef),
-      transaction.get(paymentRef),
+    const [expenseIdSnapshot, existingExpenseSnapshots, vendorSnapshot, tagsSnapshot] = await Promise.all([
+      expenseIdRef ? transaction.get(expenseIdRef) : Promise.resolve(null),
+      Promise.all(existingExpenseQueries.map(existingQuery => transaction.get(existingQuery))),
       vendorRef ? transaction.get(vendorRef) : Promise.resolve(null),
       transaction.get(tagsRef),
     ])
-    const sequenceNumber = sequenceSnapshot.exists ? sequenceSnapshot.data().next_number : 0
-    if (!Number.isSafeInteger(sequenceNumber) || sequenceNumber < expenseNumber) {
-      throw new HttpsError('failed-precondition', 'This Expense ID has not been generated. Please reopen the form and try again.')
+    if ((expenseIdSnapshot && expenseIdSnapshot.exists) || existingExpenseSnapshots.some(snapshot => !snapshot.empty)) {
+      throw new HttpsError('already-exists', 'This Expense ID already exists. Please enter a different ID.')
     }
-    if (expenseSnapshot.exists) throw new HttpsError('already-exists', 'This Expense ID has already been used.')
-    if (paymentSnapshot.exists) throw new HttpsError('already-exists', 'A payment record already exists for this Expense ID.')
     if (vendorRef && !vendorSnapshot.exists) throw new HttpsError('not-found', 'The selected vendor no longer exists.')
     const tagsData = tagsSnapshot.exists ? tagsSnapshot.data() : {}
     const tagName = (tagsData.custom_tags && tagsData.custom_tags[festivalTagId]) ||
@@ -1212,6 +1247,14 @@ exports.createFinancialExpense = onCall(async function(request) {
       : ''
     const resolvedTagName = tagName.trim()
     const paymentStatus = 'paid'
+    if (expenseIdRef) {
+      transaction.create(expenseIdRef, {
+        expense_id: expenseId,
+        expense_document_id: expenseRef.id,
+        created_by: actor.uid,
+        created_at: now,
+      })
+    }
     transaction.set(expenseRef, {
       expense_id: expenseId,
       description,
@@ -1241,7 +1284,7 @@ exports.createFinancialExpense = onCall(async function(request) {
       audit: [{ action: 'created', admin_user_id: actor.uid, created_at: now }],
     })
     transaction.set(paymentRef, {
-      transaction_id: `FTX-${expenseId}`,
+      transaction_id: `FTX-${expenseId || paymentRef.id}`,
       type: 'expense',
       transaction_date: date,
       reference_no: reference,
@@ -1251,7 +1294,7 @@ exports.createFinancialExpense = onCall(async function(request) {
       account_id: UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID,
       transfer_to_account_id: null,
       linked_order_id: null,
-      linked_expense_id: expenseId,
+      linked_expense_id: expenseRef.id,
       is_unallocated_expense_payment: true,
       payment_method: paymentMethod,
       festival_tag: resolvedTagName,
@@ -1261,11 +1304,34 @@ exports.createFinancialExpense = onCall(async function(request) {
       created_at: now,
       audit: [{ action: 'created', admin_user_id: actor.uid, created_at: now }],
     })
+  }).catch(function(error) {
+    const errorCode = error && (typeof error.code === 'string' || typeof error.code === 'number')
+      ? error.code
+      : 'unknown'
+    const errorMessage = error && typeof error.message === 'string'
+      ? error.message
+      : String(error)
+    console.error('[accounts] createFinancialExpense failed', {
+      errorCode,
+      errorMessage,
+      functionName: 'createFinancialExpense',
+      operation: 'createFinancialExpense',
+      collectionPath: 'financial_expenses',
+      firebaseProjectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'unknown',
+      functionRegion: FUNCTION_REGION,
+      firestoreDatabaseId: 'festecart',
+      isAuthenticated: Boolean(request.auth),
+      adminAuthorizationSucceeded: true,
+      expenseId,
+      expenseDocumentId,
+      ...(expenseIdKey ? { expenseIdRegistryPath: `financial_expense_id_registry/${expenseIdKey}` } : {}),
+    })
+    throw error
   })
-  return { success: true }
+  return { success: true, expense_id: expenseId, expense_document_id: expenseRef.id }
 })
 
-exports.editFinancialExpense = onCall(async function(request) {
+exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   const actor = await requireAccountsAdmin(request)
   const expenseId = requireRecordId(request.data && request.data.expense_id, 'Expense ID')
   const input = request.data && request.data.input
@@ -1290,6 +1356,9 @@ exports.editFinancialExpense = onCall(async function(request) {
     const isFullAmountSpending = current.is_full_amount_spending === true
     const paid = isFullAmountSpending ? amount : requirePaise(current.paid_paise, 'Paid amount', true)
     const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
+    if (!['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod) && paymentMethod !== current.payment_method) {
+      throw new HttpsError('invalid-argument', 'Choose Cash, UPI or Bank Transfer as the payment method.')
+    }
     if (!isFullAmountSpending && amount < paid) {
       throw new HttpsError('failed-precondition', 'Expense total cannot be less than the amount already paid.')
     }
@@ -1382,7 +1451,7 @@ exports.editFinancialExpense = onCall(async function(request) {
   return { success: true }
 })
 
-exports.deleteFinancialExpense = onCall(async function(request) {
+exports.deleteFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   const actor = await requireAccountsAdmin(request)
   const expenseId = requireRecordId(request.data && request.data.expense_id, 'Expense ID')
   const expenseRef = db.collection('financial_expenses').doc(expenseId)
@@ -1393,6 +1462,15 @@ exports.deleteFinancialExpense = onCall(async function(request) {
     if (!snapshot.exists) throw new HttpsError('not-found', 'The expense no longer exists.')
     const expense = snapshot.data()
     if (!expense || expense.is_deleted === true) throw new HttpsError('failed-precondition', 'This expense has already been deleted.')
+    const storedExpenseId = typeof expense.expense_id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(expense.expense_id)
+      ? expense.expense_id
+      : null
+    const expenseIdRegistryRef = storedExpenseId
+      ? db.collection('financial_expense_id_registry').doc(storedExpenseId.toUpperCase())
+      : null
+    const expenseIdRegistrySnapshot = expenseIdRegistryRef
+      ? await transaction.get(expenseIdRegistryRef)
+      : null
     const linkedSnapshot = await transaction.get(
       db.collection('financial_transactions').where('linked_expense_id', '==', expenseId),
     )
@@ -1422,40 +1500,38 @@ exports.deleteFinancialExpense = onCall(async function(request) {
       throw new HttpsError('failed-precondition', 'This expense has too many linked records to delete in one safe operation.')
     }
     await applyAccountDeltas(transaction, deltas, actor, now)
-    transaction.update(expenseRef, {
-      is_deleted: true,
-      deleted_at: now,
-      deleted_by: actor.uid,
-      deleted_by_name: actor.name,
-      updated_by: actor.uid,
-      updated_by_name: actor.name,
-      updated_at: now,
-      audit: FieldValue.arrayUnion({
-        action: 'deleted',
-        admin_user_id: actor.uid,
-        admin_user_name: actor.name,
+    if (expenseIdRegistryRef && expenseIdRegistrySnapshot && !expenseIdRegistrySnapshot.exists) {
+      transaction.create(expenseIdRegistryRef, {
+        expense_id: storedExpenseId,
+        expense_document_id: expenseId,
+        created_by: actor.uid,
         created_at: now,
-        amount_paise: expense.amount_paise,
-        paid_paise: paid,
-      }),
-    })
-    for (const linked of linkedTransactions) {
-      transaction.update(linked.ref, {
-        is_deleted: true,
         deleted_at: now,
         deleted_by: actor.uid,
-        deleted_by_name: actor.name,
-        updated_by: actor.uid,
-        updated_by_name: actor.name,
-        updated_at: now,
-        audit: FieldValue.arrayUnion({
-          action: 'deleted_with_expense',
-          linked_expense_id: expenseId,
-          admin_user_id: actor.uid,
-          created_at: now,
-        }),
       })
     }
+    transaction.delete(expenseRef)
+    for (const linked of linkedTransactions) {
+      transaction.delete(linked.ref)
+    }
+  }).catch(function(error) {
+    const errorCode = error && (typeof error.code === 'string' || typeof error.code === 'number')
+      ? error.code
+      : 'unknown'
+    const errorMessage = error && typeof error.message === 'string'
+      ? error.message
+      : String(error)
+    console.error('[accounts] deleteFinancialExpense failed', {
+      errorCode,
+      errorMessage,
+      functionName: 'deleteFinancialExpense',
+      firebaseProjectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'unknown',
+      functionRegion: FUNCTION_REGION,
+      expenseDocumentId: expenseId,
+      transactionType: 'expense',
+      firestoreDocumentPath: `financial_expenses/${expenseId}`,
+    })
+    throw error
   })
   return { success: true }
 })

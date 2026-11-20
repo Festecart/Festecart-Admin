@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeftRight,
@@ -40,7 +40,6 @@ import {
   fetchReportTransactions,
   formatINR,
   recordCustomerPayment,
-  recordExpensePayment,
   recordTransaction,
   PETTY_CASH_TRANSACTION_ACCOUNT_ID,
   UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID,
@@ -82,7 +81,7 @@ type DeleteConfirmationDetails = {
 }
 
 function isDisplayableExpenseId(value: string | null | undefined): value is string {
-  return typeof value === 'string' && /^EXP-\d{6,}$/i.test(value.trim())
+  return typeof value === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(value.trim())
 }
 
 function isDisplayableTransactionId(value: string | null | undefined): value is string {
@@ -211,6 +210,7 @@ export default function Accounts() {
   const [transactionFestivalFilter, setTransactionFestivalFilter] = useState('all')
   const [selectedTagCategory, setSelectedTagCategory] = useState<FestivalCategory | null>(null)
   const [transactionSuccessMessage, setTransactionSuccessMessage] = useState('')
+  const transactionSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [deleteSuccessMessage, setDeleteSuccessMessage] = useState('')
   const [deleteError, setDeleteError] = useState('')
   const [showAccountForm, setShowAccountForm] = useState(false)
@@ -223,11 +223,25 @@ export default function Accounts() {
   const [showExpenseForm, setShowExpenseForm] = useState(false)
   const [expensePage, setExpensePage] = useState(0)
   const [receivablePage, setReceivablePage] = useState(0)
-  const [selectedExpense, setSelectedExpense] = useState<FinancialExpense | null>(null)
   const [selectedReceivable, setSelectedReceivable] = useState<CustomerReceivable | null>(null)
   const [datePreset, setDatePreset] = useState<DatePreset>('all')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
+  const clearTransactionSuccessTimer = () => {
+    if (transactionSuccessTimer.current !== null) {
+      clearTimeout(transactionSuccessTimer.current)
+      transactionSuccessTimer.current = null
+    }
+  }
+  const showTransactionSuccess = (message: string) => {
+    clearTransactionSuccessTimer()
+    setTransactionSuccessMessage(message)
+    transactionSuccessTimer.current = setTimeout(() => {
+      setTransactionSuccessMessage('')
+      transactionSuccessTimer.current = null
+    }, 1000)
+  }
+  useEffect(() => () => clearTransactionSuccessTimer(), [])
   const dateRange = useMemo(() => dateRangeFor(datePreset, customFrom, customTo), [datePreset, customFrom, customTo])
   const queryClient = useQueryClient()
   const {
@@ -332,7 +346,7 @@ export default function Accounts() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['accounts'] })
       if (quickTransactionAction === 'petty_cash') {
-        setTransactionSuccessMessage('Petty cash spending saved successfully.')
+        showTransactionSuccess('Petty cash spending saved successfully.')
       }
       setQuickTransactionAction(null)
     },
@@ -354,7 +368,7 @@ export default function Accounts() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['accounts'] })
       setEditingExpense(null)
-      setTransactionSuccessMessage('Expense updated successfully.')
+      showTransactionSuccess('Expense updated successfully.')
     },
   })
   const deleteMutation = useMutation({
@@ -375,12 +389,7 @@ export default function Accounts() {
         ? 'Expense deleted successfully.'
         : target.pettyCashSpending ? 'Petty cash spending deleted successfully.' : 'Transaction deleted successfully.')
     },
-    onError: (error, target) => {
-      console.error('Accounts record deletion failed.', {
-        sourceCollection: target.kind === 'expense' ? 'financial_expenses' : 'financial_transactions',
-        documentId: target.record.id,
-        error,
-      })
+    onError: () => {
       setDeleteError('Unable to delete the transaction. Please try again.')
     },
   })
@@ -389,14 +398,7 @@ export default function Accounts() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['accounts'] })
       setShowExpenseForm(false)
-      setTransactionSuccessMessage('Expense saved successfully.')
-    },
-  })
-  const vendorPaymentMutation = useMutation({
-    mutationFn: ({ expense, input }: { expense: FinancialExpense; input: RecordPaymentInput }) => recordExpensePayment(expense, input),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
-      setSelectedExpense(null)
+      showTransactionSuccess('Expense saved successfully.')
     },
   })
   const customerPaymentMutation = useMutation({
@@ -443,6 +445,7 @@ export default function Accounts() {
       : target)
   }
   const openTransactionAction = (action: QuickTransactionAction) => {
+    clearTransactionSuccessTimer()
     setTransactionSuccessMessage('')
     if (action === 'petty_cash' || activeAccounts.some(account => account.type !== 'petty_cash')) {
       setQuickTransactionAction(action)
@@ -492,9 +495,19 @@ export default function Accounts() {
           <div>
             <p className="font-semibold">Some Accounts data could not be loaded.</p>
             <ul className="mt-1 list-inside list-disc space-y-0.5">
-              {failures.map((item, index) => <li key={`${item.source}-${index}`}><strong>{item.source}:</strong> {item.error.message}</li>)}
+              {failures.map((item, index) => (
+                <li key={`${item.source}-${index}`}>
+                  <strong>{item.source}:</strong> Unable to load. Check your connection and admin access, then retry.
+                </li>
+              ))}
             </ul>
-            <p className="mt-2 text-xs">No missing totals are treated as zero. Check the user role and the admin-only Firestore rules.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+              <span>No unavailable data is treated as zero. Technical details are logged in the browser console.</span>
+              <button type="button" onClick={() => void queryClient.invalidateQueries({ queryKey: ['accounts'] })}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-2.5 py-1.5 font-semibold hover:bg-rose-100">
+                <RefreshCw size={13} /> Retry
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -617,31 +630,34 @@ export default function Accounts() {
             </button>
           </div>
           {expensesQuery.isPending ? <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Loading expenses…</div>
-            : expensesQuery.isError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center text-sm text-rose-700">Expense records are unavailable.</div>
+            : expensesQuery.isError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center text-sm text-rose-700">
+              <p>Unable to load expense records. Existing records have not been changed.</p>
+              <button type="button" onClick={() => void expensesQuery.refetch()}
+                className="mt-3 inline-flex items-center gap-2 rounded-lg border border-rose-300 bg-white px-3 py-2 font-semibold hover:bg-rose-100">
+                <RefreshCw size={14} /> Retry
+              </button>
+            </div>
               : expenses.length === 0 ? <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">No expenses have been recorded.</div>
                 : <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <table className="min-w-[1320px] w-full text-left text-sm">
+                  <table className="min-w-[1250px] w-full text-left text-sm">
                     <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>
-                      <th className="px-4 py-3">Expense Date</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Description</th>
-                      <th className="px-4 py-3">Tag</th><th className="px-4 py-3 text-right">Spending Amount</th><th className="px-4 py-3 text-right">Paid Now</th>
-                      <th className="px-4 py-3 text-right">Remaining Payable</th><th className="px-4 py-3">Payment Status</th><th className="px-4 py-3">Payment Method</th>
+                      <th className="px-4 py-3">Expense ID</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Description</th>
+                      <th className="px-4 py-3">Tag</th><th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Payment Status</th><th className="px-4 py-3">Payment Method</th>
                       <th className="px-4 py-3">Vendor / Reference / Receipts</th><th className="px-4 py-3">Actions</th>
                     </tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {visibleExpenses.map(expense => (
                         <tr key={expense.id}>
+                          <td className="px-4 py-3 whitespace-nowrap font-medium text-slate-700">{isDisplayableExpenseId(expense.expense_id) ? expense.expense_id : '—'}</td>
                           <td className="px-4 py-3 whitespace-nowrap">{expense.transaction_date.toDate().toLocaleDateString('en-GB')}</td>
                           <td className="px-4 py-3">{expense.category_name}</td>
                           <td className="px-4 py-3 text-slate-700">{expense.description || '—'}</td>
                           <td className="px-4 py-3 text-slate-700">{displayTag(expense.festival_tag_id, expense.festival_tag)}</td>
                           <td className="px-4 py-3 text-right font-medium">{formatINR(expense.amount_paise)}</td>
-                          <td className="px-4 py-3 text-right">{formatINR(expense.paid_paise)}</td>
-                          <td className="px-4 py-3 text-right font-semibold">{formatINR(expense.outstanding_paise)}</td>
                           <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${expense.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-700' : expense.payment_status === 'partially_paid' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{expense.payment_status === 'paid' ? 'Fully Paid' : expense.payment_status === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}</span></td>
                           <td className="px-4 py-3 capitalize">{expense.payment_method || '—'}</td>
-                          <td className="px-4 py-3"><p>{expense.vendor_name || '—'}</p><p className="mt-1 text-xs text-slate-500">{expense.reference_no || 'No reference'}</p><ExpenseReceipts expense={expense} /></td>
+                          <td className="px-4 py-3"><p>{expense.vendor_name || '—'}</p><p className="mt-1 text-xs text-slate-500">{expense.reference_no || '—'}</p><ExpenseReceipts expense={expense} /></td>
                           <td className="px-4 py-3"><div className="flex items-center gap-1">
-                            {expense.outstanding_paise > 0 && <button type="button" onClick={() => setSelectedExpense(expense)} className="whitespace-nowrap rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Record payment</button>}
                             <button type="button" onClick={() => setEditingExpense(expense)} aria-label={`Edit expense ${expense.description}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><Pencil size={15} /></button>
                             <button type="button" onClick={() => requestDelete({ kind: 'expense', record: expense })} aria-label={`Delete expense ${expense.description}`} className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={15} /></button>
                           </div></td>
@@ -990,11 +1006,6 @@ export default function Accounts() {
             ? editExpenseMutation.mutateAsync({ expense: editingExpense, input })
             : Promise.reject(new Error('Select an expense to edit.'))} />
       )}
-      {selectedExpense && (
-        <PaymentForm title="Record vendor payment" detail={selectedExpense.vendor_name || selectedExpense.description}
-          outstandingPaise={selectedExpense.outstanding_paise} accounts={activeAccounts} saving={vendorPaymentMutation.isPending}
-          onClose={() => setSelectedExpense(null)} onSave={input => vendorPaymentMutation.mutateAsync({ expense: selectedExpense, input })} />
-      )}
       {selectedReceivable && (
         <PaymentForm title="Record customer receipt" detail={`${selectedReceivable.order_number} · ${selectedReceivable.customer_name}`}
           outstandingPaise={selectedReceivable.outstanding_paise} accounts={activeAccounts} saving={customerPaymentMutation.isPending}
@@ -1013,7 +1024,11 @@ export default function Accounts() {
               <dt className="text-slate-500">Tag</dt><dd className="text-right font-medium text-slate-800">{pendingDeleteDetails?.tag}</dd>
               <dt className="text-slate-500">Amount</dt><dd className="text-right font-semibold text-slate-900">{pendingDeleteDetails?.amount}</dd>
             </dl>
-            <p className="mt-3 text-sm text-slate-600">Are you sure you want to delete this transaction? This action cannot be undone.</p>
+            <p className="mt-3 text-sm text-slate-600">
+              {pendingDeleteIsExpense
+                ? 'Are you sure you want to delete this expense? This action cannot be undone.'
+                : 'Are you sure you want to delete this transaction? This action cannot be undone.'}
+            </p>
             {deleteError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{deleteError}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" disabled={deleteMutation.isPending} onClick={() => { setPendingDelete(null); deleteMutation.reset() }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50">Cancel</button>
