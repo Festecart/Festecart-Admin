@@ -58,7 +58,7 @@ export function AccountForm({
             Type
             <select value={type} onChange={event => setType(event.target.value as FinancialAccountType)}
               className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-              <option value="cash">Cash</option><option value="bank">Bank</option><option value="upi">UPI</option><option value="petty_cash">Petty cash</option>
+              <option value="cash">Cash</option><option value="bank">Bank</option><option value="upi">UPI</option>
             </select>
           </label>
           <label className="block text-sm font-medium text-slate-700">

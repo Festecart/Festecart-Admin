@@ -4,7 +4,7 @@ const { onDocumentWritten } = require('firebase-functions/v2/firestore')
 const { setGlobalOptions } = require('firebase-functions/v2')
 const { initializeApp } = require('firebase-admin/app')
 const { getAuth } = require('firebase-admin/auth')
-const { getFirestore, Timestamp, FieldPath } = require('firebase-admin/firestore')
+const { getFirestore, Timestamp, FieldPath, FieldValue } = require('firebase-admin/firestore')
 const { getStorage } = require('firebase-admin/storage')
 const PDFDocument = require('pdfkit')
 
@@ -17,6 +17,8 @@ const LOGO_URL   = 'https://admin.festecart.org/logo.png'
 const ADMIN_URL  = 'https://admin.festecart.org'
 const ADMIN_EMAIL = 'festecartdesi@gmail.com'
 const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxnq3FedbLxZ1ficbJTFD1kEOufULtvDX8SaXes8uzzCuvPSsJETUCvKunPVaAgQ-4m/exec'
+const UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID = '__unallocated_expense_payment__'
+const PETTY_CASH_SPENDING_ACCOUNT_ID = '__petty_cash_spending__'
 
 const STORE_NAME    = 'festecart'
 const STORE_ADDRESS = 'No-204 , 2nd Floor, Surya Prema Building, 1st Cross Rd, Manjunatha nagar, Raghuvanahalli, Bengaluru, Karnataka 560109'
@@ -651,6 +653,811 @@ exports.getFinancialReceiptDownloadUrl = onCall(async function(request) {
     expires: Date.now() + 5 * 60 * 1000,
   })
   return { url }
+})
+
+async function requireAccountsAdmin(request) {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in with an admin account.')
+  const roleSnapshot = await db.collection('user_roles').doc(request.auth.uid).get()
+  if (!getAccountsRoleFlags(roleSnapshot.exists ? roleSnapshot.data() : null).accountsAdmin) {
+    throw new HttpsError('permission-denied', 'Accounts changes are limited to admin and super-admin users.')
+  }
+  return {
+    uid: request.auth.uid,
+    name: request.auth.token.name || request.auth.token.email || request.auth.uid,
+  }
+}
+
+function requireRecordId(value, label) {
+  if (typeof value !== 'string' || !value.trim() || value.includes('/') || value.length > 200) {
+    throw new HttpsError('invalid-argument', `${label} is invalid.`)
+  }
+  return value.trim()
+}
+
+function requireText(value, label, maxLength, allowEmpty) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if ((!allowEmpty && !text) || text.length > maxLength) {
+    throw new HttpsError('invalid-argument', `${label} must contain ${allowEmpty ? 'at most' : '1–'}${maxLength} characters.`)
+  }
+  return text
+}
+
+function requirePaise(value, label, allowZero) {
+  if (!Number.isSafeInteger(value) || (allowZero ? value < 0 : value <= 0)) {
+    throw new HttpsError('invalid-argument', `${label} must be a valid ${allowZero ? 'non-negative' : 'positive'} paise amount.`)
+  }
+  return value
+}
+
+function requireFestivalTag(value) {
+  if (value == null || value === '') return null
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > 80) {
+    throw new HttpsError('invalid-argument', 'Festival tags must contain 1–80 characters.')
+  }
+  return value.trim()
+}
+
+function requireFestivalTagId(value, festivalTag) {
+  if (value == null || value === '') {
+    return festivalTag ? festivalTag.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') : null
+  }
+  if (typeof value !== 'string' || !value.trim() || value.includes('/') || value.length > 200) {
+    throw new HttpsError('invalid-argument', 'Festival tag ID is invalid.')
+  }
+  if (!festivalTag) throw new HttpsError('invalid-argument', 'A festival tag name is required when a tag ID is selected.')
+  return value.trim()
+}
+
+function requireDate(value, label) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new HttpsError('invalid-argument', `${label} is invalid.`)
+  }
+  const date = new Date(`${value}T00:00:00.000Z`)
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    throw new HttpsError('invalid-argument', `${label} is invalid.`)
+  }
+  return Timestamp.fromDate(date)
+}
+
+function positiveStoredPaise(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new HttpsError('failed-precondition', `The stored ${label} is invalid; ask an administrator to review this record.`)
+  }
+  return value
+}
+
+function addTransactionPosting(deltas, record, direction) {
+  if (record.is_petty_cash_spending === true || record.is_unallocated_expense_payment === true) return
+  const amount = positiveStoredPaise(record.amount_paise, 'transaction amount')
+  const accountId = requireRecordId(record.account_id, 'Transaction account')
+  if (record.type === 'income') {
+    deltas.set(accountId, (deltas.get(accountId) || 0) + direction * amount)
+  } else if (record.type === 'expense') {
+    deltas.set(accountId, (deltas.get(accountId) || 0) - direction * amount)
+  } else if (record.type === 'transfer') {
+    const destinationId = requireRecordId(record.transfer_to_account_id, 'Transfer destination')
+    if (accountId === destinationId) throw new HttpsError('failed-precondition', 'The transfer accounts are invalid.')
+    deltas.set(accountId, (deltas.get(accountId) || 0) - direction * amount)
+    deltas.set(destinationId, (deltas.get(destinationId) || 0) + direction * amount)
+  } else {
+    throw new HttpsError('failed-precondition', 'Opening balances cannot be edited or deleted as transactions.')
+  }
+}
+
+async function applyAccountDeltas(transaction, deltas, actor, now) {
+  const entries = Array.from(deltas.entries()).filter(([, delta]) => delta !== 0)
+  const refs = entries.map(([accountId]) => db.collection('financial_accounts').doc(accountId))
+  const snapshots = await Promise.all(refs.map(ref => transaction.get(ref)))
+  const updates = snapshots.map(function(snapshot, index) {
+    if (!snapshot.exists) throw new HttpsError('not-found', 'A linked financial account no longer exists.')
+    const account = snapshot.data()
+    const currentBalance = account && account.balance_paise
+    if (!Number.isSafeInteger(currentBalance) || currentBalance < 0) {
+      throw new HttpsError('failed-precondition', 'A linked account has an invalid balance.')
+    }
+    const nextBalance = currentBalance + entries[index][1]
+    if (!Number.isSafeInteger(nextBalance) || nextBalance < 0) {
+      throw new HttpsError('failed-precondition', 'This change would make an account balance negative or invalid.')
+    }
+    return { ref: refs[index], balance: nextBalance }
+  })
+  for (const update of updates) {
+    transaction.update(update.ref, {
+      balance_paise: update.balance,
+      updated_by: actor.uid,
+      updated_at: now,
+    })
+  }
+}
+
+function orderPaidPaise(order) {
+  const total = Math.round(Number(order.total ?? 0) * 100)
+  const paid = order.amount_paid == null && order.payment_status === 'paid'
+    ? total
+    : Math.round(Number(order.amount_paid ?? 0) * 100)
+  if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(paid) || paid < 0 || paid > total) {
+    throw new HttpsError('failed-precondition', 'The linked order has an invalid payment balance.')
+  }
+  return { total, paid }
+}
+
+function orderPaymentStatus(paid, total) {
+  return paid >= total ? 'paid' : paid > 0 ? 'partially_paid' : 'pending'
+}
+
+function expensePaymentStatus(paid, total) {
+  return paid === 0 ? 'unpaid' : paid >= total ? 'paid' : 'partially_paid'
+}
+
+exports.editFinancialTransaction = onCall(async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const transactionId = requireRecordId(request.data && request.data.transaction_id, 'Transaction ID')
+  const input = request.data && request.data.input
+  if (!input || typeof input !== 'object') throw new HttpsError('invalid-argument', 'Transaction details are required.')
+  const transactionRef = db.collection('financial_transactions').doc(transactionId)
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const snapshot = await transaction.get(transactionRef)
+    if (!snapshot.exists) throw new HttpsError('not-found', 'The transaction no longer exists.')
+    const current = snapshot.data()
+    if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'Deleted transactions cannot be edited.')
+    if (current.type === 'opening_balance') throw new HttpsError('failed-precondition', 'Opening balances cannot be edited as transactions.')
+
+    const description = requireText(input.description, 'Description', 250, false)
+    const categoryName = requireText(input.category_name, 'Category', 80, false)
+    const amount = requirePaise(input.amount_paise, 'Amount', false)
+    const date = requireDate(input.transaction_date, 'Transaction date')
+    let isPettyCashSpending = current.is_petty_cash_spending === true
+    if (input.is_petty_cash_spending === true && !isPettyCashSpending) {
+      const currentAccountRef = db.collection('financial_accounts').doc(requireRecordId(current.account_id, 'Transaction account'))
+      const currentAccountSnapshot = await transaction.get(currentAccountRef)
+      isPettyCashSpending = currentAccountSnapshot.exists && currentAccountSnapshot.data().type === 'petty_cash'
+      if (!isPettyCashSpending) throw new HttpsError('failed-precondition', 'Only petty cash records can use the spending-only flow.')
+    }
+    if (isPettyCashSpending && (current.type !== 'expense' || current.linked_order_id || current.linked_expense_id)) {
+      throw new HttpsError('failed-precondition', 'This is not an editable petty cash spending record.')
+    }
+    const isUnallocatedExpensePayment = current.is_unallocated_expense_payment === true
+    if (isUnallocatedExpensePayment && (
+      current.type !== 'expense' ||
+      !current.linked_expense_id ||
+      current.account_id !== UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID
+    )) {
+      throw new HttpsError('failed-precondition', 'This is not a valid unallocated expense payment.')
+    }
+    const referenceNo = isPettyCashSpending
+      ? requireText(input.reference_no, 'Reference', 200, true)
+      : current.reference_no || ''
+    const partyName = isPettyCashSpending
+      ? requireText(input.party_name, 'Customer or vendor', 120, true) || null
+      : current.party_name || null
+    const accountId = isPettyCashSpending
+      ? '__petty_cash_spending__'
+      : isUnallocatedExpensePayment
+        ? UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID
+        : requireRecordId(input.account_id, 'Account')
+    const paymentMethod = requireText(input.payment_method, 'Payment method', 80, true)
+    const festivalTag = requireFestivalTag(input.festival_tag)
+    const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
+    const transferTo = input.transfer_to_account_id == null || input.transfer_to_account_id === ''
+      ? null
+      : requireRecordId(input.transfer_to_account_id, 'Transfer destination')
+    if (current.type === 'transfer' && (!transferTo || transferTo === accountId)) {
+      throw new HttpsError('invalid-argument', 'Choose two different transfer accounts.')
+    }
+    if (current.type !== 'transfer' && transferTo) {
+      throw new HttpsError('invalid-argument', 'Only transfers can have a destination account.')
+    }
+    if ((current.linked_order_id || current.linked_expense_id) && current.type !== (current.linked_order_id ? 'income' : 'expense')) {
+      throw new HttpsError('failed-precondition', 'The linked transaction type is invalid.')
+    }
+
+    const orderRef = current.linked_order_id
+      ? db.collection('orders').doc(requireRecordId(current.linked_order_id, 'Linked order ID'))
+      : null
+    const expenseRef = current.linked_expense_id
+      ? db.collection('financial_expenses').doc(requireRecordId(current.linked_expense_id, 'Linked expense ID'))
+      : null
+    const orderSnapshot = orderRef ? await transaction.get(orderRef) : null
+    const expenseSnapshot = expenseRef ? await transaction.get(expenseRef) : null
+    if (orderRef && (!orderSnapshot || !orderSnapshot.exists)) throw new HttpsError('not-found', 'The linked order no longer exists.')
+    if (expenseRef && (!expenseSnapshot || !expenseSnapshot.exists)) throw new HttpsError('not-found', 'The linked expense no longer exists.')
+    const linkedOrder = orderSnapshot && orderSnapshot.data()
+    const linkedExpense = expenseSnapshot && expenseSnapshot.data()
+    if (linkedExpense && linkedExpense.is_deleted === true) throw new HttpsError('failed-precondition', 'Payments for a deleted expense cannot be edited.')
+    if (linkedExpense && linkedExpense.is_full_amount_spending === true && isUnallocatedExpensePayment) {
+      throw new HttpsError('failed-precondition', 'Edit this full-amount expense from the Expenses tab.')
+    }
+
+    const next = {
+      ...current,
+      transaction_date: date,
+      description,
+      category_name: categoryName,
+      amount_paise: amount,
+      account_id: accountId,
+      transfer_to_account_id: transferTo,
+      payment_method: paymentMethod,
+      festival_tag: festivalTag,
+      festival_tag_id: festivalTagId,
+      ...(isPettyCashSpending ? { reference_no: referenceNo, party_name: partyName } : {}),
+      ...(isPettyCashSpending ? { is_petty_cash_spending: true } : {}),
+    }
+    const deltas = new Map()
+    if (!isPettyCashSpending && !isUnallocatedExpensePayment) {
+      addTransactionPosting(deltas, current, -1)
+      addTransactionPosting(deltas, next, 1)
+    }
+
+    let orderUpdate = null
+    if (linkedOrder) {
+      const { total, paid } = orderPaidPaise(linkedOrder)
+      const nextPaid = paid - current.amount_paise + amount
+      if (!Number.isSafeInteger(nextPaid) || nextPaid < 0 || nextPaid > total) {
+        throw new HttpsError('failed-precondition', 'The edited payment must fit within the linked order balance.')
+      }
+      orderUpdate = { amount_paid: nextPaid / 100, payment_status: orderPaymentStatus(nextPaid, total), paid_at: nextPaid >= total ? linkedOrder.paid_at || now : null }
+    }
+    let expenseUpdate = null
+    if (linkedExpense) {
+      const paid = positiveStoredPaise(linkedExpense.paid_paise, 'expense paid amount')
+      const total = positiveStoredPaise(linkedExpense.amount_paise, 'expense amount')
+      const nextPaid = paid - current.amount_paise + amount
+      if (!Number.isSafeInteger(nextPaid) || nextPaid < 0 || nextPaid > total) {
+        throw new HttpsError('failed-precondition', 'The edited payment must fit within the linked expense balance.')
+      }
+      expenseUpdate = {
+        paid_paise: nextPaid,
+        outstanding_paise: total - nextPaid,
+        payment_status: expensePaymentStatus(nextPaid, total),
+        ...(isUnallocatedExpensePayment ? { payment_method: paymentMethod } : {}),
+        updated_by: actor.uid,
+        updated_at: now,
+        audit: FieldValue.arrayUnion({
+          action: 'linked_payment_edited',
+          admin_user_id: actor.uid,
+          created_at: now,
+          amount_paise: amount,
+        }),
+      }
+    }
+
+    if (!isPettyCashSpending && !isUnallocatedExpensePayment) await applyAccountDeltas(transaction, deltas, actor, now)
+    transaction.update(transactionRef, {
+      transaction_date: date,
+      description,
+      category_name: categoryName,
+      amount_paise: amount,
+      account_id: accountId,
+      transfer_to_account_id: transferTo,
+      payment_method: paymentMethod,
+      festival_tag: festivalTag,
+      festival_tag_id: festivalTagId,
+      ...(isPettyCashSpending ? { reference_no: referenceNo, party_name: partyName } : {}),
+      ...(isPettyCashSpending ? { is_petty_cash_spending: true } : {}),
+      updated_by: actor.uid,
+      updated_by_name: actor.name,
+      updated_at: now,
+      audit: FieldValue.arrayUnion({
+        action: 'edited',
+        admin_user_id: actor.uid,
+        created_at: now,
+        previous: {
+          transaction_date: current.transaction_date,
+          description: current.description,
+          category_name: current.category_name,
+          amount_paise: current.amount_paise,
+          account_id: current.account_id,
+          transfer_to_account_id: current.transfer_to_account_id ?? null,
+          payment_method: current.payment_method ?? '',
+          festival_tag: current.festival_tag ?? null,
+          festival_tag_id: current.festival_tag_id ?? null,
+          reference_no: current.reference_no ?? '',
+          party_name: current.party_name ?? null,
+        },
+        next: {
+          transaction_date: date,
+          description,
+          category_name: categoryName,
+          amount_paise: amount,
+          account_id: accountId,
+          transfer_to_account_id: transferTo,
+          payment_method: paymentMethod,
+          festival_tag: festivalTag,
+          festival_tag_id: festivalTagId,
+          ...(isPettyCashSpending ? { reference_no: referenceNo, party_name: partyName } : {}),
+        },
+      }),
+    })
+    if (orderUpdate && orderRef) transaction.update(orderRef, { ...orderUpdate, updated_at: now })
+    if (expenseUpdate && expenseRef) transaction.update(expenseRef, expenseUpdate)
+  })
+  return { success: true }
+})
+
+exports.deleteFinancialTransaction = onCall(async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const transactionId = requireRecordId(request.data && request.data.transaction_id, 'Transaction ID')
+  const transactionRef = db.collection('financial_transactions').doc(transactionId)
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const snapshot = await transaction.get(transactionRef)
+    if (!snapshot.exists) throw new HttpsError('not-found', 'The transaction no longer exists.')
+    const current = snapshot.data()
+    if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'This transaction has already been deleted.')
+    if (current.type === 'opening_balance') throw new HttpsError('failed-precondition', 'Opening balances cannot be deleted as transactions.')
+    let isPettyCashSpending = current.is_petty_cash_spending === true
+    if (isPettyCashSpending && (current.type !== 'expense' || current.linked_order_id || current.linked_expense_id)) {
+      throw new HttpsError('failed-precondition', 'This is not a valid petty cash spending record.')
+    }
+    if (current.is_unallocated_expense_payment === true && (
+      current.type !== 'expense' ||
+      !current.linked_expense_id ||
+      current.account_id !== UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID
+    )) {
+      throw new HttpsError('failed-precondition', 'This is not a valid unallocated expense payment.')
+    }
+    if (
+      !isPettyCashSpending &&
+      current.type === 'expense' &&
+      !current.linked_order_id &&
+      !current.linked_expense_id
+    ) {
+      if (current.account_id === PETTY_CASH_SPENDING_ACCOUNT_ID) {
+        isPettyCashSpending = true
+      } else {
+        const currentAccountRef = db.collection('financial_accounts').doc(requireRecordId(current.account_id, 'Transaction account'))
+        const currentAccountSnapshot = await transaction.get(currentAccountRef)
+        isPettyCashSpending = currentAccountSnapshot.exists &&
+          currentAccountSnapshot.data().type === 'petty_cash'
+      }
+    }
+    if (request.data && request.data.petty_cash_spending === true && !isPettyCashSpending) {
+      throw new HttpsError('failed-precondition', 'Only petty cash spending can use the spending-only flow.')
+    }
+
+    const orderRef = current.linked_order_id
+      ? db.collection('orders').doc(requireRecordId(current.linked_order_id, 'Linked order ID'))
+      : null
+    const expenseRef = current.linked_expense_id
+      ? db.collection('financial_expenses').doc(requireRecordId(current.linked_expense_id, 'Linked expense ID'))
+      : null
+    const orderSnapshot = orderRef ? await transaction.get(orderRef) : null
+    const expenseSnapshot = expenseRef ? await transaction.get(expenseRef) : null
+    if (orderRef && (!orderSnapshot || !orderSnapshot.exists)) throw new HttpsError('not-found', 'The linked order no longer exists.')
+    if (expenseRef && (!expenseSnapshot || !expenseSnapshot.exists)) throw new HttpsError('not-found', 'The linked expense no longer exists.')
+    const linkedOrder = orderSnapshot && orderSnapshot.data()
+    const linkedExpense = expenseSnapshot && expenseSnapshot.data()
+    if (linkedExpense && linkedExpense.is_deleted === true) throw new HttpsError('failed-precondition', 'This payment belongs to an already deleted expense.')
+    const isFullAmountExpense = Boolean(
+      linkedExpense &&
+      linkedExpense.is_full_amount_spending === true &&
+      current.is_unallocated_expense_payment === true,
+    )
+    if (isFullAmountExpense) {
+      const linkedTransactions = await transaction.get(
+        db.collection('financial_transactions').where('linked_expense_id', '==', current.linked_expense_id),
+      )
+      const activeLinkedTransactions = linkedTransactions.docs.filter(item => item.data().is_deleted !== true)
+      const expenseAmount = positiveStoredPaise(linkedExpense.amount_paise, 'expense amount')
+      const expensePaid = requirePaise(linkedExpense.paid_paise, 'Paid amount', true)
+      if (
+        activeLinkedTransactions.length !== 1 ||
+        activeLinkedTransactions[0].id !== transactionId ||
+        current.amount_paise !== expenseAmount ||
+        expensePaid !== expenseAmount ||
+        linkedExpense.outstanding_paise !== 0
+      ) {
+        throw new HttpsError('failed-precondition', 'The linked expense records are inconsistent. Refresh and try again.')
+      }
+    }
+
+    const deltas = new Map()
+    if (!isPettyCashSpending) addTransactionPosting(deltas, current, -1)
+    let orderUpdate = null
+    if (linkedOrder) {
+      const { total, paid } = orderPaidPaise(linkedOrder)
+      const nextPaid = paid - current.amount_paise
+      if (!Number.isSafeInteger(nextPaid) || nextPaid < 0) {
+        throw new HttpsError('failed-precondition', 'The order payment total is inconsistent with this receipt.')
+      }
+      orderUpdate = { amount_paid: nextPaid / 100, payment_status: orderPaymentStatus(nextPaid, total), paid_at: nextPaid >= total ? linkedOrder.paid_at || now : null }
+    }
+    let expenseUpdate = null
+    if (linkedExpense && !isFullAmountExpense) {
+      const paid = positiveStoredPaise(linkedExpense.paid_paise, 'expense paid amount')
+      const total = positiveStoredPaise(linkedExpense.amount_paise, 'expense amount')
+      const nextPaid = paid - current.amount_paise
+      if (!Number.isSafeInteger(nextPaid) || nextPaid < 0 || nextPaid > total) {
+        throw new HttpsError('failed-precondition', 'The expense payment total is inconsistent with this payment.')
+      }
+      expenseUpdate = {
+        paid_paise: nextPaid,
+        outstanding_paise: total - nextPaid,
+        payment_status: expensePaymentStatus(nextPaid, total),
+        ...(current.is_unallocated_expense_payment === true && nextPaid === 0 ? { payment_method: '' } : {}),
+        updated_by: actor.uid,
+        updated_at: now,
+        audit: FieldValue.arrayUnion({
+          action: 'linked_payment_deleted',
+          admin_user_id: actor.uid,
+          created_at: now,
+          amount_paise: current.amount_paise,
+        }),
+      }
+    }
+
+    if (!isPettyCashSpending) await applyAccountDeltas(transaction, deltas, actor, now)
+    transaction.update(transactionRef, {
+      is_deleted: true,
+      ...(isPettyCashSpending ? { is_petty_cash_spending: true } : {}),
+      deleted_at: now,
+      deleted_by: actor.uid,
+      deleted_by_name: actor.name,
+      updated_by: actor.uid,
+      updated_by_name: actor.name,
+      updated_at: now,
+      audit: FieldValue.arrayUnion({
+        action: 'deleted',
+        admin_user_id: actor.uid,
+        admin_user_name: actor.name,
+        created_at: now,
+        amount_paise: current.amount_paise,
+      }),
+    })
+    if (orderUpdate && orderRef) transaction.update(orderRef, { ...orderUpdate, updated_at: now })
+    if (expenseUpdate && expenseRef) transaction.update(expenseRef, expenseUpdate)
+    if (isFullAmountExpense && expenseRef) {
+      transaction.update(expenseRef, {
+        is_deleted: true,
+        deleted_at: now,
+        deleted_by: actor.uid,
+        deleted_by_name: actor.name,
+        updated_by: actor.uid,
+        updated_by_name: actor.name,
+        updated_at: now,
+        audit: FieldValue.arrayUnion({
+          action: 'deleted_with_transaction',
+          linked_transaction_id: transactionId,
+          admin_user_id: actor.uid,
+          admin_user_name: actor.name,
+          created_at: now,
+          amount_paise: linkedExpense.amount_paise,
+        }),
+      })
+    }
+  })
+  return { success: true }
+})
+
+exports.generateFinancialExpenseId = onCall(async function(request) {
+  await requireAccountsAdmin(request)
+  const sequenceRef = db.collection('financial_expense_sequences').doc('global')
+  const expenseCollection = db.collection('financial_expenses')
+  const expenseId = await db.runTransaction(async function(transaction) {
+    const sequenceSnapshot = await transaction.get(sequenceRef)
+    const storedNumber = sequenceSnapshot.exists ? sequenceSnapshot.data().next_number : 0
+    if (!Number.isSafeInteger(storedNumber) || storedNumber < 0) {
+      throw new HttpsError('failed-precondition', 'The expense ID sequence is invalid; ask an administrator to review it.')
+    }
+    let nextNumber = storedNumber
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      nextNumber += 1
+      const candidate = `EXP-${String(nextNumber).padStart(6, '0')}`
+      const existing = await transaction.get(expenseCollection.doc(candidate))
+      if (existing.exists) continue
+      transaction.set(sequenceRef, { next_number: nextNumber, updated_at: Timestamp.now() }, { merge: true })
+      return candidate
+    }
+    throw new HttpsError('resource-exhausted', 'A unique Expense ID could not be generated. Please try again.')
+  })
+  return { expense_id: expenseId }
+})
+
+exports.createFinancialExpense = onCall(async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const input = request.data && request.data.input
+  if (!input || typeof input !== 'object') throw new HttpsError('invalid-argument', 'Expense details are required.')
+  const expenseId = requireText(input.expense_id, 'Expense ID', 32, false)
+  const expenseIdMatch = /^EXP-(\d{6,})$/.exec(expenseId)
+  if (!expenseIdMatch) throw new HttpsError('invalid-argument', 'The Expense ID is invalid.')
+  const expenseNumber = Number(expenseIdMatch[1])
+  if (!Number.isSafeInteger(expenseNumber) || expenseNumber <= 0) {
+    throw new HttpsError('invalid-argument', 'The Expense ID is invalid.')
+  }
+  const description = requireText(input.description, 'Description', 250, true)
+  const categoryName = requireText(input.category_name, 'Category', 80, false)
+  const vendorId = input.vendor_id == null || input.vendor_id === '' ? null : requireRecordId(input.vendor_id, 'Vendor ID')
+  const suppliedVendorName = requireText(input.vendor_name, 'Vendor name', 120, true)
+  const reference = requireText(input.reference_no, 'Reference', 200, true)
+  const date = requireDate(input.transaction_date, 'Expense date')
+  const amount = requirePaise(input.amount_paise, 'Expense amount', false)
+  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
+  const festivalTag = requireFestivalTag(input.festival_tag)
+  const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
+  if (!festivalTagId) throw new HttpsError('invalid-argument', 'Please select a created tag.')
+
+  const sequenceRef = db.collection('financial_expense_sequences').doc('global')
+  const expenseRef = db.collection('financial_expenses').doc(expenseId)
+  const paymentRef = db.collection('financial_transactions').doc(`expense_payment_${expenseId}`)
+  const vendorRef = vendorId ? db.collection('vendors').doc(vendorId) : null
+  const tagsRef = db.collection('site_config').doc('financial_festivals')
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const [sequenceSnapshot, expenseSnapshot, paymentSnapshot, vendorSnapshot, tagsSnapshot] = await Promise.all([
+      transaction.get(sequenceRef),
+      transaction.get(expenseRef),
+      transaction.get(paymentRef),
+      vendorRef ? transaction.get(vendorRef) : Promise.resolve(null),
+      transaction.get(tagsRef),
+    ])
+    const sequenceNumber = sequenceSnapshot.exists ? sequenceSnapshot.data().next_number : 0
+    if (!Number.isSafeInteger(sequenceNumber) || sequenceNumber < expenseNumber) {
+      throw new HttpsError('failed-precondition', 'This Expense ID has not been generated. Please reopen the form and try again.')
+    }
+    if (expenseSnapshot.exists) throw new HttpsError('already-exists', 'This Expense ID has already been used.')
+    if (paymentSnapshot.exists) throw new HttpsError('already-exists', 'A payment record already exists for this Expense ID.')
+    if (vendorRef && !vendorSnapshot.exists) throw new HttpsError('not-found', 'The selected vendor no longer exists.')
+    const tagsData = tagsSnapshot.exists ? tagsSnapshot.data() : {}
+    const tagName = (tagsData.custom_tags && tagsData.custom_tags[festivalTagId]) ||
+      (tagsData.tag_names && tagsData.tag_names[festivalTagId])
+    if (typeof tagName !== 'string' || !tagName.trim()) {
+      throw new HttpsError('failed-precondition', 'Please select a tag created in Accounts → Tags.')
+    }
+    const canonicalVendorName = vendorSnapshot
+      ? String(vendorSnapshot.data().business_name || vendorSnapshot.data().name || suppliedVendorName).trim()
+      : ''
+    const resolvedTagName = tagName.trim()
+    const paymentStatus = 'paid'
+    transaction.set(expenseRef, {
+      expense_id: expenseId,
+      description,
+      category_name: categoryName,
+      vendor_id: vendorId,
+      vendor_name: vendorId ? canonicalVendorName : '',
+      reference_no: reference,
+      transaction_date: date,
+      due_date: null,
+      amount_paise: amount,
+      paid_paise: amount,
+      outstanding_paise: 0,
+      payment_status: paymentStatus,
+      is_accountless_payment: true,
+      is_full_amount_spending: true,
+      is_vendor_payable: Boolean(vendorId),
+      payment_method: paymentMethod,
+      festival_tag: resolvedTagName,
+      festival_tag_id: festivalTagId,
+      receipt_paths: [],
+      account_id: null,
+      created_by: actor.uid,
+      created_by_name: actor.name,
+      created_at: now,
+      updated_by: actor.uid,
+      updated_at: now,
+      audit: [{ action: 'created', admin_user_id: actor.uid, created_at: now }],
+    })
+    transaction.set(paymentRef, {
+      transaction_id: `FTX-${expenseId}`,
+      type: 'expense',
+      transaction_date: date,
+      reference_no: reference,
+      description,
+      category_name: categoryName,
+      amount_paise: amount,
+      account_id: UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID,
+      transfer_to_account_id: null,
+      linked_order_id: null,
+      linked_expense_id: expenseId,
+      is_unallocated_expense_payment: true,
+      payment_method: paymentMethod,
+      festival_tag: resolvedTagName,
+      festival_tag_id: festivalTagId,
+      created_by: actor.uid,
+      created_by_name: actor.name,
+      created_at: now,
+      audit: [{ action: 'created', admin_user_id: actor.uid, created_at: now }],
+    })
+  })
+  return { success: true }
+})
+
+exports.editFinancialExpense = onCall(async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const expenseId = requireRecordId(request.data && request.data.expense_id, 'Expense ID')
+  const input = request.data && request.data.input
+  if (!input || typeof input !== 'object') throw new HttpsError('invalid-argument', 'Expense details are required.')
+  const expenseRef = db.collection('financial_expenses').doc(expenseId)
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const snapshot = await transaction.get(expenseRef)
+    if (!snapshot.exists) throw new HttpsError('not-found', 'The expense no longer exists.')
+    const current = snapshot.data()
+    if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'Deleted expenses cannot be edited.')
+    const description = requireText(input.description, 'Description', 250, true)
+    const categoryName = requireText(input.category_name, 'Category', 80, false)
+    const vendorId = input.vendor_id == null || input.vendor_id === '' ? null : requireRecordId(input.vendor_id, 'Vendor ID')
+    const vendorName = requireText(input.vendor_name, 'Vendor name', 120, true)
+    const reference = requireText(input.reference_no, 'Reference', 200, true)
+    const date = requireDate(input.transaction_date, 'Expense date')
+    const amount = requirePaise(input.amount_paise, 'Expense amount', false)
+    const festivalTag = requireFestivalTag(input.festival_tag)
+    const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
+    const isFullAmountSpending = current.is_full_amount_spending === true
+    const paid = isFullAmountSpending ? amount : requirePaise(current.paid_paise, 'Paid amount', true)
+    const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
+    if (!isFullAmountSpending && amount < paid) {
+      throw new HttpsError('failed-precondition', 'Expense total cannot be less than the amount already paid.')
+    }
+    const outstanding = amount - paid
+    const paymentStatus = expensePaymentStatus(paid, amount)
+    const linkedQuery = db.collection('financial_transactions').where('linked_expense_id', '==', expenseId)
+    const linkedSnapshot = await transaction.get(linkedQuery)
+    if (linkedSnapshot.size > 499) throw new HttpsError('failed-precondition', 'This expense has too many linked payments to edit safely.')
+    const activeLinkedPayments = linkedSnapshot.docs.filter(item => item.data().is_deleted !== true)
+    if (isFullAmountSpending && (
+      activeLinkedPayments.length !== 1 ||
+      activeLinkedPayments[0].data().is_unallocated_expense_payment !== true
+    )) {
+      throw new HttpsError('failed-precondition', 'The linked spending record is inconsistent; ask an administrator to review this expense.')
+    }
+
+    transaction.update(expenseRef, {
+      description,
+      category_name: categoryName,
+      vendor_id: vendorId,
+      vendor_name: vendorName,
+      reference_no: reference,
+      transaction_date: date,
+      amount_paise: amount,
+      paid_paise: paid,
+      outstanding_paise: outstanding,
+      payment_status: paymentStatus,
+      payment_method: paymentMethod,
+      festival_tag: festivalTag,
+      festival_tag_id: festivalTagId,
+      updated_by: actor.uid,
+      updated_by_name: actor.name,
+      updated_at: now,
+      audit: FieldValue.arrayUnion({
+        action: 'edited',
+        admin_user_id: actor.uid,
+        created_at: now,
+        previous: {
+          description: current.description,
+          category_name: current.category_name,
+          vendor_id: current.vendor_id ?? null,
+          vendor_name: current.vendor_name ?? '',
+          reference_no: current.reference_no ?? '',
+          transaction_date: current.transaction_date,
+          amount_paise: current.amount_paise,
+          outstanding_paise: current.outstanding_paise,
+          festival_tag: current.festival_tag ?? null,
+          festival_tag_id: current.festival_tag_id ?? null,
+        },
+        next: {
+          description,
+          category_name: categoryName,
+          vendor_id: vendorId,
+          vendor_name: vendorName,
+          reference_no: reference,
+          transaction_date: date,
+          amount_paise: amount,
+          outstanding_paise: outstanding,
+          festival_tag: festivalTag,
+          festival_tag_id: festivalTagId,
+        },
+      }),
+    })
+    for (const linked of linkedSnapshot.docs) {
+      if (linked.data().is_deleted === true) continue
+      transaction.update(linked.ref, {
+        description,
+        category_name: categoryName,
+        ...(isFullAmountSpending && linked.data().is_unallocated_expense_payment === true
+          ? { amount_paise: amount }
+          : {}),
+        ...(linked.data().is_unallocated_expense_payment === true
+          ? { transaction_date: date, reference_no: reference, payment_method: paymentMethod }
+          : {}),
+        festival_tag: festivalTag,
+        festival_tag_id: festivalTagId,
+        updated_by: actor.uid,
+        updated_by_name: actor.name,
+        updated_at: now,
+        audit: FieldValue.arrayUnion({
+          action: 'linked_expense_edited',
+          admin_user_id: actor.uid,
+          created_at: now,
+          description,
+          category_name: categoryName,
+        }),
+      })
+    }
+  })
+  return { success: true }
+})
+
+exports.deleteFinancialExpense = onCall(async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const expenseId = requireRecordId(request.data && request.data.expense_id, 'Expense ID')
+  const expenseRef = db.collection('financial_expenses').doc(expenseId)
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const snapshot = await transaction.get(expenseRef)
+    if (!snapshot.exists) throw new HttpsError('not-found', 'The expense no longer exists.')
+    const expense = snapshot.data()
+    if (!expense || expense.is_deleted === true) throw new HttpsError('failed-precondition', 'This expense has already been deleted.')
+    const linkedSnapshot = await transaction.get(
+      db.collection('financial_transactions').where('linked_expense_id', '==', expenseId),
+    )
+    const linkedTransactions = linkedSnapshot.docs.filter(item => item.data().is_deleted !== true)
+    if (linkedTransactions.length > 499) {
+      throw new HttpsError('failed-precondition', 'This expense has too many linked payments to delete safely.')
+    }
+    const paid = requirePaise(expense.paid_paise, 'Paid amount', true)
+    const linkedTotal = linkedTransactions.reduce((sum, item) => {
+      const data = item.data()
+      if (data.type !== 'expense' || data.linked_expense_id !== expenseId) {
+        throw new HttpsError('failed-precondition', 'A linked expense payment has an invalid type.')
+      }
+      if (data.is_unallocated_expense_payment === true && data.account_id !== UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID) {
+        throw new HttpsError('failed-precondition', 'A linked expense payment has an invalid account reference.')
+      }
+      return sum + positiveStoredPaise(data.amount_paise, 'linked payment amount')
+    }, 0)
+    if (linkedTotal !== paid) {
+      throw new HttpsError('failed-precondition', 'Linked payment totals do not match this expense. Review the record before deleting it.')
+    }
+
+    const deltas = new Map()
+    for (const linked of linkedTransactions) addTransactionPosting(deltas, linked.data(), -1)
+    const uniqueAccountCount = Array.from(deltas.values()).filter(delta => delta !== 0).length
+    if (linkedTransactions.length + uniqueAccountCount + 1 > 500) {
+      throw new HttpsError('failed-precondition', 'This expense has too many linked records to delete in one safe operation.')
+    }
+    await applyAccountDeltas(transaction, deltas, actor, now)
+    transaction.update(expenseRef, {
+      is_deleted: true,
+      deleted_at: now,
+      deleted_by: actor.uid,
+      deleted_by_name: actor.name,
+      updated_by: actor.uid,
+      updated_by_name: actor.name,
+      updated_at: now,
+      audit: FieldValue.arrayUnion({
+        action: 'deleted',
+        admin_user_id: actor.uid,
+        admin_user_name: actor.name,
+        created_at: now,
+        amount_paise: expense.amount_paise,
+        paid_paise: paid,
+      }),
+    })
+    for (const linked of linkedTransactions) {
+      transaction.update(linked.ref, {
+        is_deleted: true,
+        deleted_at: now,
+        deleted_by: actor.uid,
+        deleted_by_name: actor.name,
+        updated_by: actor.uid,
+        updated_by_name: actor.name,
+        updated_at: now,
+        audit: FieldValue.arrayUnion({
+          action: 'deleted_with_expense',
+          linked_expense_id: expenseId,
+          admin_user_id: actor.uid,
+          created_at: now,
+        }),
+      })
+    }
+  })
+  return { success: true }
 })
 
 function validRequiredString(value, maxLength) {

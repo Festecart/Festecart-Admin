@@ -3,6 +3,13 @@ import type { Timestamp } from 'firebase/firestore'
 export type FinancialAccountType = 'cash' | 'bank' | 'upi' | 'petty_cash'
 export type FinancialTransactionType = 'income' | 'expense' | 'transfer' | 'opening_balance'
 
+export interface FestivalTag {
+  id: string
+  name: string
+  is_custom?: boolean
+  is_enabled?: boolean
+}
+
 export interface FinancialAccount {
   id: string
   name: string
@@ -29,6 +36,10 @@ export interface FinancialTransaction {
   party_name: string | null
   receipt_paths: string[]
   payment_method: string
+  festival_tag: string | null
+  festival_tag_id: string | null
+  is_petty_cash_spending?: boolean
+  is_unallocated_expense_payment?: boolean
   created_by: string
   created_by_name: string
   created_at: Timestamp
@@ -38,12 +49,22 @@ export interface EditTransactionInput {
   transaction_date: string
   description: string
   category_name: string
+  amount_paise: number
+  account_id: string
+  transfer_to_account_id: string | null
+  payment_method: string
+  festival_tag: string | null
+  festival_tag_id: string | null
+  is_petty_cash_spending?: boolean
+  reference_no?: string
+  party_name?: string | null
 }
 
 export type ExpensePaymentStatus = 'unpaid' | 'partially_paid' | 'paid'
 
 export interface FinancialExpense {
   id: string
+  expense_id: string
   description: string
   category_name: string
   vendor_id: string | null
@@ -55,8 +76,13 @@ export interface FinancialExpense {
   paid_paise: number
   outstanding_paise: number
   payment_status: ExpensePaymentStatus
+  payment_method: string
+  is_accountless_payment?: boolean
+  is_full_amount_spending?: boolean
   is_vendor_payable: boolean
   receipt_paths: string[]
+  festival_tag: string | null
+  festival_tag_id: string | null
   created_by: string
   created_at: Timestamp
 }
@@ -94,18 +120,17 @@ export interface AccountDateRange {
 }
 
 export interface NewExpenseInput {
+  expense_id: string
   description: string
   category_name: string
   vendor_id: string | null
   vendor_name: string
   reference_no: string
   transaction_date: string
-  due_date: string
   amount_paise: number
-  paid_paise: number
-  account_id: string | null
-  payment_reference: string
   payment_method: string
+  festival_tag: string | null
+  festival_tag_id: string | null
 }
 
 export interface RecordPaymentInput {
@@ -131,4 +156,28 @@ export interface NewTransactionInput {
   account_id: string
   transfer_to_account_id: string | null
   party_name?: string
+  festival_tag?: string | null
+  festival_tag_id?: string | null
+  is_petty_cash_spending?: boolean
+  idempotency_key?: string
+}
+
+export interface EditExpenseInput {
+  description: string
+  category_name: string
+  vendor_id: string | null
+  vendor_name: string
+  reference_no: string
+  transaction_date: string
+  amount_paise: number
+  payment_method: string
+  festival_tag: string | null
+  festival_tag_id: string | null
+}
+
+export interface CustomerPayment {
+  transaction: FinancialTransaction
+  customer_name: string
+  order_number: string
+  order_payment_status: string
 }

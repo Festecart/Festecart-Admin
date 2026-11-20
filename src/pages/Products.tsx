@@ -4,9 +4,9 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { writeBatch } from 'firebase/firestore'
 import {
-  db, collection, doc, getDocs, deleteDoc,
-  query, where, orderBy,
+  db, doc, deleteDoc,
 } from '@/lib/firebase'
+import { fetchAdminCategories, fetchAdminProducts } from '@/lib/products'
 import { formatCurrency, getProductStockStatusText } from '@/lib/utils'
 import {
   Search, Plus, MoreVertical, Pencil,
@@ -17,59 +17,10 @@ import {
   useTableColumnPreferences,
 } from '@/components/ManageTableColumns'
 
-interface Product {
-  id: string
-  name: string
-  slug: string
-  price: number
-  compare_at_price: number | null
-  inventory_count: number | null
-  low_stock_threshold?: number | null
-  low_stock_message?: string | null
-  sku: string | null
-  images: string[]
-  status: string
-  is_featured: boolean
-  display_order: number
-  category_id: string | null
-  vendor_id: string | null
-  created_at: string
-}
-
-interface Category {
-  id: string
-  name: string
-}
-
 function useProducts(_search: string, status: string) {
   return useQuery({
     queryKey: ['admin-products', status],
-    queryFn: async () => {
-      const constraints = status && status !== 'all'
-        ? [
-          where('status', '==', status),
-          orderBy('display_order', 'asc')
-        ]
-        : [orderBy('display_order', 'asc')]
-
-      const snap = await getDocs(
-        query(collection(db, 'products'), ...constraints)
-      )
-
-      let products = snap.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-      } as Product))
-
-      products = [
-        ...products
-          .filter(p => p.display_order > 0)
-          .sort((a, b) => a.display_order - b.display_order),
-        ...products.filter(p => !p.display_order),
-      ]
-
-      return products
-    },
+    queryFn: () => fetchAdminProducts(status),
     staleTime: 1000 * 30,
   })
 }
@@ -77,13 +28,7 @@ function useProducts(_search: string, status: string) {
 function useCategories() {
   return useQuery({
     queryKey: ['categories'],
-    queryFn: async () => {
-      const snap = await getDocs(collection(db, 'categories'))
-      return snap.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-      } as Category))
-    },
+    queryFn: fetchAdminCategories,
   })
 }
 

@@ -1,14 +1,14 @@
 import {
   arrayUnion,
   collection,
+  documentId,
   doc,
-  getAggregateFromServer,
+  getDoc,
   getDocs,
   limit,
   orderBy,
   query,
   runTransaction,
-  sum,
   startAfter,
   Timestamp,
   where,
@@ -20,17 +20,21 @@ import {
 } from 'firebase/firestore'
 import { deleteObject, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { getFunctions, httpsCallable } from 'firebase/functions'
+import { festivalTagId, LEGACY_FINANCIAL_TAGS } from '@/lib/festivalProducts'
 import { app, auth, db, storage } from '@/lib/firebase'
 import type {
   AccountTotals,
   AccountDateRange,
+  CustomerPayment,
   EditTransactionInput,
+  EditExpenseInput,
   FinancialAccount,
   FinancialAccountType,
   FinancialCategory,
   FinancialExpense,
   FinancialTransaction,
   FinancialTransactionType,
+  FestivalTag,
   CustomerReceivable,
   NewExpenseInput,
   NewAccountInput,
@@ -44,6 +48,8 @@ const TRANSACTIONS = 'financial_transactions'
 const EXPENSES = 'financial_expenses'
 const CATEGORIES = 'financial_categories'
 const PAGE_SIZE = 100
+export const PETTY_CASH_TRANSACTION_ACCOUNT_ID = '__petty_cash_spending__'
+export const UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID = '__unallocated_expense_payment__'
 
 function requireActor() {
   const user = auth.currentUser
@@ -69,6 +75,22 @@ function readNonnegativeInteger(value: unknown, label: string): number {
   return amount
 }
 
+function normalizeFestivalTag(value: unknown, label: string): string | null {
+  if (value == null || value === '') return null
+  if (typeof value !== 'string' || value.trim().length > 80) {
+    throw new Error(`${label} must be a festival name of 1–80 characters.`)
+  }
+  return value.trim()
+}
+
+function normalizeFestivalTagId(value: unknown, tagName: string | null, label: string): string | null {
+  if (value == null || value === '') return tagName ? festivalTagId(tagName) : null
+  if (typeof value !== 'string' || value.trim().length > 80) {
+    throw new Error(`${label} must be a tag ID of up to 80 characters.`)
+  }
+  return value.trim()
+}
+
 function readAccount(id: string, data: DocumentData): FinancialAccount {
   if (!['cash', 'bank', 'upi', 'petty_cash'].includes(String(data.type))) {
     throw new Error(`Account ${id} has an unsupported type.`)
@@ -88,15 +110,20 @@ function readAccount(id: string, data: DocumentData): FinancialAccount {
 }
 
 function readTransaction(id: string, data: DocumentData): FinancialTransaction {
+  if (!id.trim()) throw new Error('A transaction has an invalid Firestore document ID.')
   if (!['income', 'expense', 'transfer', 'opening_balance'].includes(String(data.type))) {
     throw new Error(`Transaction ${id} has an unsupported type.`)
   }
   if (!(data.transaction_date instanceof Timestamp) || !(data.created_at instanceof Timestamp)) {
     throw new Error(`Transaction ${id} has an invalid date.`)
   }
+  const festivalTag = normalizeFestivalTag(data.festival_tag, `Transaction ${id} festival tag`)
+  const transactionId = typeof data.transaction_id === 'string' && data.transaction_id.trim()
+    ? data.transaction_id.trim()
+    : id
   return {
     id,
-    transaction_id: String(data.transaction_id ?? id),
+    transaction_id: transactionId,
     type: data.type as FinancialTransactionType,
     transaction_date: data.transaction_date,
     reference_no: String(data.reference_no ?? ''),
@@ -110,6 +137,10 @@ function readTransaction(id: string, data: DocumentData): FinancialTransaction {
     party_name: (data.party_name as string | null) ?? null,
     receipt_paths: Array.isArray(data.receipt_paths) ? data.receipt_paths.filter((path): path is string => typeof path === 'string') : [],
     payment_method: String(data.payment_method ?? ''),
+    festival_tag: festivalTag,
+    festival_tag_id: normalizeFestivalTagId(data.festival_tag_id, festivalTag, `Transaction ${id} festival tag`),
+    is_petty_cash_spending: data.is_petty_cash_spending === true,
+    is_unallocated_expense_payment: data.is_unallocated_expense_payment === true,
     created_by: String(data.created_by ?? ''),
     created_by_name: String(data.created_by_name ?? ''),
     created_at: data.created_at,
@@ -135,8 +166,10 @@ function readExpense(id: string, data: DocumentData): FinancialExpense {
   if (data.receipt_paths != null && (!Array.isArray(data.receipt_paths) || data.receipt_paths.some((path: unknown) => typeof path !== 'string'))) {
     throw new Error(`Expense ${id} has invalid receipt attachments.`)
   }
+  const festivalTag = normalizeFestivalTag(data.festival_tag, `Expense ${id} festival tag`)
   return {
     id,
+    expense_id: typeof data.expense_id === 'string' && data.expense_id.trim() ? data.expense_id : id,
     description: String(data.description ?? ''),
     category_name: String(data.category_name ?? ''),
     vendor_id: (data.vendor_id as string | null) ?? null,
@@ -148,8 +181,13 @@ function readExpense(id: string, data: DocumentData): FinancialExpense {
     paid_paise: paidPaise,
     outstanding_paise: outstandingPaise,
     payment_status: data.payment_status,
+    payment_method: String(data.payment_method ?? ''),
+    is_accountless_payment: data.is_accountless_payment === true,
+    is_full_amount_spending: data.is_full_amount_spending === true,
     is_vendor_payable: data.is_vendor_payable === true,
     receipt_paths: (data.receipt_paths as string[] | undefined) ?? [],
+    festival_tag: festivalTag,
+    festival_tag_id: normalizeFestivalTagId(data.festival_tag_id, festivalTag, `Expense ${id} festival tag`),
     created_by: String(data.created_by ?? ''),
     created_at: data.created_at,
   }
@@ -196,47 +234,43 @@ export async function editTransaction(
   transactionRow: FinancialTransaction,
   input: EditTransactionInput,
 ): Promise<void> {
-  const actor = requireActor()
-  if (transactionRow.type === 'opening_balance' || transactionRow.linked_order_id || transactionRow.linked_expense_id) {
-    throw new Error('This linked or opening-balance entry is protected. Correct it through its source workflow.')
-  }
-  if (!input.description.trim() || input.description.trim().length > 250) throw new Error('Enter a description of 1–250 characters.')
-  if (!input.category_name.trim() || input.category_name.trim().length > 80) throw new Error('Choose a category of 1–80 characters.')
-  const transactionRef = doc(db, TRANSACTIONS, transactionRow.id)
-  const now = Timestamp.now()
-  const nextDate = dateInputTimestamp(input.transaction_date)
+  const editRecord = httpsCallable<{ transaction_id: string; input: EditTransactionInput }, { success: boolean }>(
+    getFunctions(app, 'us-central1'),
+    'editFinancialTransaction',
+  )
+  await editRecord({ transaction_id: transactionRow.id, input })
+}
 
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(transactionRef)
-    if (!snapshot.exists()) throw new Error('The transaction no longer exists.')
-    const data = snapshot.data()
-    if (!data || data.linked_order_id || data.linked_expense_id || data.type === 'opening_balance') {
-      throw new Error('This linked or opening-balance entry is protected. Correct it through its source workflow.')
-    }
-    transaction.update(transactionRef, {
-      transaction_date: nextDate,
-      description: input.description.trim(),
-      category_name: input.category_name.trim(),
-      updated_by: actor.uid,
-      updated_by_name: actor.name,
-      updated_at: now,
-      audit: arrayUnion({
-        action: 'metadata_edited',
-        previous: {
-          transaction_date: data.transaction_date,
-          description: data.description,
-          category_name: data.category_name,
-        },
-        next: {
-          transaction_date: nextDate,
-          description: input.description.trim(),
-          category_name: input.category_name.trim(),
-        },
-        admin_user_id: actor.uid,
-        created_at: now,
-      }),
-    })
-  })
+export async function deleteFinancialTransaction(transaction: FinancialTransaction, pettyCashSpending = false): Promise<void> {
+  if (!transaction || typeof transaction.id !== 'string' || !transaction.id.trim() ||
+      transaction.id.includes('/') || transaction.id.length > 200) {
+    throw new Error('The selected transaction could not be identified. Refresh and try again.')
+  }
+  const deleteRecord = httpsCallable<{ transaction_id: string; petty_cash_spending: boolean }, { success: boolean }>(
+    getFunctions(app, 'us-central1'),
+    'deleteFinancialTransaction',
+  )
+  await deleteRecord({ transaction_id: transaction.id, petty_cash_spending: pettyCashSpending })
+}
+
+export async function editFinancialExpense(expense: FinancialExpense, input: EditExpenseInput): Promise<void> {
+  const editRecord = httpsCallable<{ expense_id: string; input: EditExpenseInput }, { success: boolean }>(
+    getFunctions(app, 'us-central1'),
+    'editFinancialExpense',
+  )
+  await editRecord({ expense_id: expense.id, input })
+}
+
+export async function deleteFinancialExpense(expense: FinancialExpense): Promise<void> {
+  if (!expense || typeof expense.id !== 'string' || !expense.id.trim() ||
+      expense.id.includes('/') || expense.id.length > 200) {
+    throw new Error('The selected expense could not be identified. Refresh and try again.')
+  }
+  const deleteRecord = httpsCallable<{ expense_id: string }, { success: boolean }>(
+    getFunctions(app, 'us-central1'),
+    'deleteFinancialExpense',
+  )
+  await deleteRecord({ expense_id: expense.id })
 }
 
 export async function fetchTransactionPage(
@@ -248,7 +282,7 @@ export async function fetchTransactionPage(
     : query(baseQuery, limit(PAGE_SIZE))
   const snapshot = await getDocs(pageQuery)
   return {
-    items: snapshot.docs.map(item => readTransaction(item.id, item.data())),
+    items: snapshot.docs.filter(item => item.data().is_deleted !== true).map(item => readTransaction(item.id, item.data())),
     cursor: snapshot.docs[snapshot.docs.length - 1] ?? null,
     hasMore: snapshot.docs.length === PAGE_SIZE,
   }
@@ -286,18 +320,396 @@ function rangeConstraints(range: AccountDateRange): QueryConstraint[] {
 export async function fetchReportTransactions(range: AccountDateRange): Promise<FinancialTransaction[]> {
   const baseQuery = query(collection(db, TRANSACTIONS), ...rangeConstraints(range), orderBy('transaction_date', 'desc'))
   const documents = await fetchAllPages(baseQuery)
-  return documents.map(item => readTransaction(item.id, item.data()))
+  return documents.filter(item => item.data().is_deleted !== true).map(item => readTransaction(item.id, item.data()))
 }
 
 export async function fetchReportExpenses(range: AccountDateRange): Promise<FinancialExpense[]> {
   const baseQuery = query(collection(db, EXPENSES), ...rangeConstraints(range), orderBy('transaction_date', 'desc'))
   const documents = await fetchAllPages(baseQuery)
-  return documents.map(item => readExpense(item.id, item.data()))
+  return documents.filter(item => item.data().is_deleted !== true).map(item => readExpense(item.id, item.data()))
 }
 
 export async function fetchExpenses(): Promise<FinancialExpense[]> {
   const documents = await fetchAllPages(query(collection(db, EXPENSES), orderBy('transaction_date', 'desc')))
-  return documents.map(item => readExpense(item.id, item.data()))
+  return documents.filter(item => item.data().is_deleted !== true).map(item => readExpense(item.id, item.data()))
+}
+
+export async function fetchFestivalTags(): Promise<FestivalTag[]> {
+  const configSnapshot = await getDoc(doc(db, 'site_config', 'financial_festivals'))
+  const config = configSnapshot.exists() ? configSnapshot.data() : {}
+  const configuredNames = Array.isArray(config.names)
+    ? config.names.filter((name: unknown): name is string => typeof name === 'string')
+    : []
+  const savedTagNames = readFestivalTagNames(config.tag_names)
+  const customTagNames = readFestivalTagNames(config.custom_tags)
+  const tagStatuses = readFestivalTagStatuses(config.tag_status)
+  const savedSelections = readFestivalProductSelections(
+    config.product_selections,
+    new Set([...Object.keys(savedTagNames), ...Object.keys(customTagNames)]),
+  )
+  const tagsById = new Map<string, string>()
+  for (const name of [...LEGACY_FINANCIAL_TAGS, ...configuredNames]) {
+    const trimmedName = name.trim()
+    const id = festivalTagId(trimmedName)
+    if (trimmedName && id && !tagsById.has(id)) tagsById.set(id, trimmedName)
+  }
+  for (const [id, name] of Object.entries(savedTagNames)) tagsById.set(id, name)
+  for (const [id, name] of Object.entries(customTagNames)) tagsById.set(id, name)
+  for (const id of Object.keys(savedSelections)) {
+    if (!tagsById.has(id)) tagsById.set(id, id.replace(/-/g, ' '))
+  }
+  const builtInTagIds = new Set(LEGACY_FINANCIAL_TAGS.map(festivalTagId))
+  const customTagIds = new Set([
+    ...Object.keys(customTagNames),
+    ...Object.keys(savedTagNames),
+    ...Object.keys(savedSelections),
+    ...configuredNames.map(festivalTagId).filter(id => !builtInTagIds.has(id)),
+  ])
+  return [...tagsById.entries()].map(([id, name]) => ({
+    id,
+    name,
+    is_custom: customTagIds.has(id),
+    is_enabled: tagStatuses[id] !== false,
+  }))
+}
+
+function readFestivalTagNames(value: unknown): Record<string, string> {
+  if (value == null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Saved festival tag names have an invalid format.')
+  }
+  const names: Record<string, string> = {}
+  for (const [id, name] of Object.entries(value)) {
+    if (!id.trim() || typeof name !== 'string' || !name.trim()) {
+      throw new Error('A saved festival tag name is invalid.')
+    }
+    names[id] = name.trim()
+  }
+  return names
+}
+
+function readFestivalTagStatuses(value: unknown): Record<string, boolean> {
+  if (value == null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Saved festival tag statuses have an invalid format.')
+  }
+  const statuses: Record<string, boolean> = {}
+  for (const [id, enabled] of Object.entries(value)) {
+    if (!id.trim() || typeof enabled !== 'boolean') {
+      throw new Error('A saved festival tag status is invalid.')
+    }
+    statuses[id] = enabled
+  }
+  return statuses
+}
+
+function isManagedFestivalTag(
+  tagId: string,
+  config: DocumentData,
+  tagNames: Record<string, string>,
+  customTagNames: Record<string, string>,
+): boolean {
+  if (tagNames[tagId] || customTagNames[tagId]) return true
+  const builtInIds = new Set(LEGACY_FINANCIAL_TAGS.map(festivalTagId))
+  const configuredNames = Array.isArray(config.names)
+    ? config.names.filter((value: unknown): value is string => typeof value === 'string')
+    : []
+  if (configuredNames.some(name => festivalTagId(name) === tagId && !builtInIds.has(tagId))) return true
+  const selections = readFestivalProductSelections(
+    config.product_selections,
+    new Set([...Object.keys(tagNames), ...Object.keys(customTagNames)]),
+  )
+  return Object.prototype.hasOwnProperty.call(selections, tagId)
+}
+
+function readFestivalProductSelections(value: unknown, stableTagIds: ReadonlySet<string> = new Set()): Record<string, string[]> {
+  if (value == null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Festival product selections have an invalid format.')
+  }
+  const selections: Record<string, string[]> = {}
+  for (const [festival, productIds] of Object.entries(value)) {
+    if (!Array.isArray(productIds) || productIds.some(id => typeof id !== 'string')) {
+      throw new Error(`Saved product selections for ${festival} are invalid.`)
+    }
+    const id = stableTagIds.has(festival) ? festival : festivalTagId(festival)
+    selections[id] = [...new Set([...(selections[id] ?? []), ...productIds])]
+  }
+  return selections
+}
+
+export async function fetchFestivalProductSelections(): Promise<Record<string, string[]>> {
+  const configSnapshot = await getDoc(doc(db, 'site_config', 'financial_festivals'))
+  if (!configSnapshot.exists()) return {}
+  const config = configSnapshot.data()
+  const tagIds = new Set([
+    ...Object.keys(readFestivalTagNames(config.tag_names)),
+    ...Object.keys(readFestivalTagNames(config.custom_tags)),
+  ])
+  return readFestivalProductSelections(config.product_selections, tagIds)
+}
+
+function normalizedFestivalTagName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+export async function createFestivalTag(nameInput: string, productIds: string[] = []): Promise<FestivalTag> {
+  requireActor()
+  const name = nameInput.trim().replace(/\s+/g, ' ')
+  if (!name) throw new Error('Enter a tag name.')
+  if (name.length > 80) throw new Error('Tag names must be 80 characters or fewer.')
+  if (!Array.isArray(productIds) || productIds.some(id => typeof id !== 'string' || !id.trim())) {
+    throw new Error('The selected product IDs are invalid.')
+  }
+
+  const configRef = doc(db, 'site_config', 'financial_festivals')
+  const generatedTagId = doc(collection(db, 'site_config')).id
+  await runTransaction(db, async transaction => {
+    const configSnapshot = await transaction.get(configRef)
+    const currentData = configSnapshot.exists() ? configSnapshot.data() : {}
+    const tagNames = readFestivalTagNames(currentData.tag_names)
+    const customTagNames = readFestivalTagNames(currentData.custom_tags)
+    const tagStatuses = readFestivalTagStatuses(currentData.tag_status)
+    const configuredNames = Array.isArray(currentData.names)
+      ? currentData.names.filter((value: unknown): value is string => typeof value === 'string')
+      : []
+    const savedSelections = readFestivalProductSelections(
+      currentData.product_selections,
+      new Set([...Object.keys(tagNames), ...Object.keys(customTagNames)]),
+    )
+    const legacySelectionNames = Object.keys(savedSelections).map(id => tagNames[id] ?? customTagNames[id] ?? id.replace(/-/g, ' '))
+    const existingNames = [
+      ...LEGACY_FINANCIAL_TAGS,
+      ...configuredNames,
+      ...Object.values(tagNames),
+      ...Object.values(customTagNames),
+      ...legacySelectionNames,
+    ]
+    if (existingNames.some(existing => normalizedFestivalTagName(existing) === normalizedFestivalTagName(name))) {
+      throw new Error('A tag with this name already exists.')
+    }
+    if (productIds.length > 0) {
+      savedSelections[generatedTagId] = [...new Set(productIds.map(id => id.trim()))]
+    }
+
+    transaction.set(configRef, {
+      ...currentData,
+      tag_names: { ...tagNames, [generatedTagId]: name },
+      custom_tags: { ...customTagNames, [generatedTagId]: name },
+      tag_status: { ...tagStatuses, [generatedTagId]: true },
+      product_selections: savedSelections,
+      updated_at: Timestamp.now(),
+    }, { merge: true })
+  })
+  return { id: generatedTagId, name, is_custom: true, is_enabled: true }
+}
+
+export async function renameFestivalTag(tagIdInput: string, nameInput: string, productIds?: string[]): Promise<void> {
+  requireActor()
+  const tagId = normalizeFestivalTagId(tagIdInput, null, 'Festival tag')
+  const name = nameInput.trim().replace(/\s+/g, ' ')
+  if (!tagId) throw new Error('Select a tag to edit.')
+  if (!name) throw new Error('Enter a tag name.')
+  if (name.length > 80) throw new Error('Tag names must be 80 characters or fewer.')
+  if (productIds !== undefined && (!Array.isArray(productIds) || productIds.some(id => typeof id !== 'string' || !id.trim()))) {
+    throw new Error('The selected product IDs are invalid.')
+  }
+
+  const configRef = doc(db, 'site_config', 'financial_festivals')
+  await runTransaction(db, async transaction => {
+    const configSnapshot = await transaction.get(configRef)
+    const currentData = configSnapshot.exists() ? configSnapshot.data() : {}
+    const tagNames = readFestivalTagNames(currentData.tag_names)
+    const customTagNames = readFestivalTagNames(currentData.custom_tags)
+    if (!isManagedFestivalTag(tagId, currentData, tagNames, customTagNames)) throw new Error('This tag no longer exists.')
+    const configuredNames = Array.isArray(currentData.names)
+      ? currentData.names.filter((value: unknown): value is string => typeof value === 'string')
+      : []
+    const selections = readFestivalProductSelections(
+      currentData.product_selections,
+      new Set([...Object.keys(tagNames), ...Object.keys(customTagNames)]),
+    )
+    const namesToCheck = [
+      ...LEGACY_FINANCIAL_TAGS.map(value => ({ id: festivalTagId(value), name: value })),
+      ...configuredNames.map(value => ({ id: festivalTagId(value), name: value })),
+      ...Object.entries(tagNames).map(([id, value]) => ({ id, name: value })),
+      ...Object.entries(customTagNames).map(([id, value]) => ({ id, name: value })),
+      ...Object.keys(selections).map(id => ({
+        id,
+        name: tagNames[id] ?? customTagNames[id] ?? id.replace(/-/g, ' '),
+      })),
+    ]
+    if (namesToCheck.some(item => item.id !== tagId && normalizedFestivalTagName(item.name) === normalizedFestivalTagName(name))) {
+      throw new Error('A tag with this name already exists.')
+    }
+    if (productIds !== undefined) {
+      const tagStatuses = readFestivalTagStatuses(currentData.tag_status)
+      const nextProductIds = [...new Set(productIds.map(id => id.trim()))]
+      const existingProductIds = [...new Set(selections[tagId] ?? [])]
+      const sortedNextIds = [...nextProductIds].sort()
+      const sortedExistingIds = [...existingProductIds].sort()
+      if (tagStatuses[tagId] === false &&
+        (sortedNextIds.length !== sortedExistingIds.length || sortedNextIds.some((id, index) => id !== sortedExistingIds[index]))) {
+        throw new Error('Enable this tag before changing its product associations.')
+      }
+      selections[tagId] = nextProductIds
+    }
+
+    transaction.set(configRef, {
+      ...currentData,
+      tag_names: { ...tagNames, [tagId]: name },
+      custom_tags: { ...customTagNames, [tagId]: name },
+      ...(productIds !== undefined ? { product_selections: selections } : {}),
+      updated_at: Timestamp.now(),
+    }, { merge: true })
+  })
+}
+
+export async function setFestivalTagEnabled(tagIdInput: string, isEnabled: boolean): Promise<void> {
+  requireActor()
+  const tagId = normalizeFestivalTagId(tagIdInput, null, 'Festival tag')
+  if (!tagId || typeof isEnabled !== 'boolean') throw new Error('Select a tag and status.')
+
+  const configRef = doc(db, 'site_config', 'financial_festivals')
+  await runTransaction(db, async transaction => {
+    const configSnapshot = await transaction.get(configRef)
+    const currentData = configSnapshot.exists() ? configSnapshot.data() : {}
+    const tagNames = readFestivalTagNames(currentData.tag_names)
+    const customTagNames = readFestivalTagNames(currentData.custom_tags)
+    if (!isManagedFestivalTag(tagId, currentData, tagNames, customTagNames)) throw new Error('This tag no longer exists.')
+    const tagStatuses = readFestivalTagStatuses(currentData.tag_status)
+    transaction.set(configRef, {
+      ...currentData,
+      tag_status: { ...tagStatuses, [tagId]: isEnabled },
+      updated_at: Timestamp.now(),
+    }, { merge: true })
+  })
+}
+
+export async function deleteFestivalTag(tagIdInput: string): Promise<void> {
+  return deleteFestivalTags([tagIdInput])
+}
+
+export async function deleteFestivalTags(tagIdInputs: string[]): Promise<void> {
+  requireActor()
+  if (!Array.isArray(tagIdInputs) || tagIdInputs.length === 0) throw new Error('Select at least one tag to delete.')
+  const normalizedTagIds = tagIdInputs.map(tagId => normalizeFestivalTagId(tagId, null, 'Festival tag'))
+  if (normalizedTagIds.some(tagId => tagId === null)) throw new Error('Select valid tags to delete.')
+  const tagIds = [...new Set(normalizedTagIds.filter((tagId): tagId is string => tagId !== null))]
+
+  const configRef = doc(db, 'site_config', 'financial_festivals')
+  await runTransaction(db, async transaction => {
+    const configSnapshot = await transaction.get(configRef)
+    if (!configSnapshot.exists()) throw new Error('This tag no longer exists.')
+    const currentData = configSnapshot.data()
+    const tagNames = readFestivalTagNames(currentData.tag_names)
+    const customTagNames = readFestivalTagNames(currentData.custom_tags)
+    const tagNamesToDelete = new Map<string, string>()
+    for (const tagId of tagIds) {
+      if (!isManagedFestivalTag(tagId, currentData, tagNames, customTagNames)) {
+        throw new Error('One or more selected tags no longer exist.')
+      }
+      tagNamesToDelete.set(tagId, tagNames[tagId] ?? customTagNames[tagId] ?? tagId.replace(/-/g, ' '))
+    }
+    const deletedTagNameIds = new Set([...tagNamesToDelete.values()].map(festivalTagId))
+    const tagStatuses = readFestivalTagStatuses(currentData.tag_status)
+    readFestivalProductSelections(
+      currentData.product_selections,
+      new Set([...Object.keys(tagNames), ...Object.keys(customTagNames)]),
+    )
+    const selections = currentData.product_selections && typeof currentData.product_selections === 'object' &&
+      !Array.isArray(currentData.product_selections)
+      ? { ...currentData.product_selections }
+      : {}
+    for (const key of Object.keys(selections)) {
+      if (tagNamesToDelete.has(key) || deletedTagNameIds.has(festivalTagId(key))) {
+        delete selections[key]
+      }
+    }
+    for (const tagId of tagIds) {
+      delete tagNames[tagId]
+      delete customTagNames[tagId]
+      delete tagStatuses[tagId]
+    }
+    const deletedTagIds = new Set(tagIds)
+    const configuredNames = Array.isArray(currentData.names)
+      ? currentData.names.filter((value: unknown): value is string =>
+        typeof value === 'string' && !deletedTagIds.has(festivalTagId(value)) && !deletedTagNameIds.has(festivalTagId(value)),
+      )
+      : currentData.names
+    transaction.update(
+      configRef,
+      {
+        tag_names: tagNames,
+        custom_tags: customTagNames,
+        tag_status: tagStatuses,
+        product_selections: selections,
+        ...(Array.isArray(currentData.names) ? { names: configuredNames } : {}),
+        updated_at: Timestamp.now(),
+      },
+    )
+  })
+}
+
+export async function saveFestivalProductSelection(tagIdInput: string, tagNameInput: string, productIds: string[]): Promise<void> {
+  const tagId = normalizeFestivalTagId(tagIdInput, null, 'Festival tag')
+  const tagName = normalizeFestivalTag(tagNameInput, 'Festival tag')
+  if (!tagId || !tagName) throw new Error('Choose a festival category.')
+  if (!Array.isArray(productIds) || productIds.some(id => typeof id !== 'string' || !id.trim())) {
+    throw new Error('The selected product IDs are invalid.')
+  }
+  const configRef = doc(db, 'site_config', 'financial_festivals')
+  await runTransaction(db, async transaction => {
+    const configSnapshot = await transaction.get(configRef)
+    const currentData = configSnapshot.exists() ? configSnapshot.data() : {}
+    const tagNames = readFestivalTagNames(currentData.tag_names)
+    const customTagNames = readFestivalTagNames(currentData.custom_tags)
+    const tagStatuses = readFestivalTagStatuses(currentData.tag_status)
+    if (!isManagedFestivalTag(tagId, currentData, tagNames, customTagNames) || tagStatuses[tagId] === false) {
+      throw new Error('Choose an enabled created tag.')
+    }
+    const selections = readFestivalProductSelections(
+      currentData.product_selections,
+      new Set([...Object.keys(tagNames), ...Object.keys(customTagNames)]),
+    )
+    transaction.set(configRef, {
+      ...currentData,
+      tag_names: { ...tagNames, [tagId]: tagName },
+      product_selections: {
+        ...selections,
+        [tagId]: [...new Set(productIds.map(id => id.trim()))],
+      },
+      updated_at: Timestamp.now(),
+    }, { merge: true })
+  })
+}
+
+export async function fetchCustomerPayments(): Promise<CustomerPayment[]> {
+  const payments = (await fetchReportTransactions({})).filter(item => item.linked_order_id)
+  const orderIds = [...new Set(payments.map(payment => payment.linked_order_id).filter((id): id is string => id !== null))]
+  const orders = new Map<string, DocumentData>()
+  for (let index = 0; index < orderIds.length; index += 30) {
+    const chunk = orderIds.slice(index, index + 30)
+    const snapshot = await getDocs(query(collection(db, 'orders'), where(documentId(), 'in', chunk)))
+    for (const order of snapshot.docs) orders.set(order.id, order.data())
+  }
+  return payments.map(transaction => {
+    const orderId = transaction.linked_order_id ?? ''
+    const order = orders.get(orderId)
+    const total = Number(order?.total ?? 0)
+    const paid = order?.amount_paid == null && order?.payment_status === 'paid'
+      ? total
+      : Number(order?.amount_paid ?? 0)
+    const status = order?.payment_status === 'paid' || (total > 0 && paid >= total)
+      ? 'paid'
+      : paid > 0 ? 'partially_paid' : 'pending'
+    return {
+      transaction,
+      customer_name: order ? orderCustomerName(order) : transaction.party_name || 'Customer',
+      order_number: String(order?.order_number ?? orderId),
+      order_payment_status: status,
+    }
+  })
 }
 
 export async function fetchVendors(): Promise<VendorOption[]> {
@@ -407,11 +819,9 @@ export async function createFinancialCategory(nameInput: string, type: 'income' 
 }
 
 export async function fetchVendorDueTotal(): Promise<number> {
-  const result = await getAggregateFromServer(
-    query(collection(db, EXPENSES), where('is_vendor_payable', '==', true)),
-    { total: sum('outstanding_paise') },
-  )
-  return Number(result.data().total ?? 0)
+  return (await fetchExpenses())
+    .filter(expense => expense.is_vendor_payable)
+    .reduce((total, expense) => total + expense.outstanding_paise, 0)
 }
 
 export async function setAccountActive(accountId: string, active: boolean): Promise<void> {
@@ -481,16 +891,10 @@ export async function fetchCustomerReceivables(): Promise<CustomerReceivable[]> 
 }
 
 export async function fetchAccountTotals(range: AccountDateRange = {}): Promise<AccountTotals> {
-  const rangeFilters = rangeConstraints(range)
-  const results = await Promise.all(
-    (['income', 'expense'] as const).map(type => getAggregateFromServer(
-      query(collection(db, TRANSACTIONS), where('type', '==', type), ...rangeFilters),
-      { amount: sum('amount_paise') },
-    )),
-  )
+  const transactions = await fetchReportTransactions(range)
   return {
-    income_paise: Number(results[0].data().amount ?? 0),
-    expense_paise: Number(results[1].data().amount ?? 0),
+    income_paise: transactions.filter(item => item.type === 'income').reduce((total, item) => total + item.amount_paise, 0),
+    expense_paise: transactions.filter(item => item.type === 'expense').reduce((total, item) => total + item.amount_paise, 0),
   }
 }
 
@@ -549,9 +953,10 @@ export async function createAccount(input: NewAccountInput): Promise<void> {
 export async function recordTransaction(input: NewTransactionInput, receipt?: File): Promise<void> {
   const actor = requireActor()
   const amount = input.amount_paise
+  const isPettyCashSpending = input.is_petty_cash_spending === true
   assertPaise(amount, 'Amount')
-  if (!input.account_id) throw new Error('Choose an account.')
-  if (!input.description.trim()) throw new Error('Enter a description.')
+  if (isPettyCashSpending && input.type !== 'expense') throw new Error('Petty cash records must be expenses.')
+  if (!isPettyCashSpending && !input.account_id) throw new Error('Choose an account.')
   if (!input.category_name.trim()) throw new Error('Choose a category.')
   if (input.type === 'transfer' && (!input.transfer_to_account_id || input.account_id === input.transfer_to_account_id)) {
     throw new Error('Choose two different accounts for a transfer.')
@@ -559,9 +964,15 @@ export async function recordTransaction(input: NewTransactionInput, receipt?: Fi
   if (input.type !== 'transfer' && input.transfer_to_account_id) {
     throw new Error('A destination account is only valid for a transfer.')
   }
+  const festivalTag = normalizeFestivalTag(input.festival_tag, 'Festival tag')
+  const festivalTagIdValue = normalizeFestivalTagId(input.festival_tag_id, festivalTag, 'Festival tag')
+  if (festivalTagIdValue && !festivalTag) throw new Error('A tag name is required when a tag ID is selected.')
 
-  const transactionRef = doc(db, TRANSACTIONS, transactionReferenceId(input.reference_no))
-  const accountRef = doc(db, ACCOUNTS, input.account_id)
+  const referenceId = isPettyCashSpending
+    ? input.idempotency_key ?? input.reference_no
+    : input.reference_no
+  const transactionRef = doc(db, TRANSACTIONS, transactionReferenceId(referenceId))
+  const accountRef = isPettyCashSpending ? null : doc(db, ACCOUNTS, input.account_id)
   const destinationRef = input.transfer_to_account_id
     ? doc(db, ACCOUNTS, input.transfer_to_account_id)
     : null
@@ -582,22 +993,32 @@ export async function recordTransaction(input: NewTransactionInput, receipt?: Fi
     await runTransaction(db, async transaction => {
     const [existing, accountSnapshot, destinationSnapshot] = await Promise.all([
       transaction.get(transactionRef),
-      transaction.get(accountRef),
+      accountRef ? transaction.get(accountRef) : Promise.resolve(null),
       destinationRef ? transaction.get(destinationRef) : Promise.resolve(null),
     ])
     if (existing.exists()) throw new Error('That reference has already been used.')
-    if (!accountSnapshot.exists()) throw new Error('The selected account no longer exists.')
+    if (accountRef && !accountSnapshot?.exists()) throw new Error('The selected account no longer exists.')
     if (destinationRef && (!destinationSnapshot || !destinationSnapshot.exists())) {
       throw new Error('The destination account no longer exists.')
     }
 
-    const source = accountSnapshot.data()
-    if (!source || source.active === false) throw new Error('The selected account is inactive.')
-    const sourceBalance = readNonnegativeInteger(source.balance_paise, 'account balance')
-    const credit = input.type === 'income'
-    const nextSource = sourceBalance + (credit ? amount : -amount)
-    if (nextSource < 0) throw new Error('The account does not have enough balance for this transaction.')
-    if (!Number.isSafeInteger(nextSource)) throw new Error('The resulting account balance is too large.')
+    const source = accountSnapshot?.data()
+    if (!isPettyCashSpending && (!source || source.active === false)) throw new Error('The selected account is inactive.')
+    if (!input.description.trim() && !isPettyCashSpending && source?.type !== 'petty_cash') {
+      throw new Error('Enter a description.')
+    }
+    if (!isPettyCashSpending && accountRef && source) {
+      const sourceBalance = readNonnegativeInteger(source.balance_paise, 'account balance')
+      const credit = input.type === 'income'
+      const nextSource = sourceBalance + (credit ? amount : -amount)
+      if (nextSource < 0) throw new Error('The account does not have enough balance for this transaction.')
+      if (!Number.isSafeInteger(nextSource)) throw new Error('The resulting account balance is too large.')
+      transaction.update(accountRef, {
+        balance_paise: nextSource,
+        updated_by: actor.uid,
+        updated_at: now,
+      })
+    }
 
     let destinationBalance = 0
     if (destinationRef && destinationSnapshot) {
@@ -609,11 +1030,6 @@ export async function recordTransaction(input: NewTransactionInput, receipt?: Fi
       }
     }
 
-    transaction.update(accountRef, {
-      balance_paise: nextSource,
-      updated_by: actor.uid,
-      updated_at: now,
-    })
     if (destinationRef) {
       transaction.update(destinationRef, {
         balance_paise: destinationBalance + amount,
@@ -629,13 +1045,16 @@ export async function recordTransaction(input: NewTransactionInput, receipt?: Fi
       description: input.description.trim(),
       category_name: input.category_name.trim(),
       amount_paise: amount,
-      account_id: input.account_id,
-      transfer_to_account_id: input.transfer_to_account_id,
+      account_id: isPettyCashSpending ? PETTY_CASH_TRANSACTION_ACCOUNT_ID : input.account_id,
+      transfer_to_account_id: isPettyCashSpending ? null : input.transfer_to_account_id,
       linked_order_id: null,
       linked_expense_id: null,
       party_name: input.party_name?.trim() || null,
       receipt_paths: uploadedReceiptPath ? [uploadedReceiptPath] : [],
       payment_method: '',
+      festival_tag: festivalTag,
+      festival_tag_id: festivalTagIdValue,
+      ...(isPettyCashSpending ? { is_petty_cash_spending: true } : {}),
       created_by: actor.uid,
       created_by_name: actor.name,
       created_at: now,
@@ -662,93 +1081,30 @@ export async function recordTransaction(input: NewTransactionInput, receipt?: Fi
 }
 
 export async function createExpense(input: NewExpenseInput): Promise<void> {
-  const actor = requireActor()
+  requireActor()
   assertPaise(input.amount_paise, 'Expense amount')
-  assertPaise(input.paid_paise, 'Paid amount', true)
-  if (input.paid_paise > input.amount_paise) throw new Error('Paid amount cannot exceed the expense total.')
-  if (!input.description.trim()) throw new Error('Enter an expense description.')
   if (!input.category_name.trim()) throw new Error('Choose an expense category.')
-  if (input.paid_paise > 0 && !input.account_id) throw new Error('Choose the account used for the payment.')
-  if (input.paid_paise > 0 && !input.payment_reference.trim()) throw new Error('Enter a unique payment reference.')
+  if (!input.payment_method.trim()) throw new Error('Choose a payment method.')
+  const enteredFestivalTag = normalizeFestivalTag(input.festival_tag, 'Festival tag')
+  const festivalTagIdValue = normalizeFestivalTagId(input.festival_tag_id, enteredFestivalTag, 'Festival tag')
+  if (!festivalTagIdValue) throw new Error('Please select a created tag before saving the expense.')
+  if (!input.expense_id.trim()) throw new Error('The Expense ID is not ready. Please try again.')
+  const createRecord = httpsCallable<{ input: NewExpenseInput }, { success: boolean }>(
+    getFunctions(app, 'us-central1'),
+    'createFinancialExpense',
+  )
+  await createRecord({ input: { ...input, festival_tag: enteredFestivalTag, festival_tag_id: festivalTagIdValue } })
+}
 
-  const invoiceReference = input.reference_no.trim().toLocaleLowerCase()
-  const expenseRef = invoiceReference
-    ? doc(db, EXPENSES, `ref_${encodeURIComponent(`${input.vendor_id ?? 'unlinked'}:${invoiceReference}`)}`)
-    : doc(collection(db, EXPENSES))
-  const accountRef = input.account_id ? doc(db, ACCOUNTS, input.account_id) : null
-  const vendorRef = input.vendor_id ? doc(db, 'vendors', input.vendor_id) : null
-  const transactionRef = input.paid_paise > 0
-    ? doc(db, TRANSACTIONS, transactionReferenceId(input.payment_reference))
-    : null
-  const now = Timestamp.now()
-  const outstanding = input.amount_paise - input.paid_paise
-  const paymentStatus = input.paid_paise === 0 ? 'unpaid' : outstanding === 0 ? 'paid' : 'partially_paid'
-
-  await runTransaction(db, async transaction => {
-    const accountSnapshot = accountRef ? await transaction.get(accountRef) : null
-    const vendorSnapshot = vendorRef ? await transaction.get(vendorRef) : null
-    const existingExpense = await transaction.get(expenseRef)
-    const duplicate = transactionRef ? await transaction.get(transactionRef) : null
-    if (existingExpense.exists()) throw new Error('An expense with this vendor and invoice reference is already recorded.')
-    if (duplicate?.exists()) throw new Error('That payment reference has already been used.')
-    if (accountRef && !accountSnapshot?.exists()) throw new Error('The selected account no longer exists.')
-    if (vendorRef && !vendorSnapshot?.exists()) throw new Error('The selected vendor no longer exists.')
-    const account = accountSnapshot?.data()
-    if (input.paid_paise > 0 && (!account || account.active === false)) {
-      throw new Error('The selected account is unavailable or inactive.')
-    }
-    const balance = account ? readNonnegativeInteger(account.balance_paise, 'account balance') : 0
-    if (input.paid_paise > balance) throw new Error('The account does not have enough balance for this payment.')
-
-    transaction.set(expenseRef, {
-      description: input.description.trim(),
-      category_name: input.category_name.trim(),
-      vendor_id: input.vendor_id,
-      vendor_name: input.vendor_name.trim(),
-      reference_no: input.reference_no.trim(),
-      transaction_date: dateInputTimestamp(input.transaction_date),
-      due_date: input.due_date ? dateInputTimestamp(input.due_date) : null,
-      amount_paise: input.amount_paise,
-      paid_paise: input.paid_paise,
-      outstanding_paise: outstanding,
-      payment_status: paymentStatus,
-      is_vendor_payable: Boolean(input.vendor_id),
-      payment_method: input.payment_method,
-      receipt_paths: [],
-      account_id: input.paid_paise > 0 ? input.account_id : null,
-      created_by: actor.uid,
-      created_by_name: actor.name,
-      created_at: now,
-      updated_by: actor.uid,
-      updated_at: now,
-      audit: [{ action: 'created', admin_user_id: actor.uid, created_at: now }],
-    })
-    if (input.paid_paise > 0 && accountRef && transactionRef) {
-      transaction.update(accountRef, {
-        balance_paise: balance - input.paid_paise,
-        updated_by: actor.uid,
-        updated_at: now,
-      })
-      transaction.set(transactionRef, {
-        transaction_id: `FTX-${transactionRef.id.replace(/^ref_/, '').toUpperCase()}`,
-        type: 'expense',
-        transaction_date: dateInputTimestamp(input.transaction_date),
-        reference_no: input.payment_reference.trim(),
-        description: input.description.trim(),
-        category_name: input.category_name.trim(),
-        amount_paise: input.paid_paise,
-        account_id: input.account_id,
-        transfer_to_account_id: null,
-        linked_order_id: null,
-        linked_expense_id: expenseRef.id,
-        payment_method: input.payment_method,
-        created_by: actor.uid,
-        created_by_name: actor.name,
-        created_at: now,
-        audit: [{ action: 'created', admin_user_id: actor.uid, created_at: now }],
-      })
-    }
-  })
+export async function generateExpenseId(): Promise<string> {
+  requireActor()
+  const generateId = httpsCallable<Record<string, never>, { expense_id: string }>(
+    getFunctions(app, 'us-central1'),
+    'generateFinancialExpenseId',
+  )
+  const result = await generateId({})
+  if (!result.data.expense_id) throw new Error('An Expense ID could not be generated.')
+  return result.data.expense_id
 }
 
 export async function recordExpensePayment(
@@ -786,6 +1142,8 @@ export async function recordExpensePayment(
     const paid = paidBefore + input.amount_paise
     const nextOutstanding = outstanding - input.amount_paise
     const paymentStatus = nextOutstanding === 0 ? 'paid' : 'partially_paid'
+    const festivalTag = normalizeFestivalTag(expenseData.festival_tag, 'Expense festival tag')
+    const festivalTagIdValue = normalizeFestivalTagId(expenseData.festival_tag_id, festivalTag, 'Expense festival tag')
 
     transaction.update(accountRef, { balance_paise: balance - input.amount_paise, updated_by: actor.uid, updated_at: now })
     transaction.update(expenseRef, {
@@ -809,6 +1167,8 @@ export async function recordExpensePayment(
       linked_order_id: null,
       linked_expense_id: expense.id,
       payment_method: input.payment_method,
+      festival_tag: festivalTag,
+      festival_tag_id: festivalTagIdValue,
       created_by: actor.uid,
       created_by_name: actor.name,
       created_at: now,
