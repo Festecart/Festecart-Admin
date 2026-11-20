@@ -7,6 +7,7 @@ import {
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { isOrderPaid } from '@/hooks/useOrders'
 import { useAuth } from '@/hooks/useAuth'
+import { fetchOrderPaymentDetails } from '@/lib/accounts'
 import {
   calculateAdminDiscountAmount,
   calculateOrderTotal,
@@ -1052,6 +1053,15 @@ export default function OrderDetail() {
   const { user } = useAuth()
 
   const { data: order, isLoading, error } = useOrderData(id!)
+  const {
+    data: paymentDetails = [],
+    isLoading: paymentDetailsLoading,
+    error: paymentDetailsError,
+  } = useQuery({
+    queryKey: ['accounts', 'order-payment-details', id],
+    queryFn: () => fetchOrderPaymentDetails(id!),
+    enabled: !!id,
+  })
   const { data: invoices = [], isLoading: invoicesLoading, error: invoicesError } = useInvoices(id!)
   const { data: history  = [] } = useOrderHistory(id!)
 
@@ -1380,6 +1390,13 @@ export default function OrderDetail() {
     ? order.billing_address
     : typeof order.billing_address === 'string' ? null : addr
   const paid = isOrderPaid(order)
+  const amountReceived = Math.min(order.total, Math.max(0, order.amount_paid))
+  const pendingAmount = Math.max(0, order.total - amountReceived)
+  const paymentStatus = order.total > 0 && amountReceived >= order.total
+    ? 'Fully Paid'
+    : amountReceived > 0 ? 'Partially Paid' : 'Unpaid'
+  const paymentMethods = [...new Set(paymentDetails.map(item => item.payment_method.trim()).filter(Boolean))]
+  const paymentReferences = [...new Set(paymentDetails.map(item => item.reference_no).filter(Boolean))]
   const customerShippingCharge = order.customer_shipping_charge ?? order.shipping_charge
   const couponCode = order.coupon_code?.trim() || null
   const discountBreakdown = getOrderDiscountBreakdown(order)
@@ -1607,6 +1624,28 @@ export default function OrderDetail() {
               <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-900">
                 <span>Total</span><span>{formatCurrency(order.total)}</span>
               </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Amount Received</span><span>{formatCurrency(amountReceived)}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Pending Amount</span><span>{formatCurrency(pendingAmount)}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Payment Method</span>
+                <span>{paymentMethods.length ? paymentMethods.join(', ') : order.payment_method}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Payment Status</span><span>{paymentStatus}</span>
+              </div>
+              <div className="flex justify-between gap-4 text-gray-600">
+                <span className="shrink-0">Payment Reference</span>
+                <span className="text-right">{paymentDetailsLoading ? 'Loading…' : paymentReferences.join(', ') || '—'}</span>
+              </div>
+              {paymentDetailsError && (
+                <p role="alert" className="text-xs text-red-700">
+                  Could not load payment references: {paymentDetailsError instanceof Error ? paymentDetailsError.message : 'Unknown error'}
+                </p>
+              )}
             </div>
             <div className="mt-4 bg-gray-900 text-white rounded-lg px-4 py-3 flex justify-between items-center">
               <span className="text-sm font-medium">Amount Payable</span>

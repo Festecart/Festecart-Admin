@@ -28,6 +28,7 @@ export function FestivalProductTags({
 }) {
   const queryClient = useQueryClient()
   const deleteInProgress = useRef(false)
+  const deleteNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedTagId, setSelectedTagId] = useState('')
   const [tagFormMode, setTagFormMode] = useState<TagFormMode | null>(null)
   const [tagFormName, setTagFormName] = useState('')
@@ -39,6 +40,10 @@ export function FestivalProductTags({
   const [viewSearch, setViewSearch] = useState('')
   const [draftSelections, setDraftSelections] = useState<Record<string, string[]>>({})
   const [notice, setNotice] = useState('')
+
+  useEffect(() => () => {
+    if (deleteNoticeTimer.current !== null) clearTimeout(deleteNoticeTimer.current)
+  }, [])
 
   const tagsQuery = useQuery({
     queryKey: ['accounts', 'festival-tags'],
@@ -142,7 +147,12 @@ export function FestivalProductTags({
         delete next[deletedId]
         return next
       })
-      setNotice('Tag deleted successfully')
+      if (deleteNoticeTimer.current !== null) clearTimeout(deleteNoticeTimer.current)
+      setNotice('Tag deleted successfully.')
+      deleteNoticeTimer.current = setTimeout(() => {
+        setNotice(current => current === 'Tag deleted successfully.' ? '' : current)
+        deleteNoticeTimer.current = null
+      }, 5000)
       await refreshTagQueries()
     },
     onSettled: () => {

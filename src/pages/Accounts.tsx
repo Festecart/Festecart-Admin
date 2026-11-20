@@ -25,6 +25,7 @@ import { TransactionTable } from '@/components/accounts/TransactionTable'
 import { FestivalProductTags } from '@/components/accounts/FestivalProductTags'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useOrders } from '@/hooks/useOrders'
+import { calculateOrderPaymentAmounts, eligibleDeliveredOrders, type CustomerPaymentStatus } from '@/lib/customerPayments'
 import { festivalTagId, LEGACY_FINANCIAL_TAGS, resolveFestivalTagName } from '@/lib/festivalProducts'
 import type { FestivalCategory } from '@/lib/festivalProducts'
 import {
@@ -61,7 +62,6 @@ type Tab = 'overview' | 'transactions' | 'expenses' | 'receivables' | 'petty_cas
 type QuickTransactionAction = 'income' | 'expense' | 'transfer' | 'petty_cash'
 
 type DatePreset = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all'
-type CustomerPaymentStatus = 'paid' | 'partially_paid' | 'pending'
 const EXPENSES_PER_PAGE = 50
 
 function expenseSpendingPaise(expense: FinancialExpense): number {
@@ -231,6 +231,7 @@ export default function Accounts() {
   const [transactionSuccessMessage, setTransactionSuccessMessage] = useState('')
   const transactionSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [deleteSuccessMessage, setDeleteSuccessMessage] = useState('')
+  const deleteSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const [showAccountForm, setShowAccountForm] = useState(false)
   const [quickTransactionAction, setQuickTransactionAction] = useState<QuickTransactionAction | null>(null)
@@ -250,15 +251,32 @@ export default function Accounts() {
       transactionSuccessTimer.current = null
     }
   }
-  const showTransactionSuccess = (message: string) => {
+  const clearDeleteSuccessTimer = () => {
+    if (deleteSuccessTimer.current !== null) {
+      clearTimeout(deleteSuccessTimer.current)
+      deleteSuccessTimer.current = null
+    }
+  }
+  const showTransactionSuccess = (message: string, duration = 1000) => {
     clearTransactionSuccessTimer()
     setTransactionSuccessMessage(message)
     transactionSuccessTimer.current = setTimeout(() => {
       setTransactionSuccessMessage('')
       transactionSuccessTimer.current = null
-    }, 1000)
+    }, duration)
   }
-  useEffect(() => () => clearTransactionSuccessTimer(), [])
+  const showDeleteSuccess = (message: string) => {
+    clearDeleteSuccessTimer()
+    setDeleteSuccessMessage(message)
+    deleteSuccessTimer.current = setTimeout(() => {
+      setDeleteSuccessMessage('')
+      deleteSuccessTimer.current = null
+    }, 2000)
+  }
+  useEffect(() => () => {
+    clearTransactionSuccessTimer()
+    clearDeleteSuccessTimer()
+  }, [])
   const dateRange = useMemo(() => dateRangeFor(datePreset, customFrom, customTo), [datePreset, customFrom, customTo])
   const queryClient = useQueryClient()
   const {
@@ -289,10 +307,12 @@ export default function Accounts() {
     queryKey: ['accounts', 'customer-payments'],
     queryFn: fetchCustomerPayments,
     enabled: tab === 'receivables' || tab === 'transactions',
+    refetchInterval: 30_000,
   })
   const deliveredOrdersQuery = useOrders({
     status: 'delivered',
     enabled: tab === 'receivables',
+    refetchInterval: tab === 'receivables' ? 30_000 : false,
   })
   const allTransactionsQuery = useQuery({
     queryKey: ['accounts', 'all-transactions'],
@@ -311,51 +331,46 @@ export default function Accounts() {
   const visibleExpenses = expenses.slice(expensePage * EXPENSES_PER_PAGE, (expensePage + 1) * EXPENSES_PER_PAGE)
   const customerPayments: CustomerPayment[] = customerPaymentsQuery.data ?? []
   const deliveredOrderPayments = useMemo(() => {
-    const paymentDetails = new Map<string, { methods: Set<string>; references: Set<string> }>()
+    const paymentDetails = new Map<string, Set<string>>()
     for (const { transaction } of customerPayments) {
       const orderId = transaction.linked_order_id
       if (!orderId || transaction.type !== 'income') continue
       let details = paymentDetails.get(orderId)
       if (!details) {
-        details = { methods: new Set<string>(), references: new Set<string>() }
+        details = new Set<string>()
         paymentDetails.set(orderId, details)
       }
       const method = paymentMethodLabel(transaction.payment_method)
-      if (method) details.methods.add(method)
-      if (transaction.reference_no.trim()) details.references.add(transaction.reference_no.trim())
+      if (method) details.add(method)
     }
 
-    return (deliveredOrdersQuery.data ?? []).map(order => {
-      const totalPaise = Math.max(0, Math.round(order.total * 100))
-      const receivedPaise = Math.min(totalPaise, Math.max(0, Math.round(order.amount_paid * 100)))
-      const paymentStatus: CustomerPaymentStatus = totalPaise > 0 && receivedPaise >= totalPaise
-        ? 'paid'
-        : receivedPaise > 0 ? 'partially_paid' : 'pending'
-      const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null
-      const deliveredDateKey = deliveredDate && Number.isFinite(deliveredDate.getTime())
-        ? localDateString(deliveredDate)
-        : ''
-      const details = paymentDetails.get(order.id)
-      const paymentMethods = details?.methods.size
-        ? [...details.methods]
-        : [paymentMethodLabel(order.payment_method)].filter(Boolean)
+    return eligibleDeliveredOrders(deliveredOrdersQuery.data ?? [])
+      .map(({ order, orderNumber }) => {
+        const { totalPaise, receivedPaise, pendingPaise, paymentStatus } =
+          calculateOrderPaymentAmounts(order.total, order.amount_paid)
+        const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null
+        const deliveredDateKey = deliveredDate && Number.isFinite(deliveredDate.getTime())
+          ? localDateString(deliveredDate)
+          : ''
+        const details = paymentDetails.get(order.id)
 
-      return {
-        order,
-        orderNumber: order.order_number || order.id,
-        customerName: deliveredOrderCustomerName(order),
-        deliveredDate: deliveredDateKey && deliveredDate
-          ? deliveredDate.toLocaleDateString('en-IN')
-          : '—',
-        deliveredDateKey,
-        totalPaise,
-        receivedPaise,
-        pendingPaise: totalPaise - receivedPaise,
-        paymentStatus,
-        paymentMethods,
-        referenceNumber: details ? [...details.references].join(', ') : '',
-      }
-    })
+        return {
+          order,
+          orderNumber,
+          customerName: deliveredOrderCustomerName(order),
+          deliveredDate: deliveredDateKey && deliveredDate
+            ? deliveredDate.toLocaleDateString('en-IN')
+            : '—',
+          deliveredDateKey,
+          totalPaise,
+          receivedPaise,
+          pendingPaise,
+          paymentStatus,
+          paymentMethods: details?.size
+            ? [...details]
+            : [paymentMethodLabel(order.payment_method)].filter(Boolean),
+        }
+      })
   }, [customerPayments, deliveredOrdersQuery.data])
   const festivalTags = festivalTagsQuery.data ?? LEGACY_FINANCIAL_TAGS.map(name => ({ id: festivalTagId(name), name }))
   const displayTag = (tagId: string | null, storedName: string | null) =>
@@ -449,10 +464,10 @@ export default function Accounts() {
   })
   const editExpenseMutation = useMutation({
     mutationFn: ({ expense, input }: { expense: FinancialExpense; input: EditExpenseInput }) => editFinancialExpense(expense, input),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
+    onSuccess: () => {
       setEditingExpense(null)
-      showTransactionSuccess('Expense updated successfully.')
+      showTransactionSuccess('Expense updated successfully.', 5000)
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
     },
   })
   const deleteMutation = useMutation({
@@ -469,7 +484,7 @@ export default function Accounts() {
       ])
       setPendingDelete(null)
       setDeleteError('')
-      setDeleteSuccessMessage(target.kind === 'expense'
+      showDeleteSuccess(target.kind === 'expense'
         ? 'Expense deleted successfully.'
         : target.pettyCashSpending ? 'Petty cash spending deleted successfully.' : 'Transaction deleted successfully.')
     },
@@ -479,10 +494,10 @@ export default function Accounts() {
   })
   const expenseMutation = useMutation({
     mutationFn: (input: NewExpenseInput) => createExpense(input),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
+    onSuccess: () => {
       setShowExpenseForm(false)
-      showTransactionSuccess('Expense saved successfully.')
+      showTransactionSuccess('Expense saved successfully.', 5000)
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
     },
   })
   const categoryMutation = useMutation({
@@ -512,6 +527,7 @@ export default function Accounts() {
   }
   const requestDelete = (target: PendingDelete) => {
     deleteMutation.reset()
+    clearDeleteSuccessTimer()
     setDeleteSuccessMessage('')
     setDeleteError('')
     setPendingDelete(target.kind === 'transaction'
@@ -816,29 +832,22 @@ export default function Accounts() {
                   : filteredDeliveredOrderPayments.length === 0
                     ? <div className="p-8 text-center text-sm text-slate-500">No delivered orders match these filters.</div>
                     : <div className="overflow-x-auto rounded-xl border border-slate-200">
-                      <table className="min-w-[1450px] w-full text-left text-sm">
+                      <table className="min-w-[900px] w-full text-left text-sm">
                         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                           <tr>
                             <th className="px-4 py-3">Order ID</th>
-                            <th className="px-4 py-3">Delivered Date</th>
-                            <th className="px-4 py-3">Customer Name</th>
-                            <th className="px-4 py-3 text-right">Total Order Amount</th>
-                            <th className="px-4 py-3 text-right">Amount Received</th>
-                            <th className="px-4 py-3 text-right">Pending Amount</th>
+                            <th className="px-4 py-3 text-right">Total Amount (₹)</th>
+                            <th className="px-4 py-3 text-right">Pending Amount (₹)</th>
                             <th className="px-4 py-3">Payment Method</th>
                             <th className="px-4 py-3">Payment Status</th>
-                            <th className="px-4 py-3">Reference Number</th>
-                            <th className="px-4 py-3">Actions</th>
+                            <th className="px-4 py-3">View</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {filteredDeliveredOrderPayments.map(payment => (
                             <tr key={payment.order.id}>
                               <td className="px-4 py-3 font-medium text-slate-900">{payment.orderNumber}</td>
-                              <td className="px-4 py-3 whitespace-nowrap">{payment.deliveredDate}</td>
-                              <td className="px-4 py-3">{payment.customerName}</td>
                               <td className="px-4 py-3 text-right">{formatINR(payment.totalPaise)}</td>
-                              <td className="px-4 py-3 text-right font-semibold">{formatINR(payment.receivedPaise)}</td>
                               <td className="px-4 py-3 text-right">{formatINR(payment.pendingPaise)}</td>
                               <td className="px-4 py-3">{payment.paymentMethods.join(', ') || '—'}</td>
                               <td className="px-4 py-3">
@@ -851,7 +860,6 @@ export default function Accounts() {
                                     : payment.paymentStatus === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}
                                 </span>
                               </td>
-                              <td className="px-4 py-3">{payment.referenceNumber || '—'}</td>
                               <td className="px-4 py-3">
                                 <Link to={`/orders/${payment.order.id}`}
                                   className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">

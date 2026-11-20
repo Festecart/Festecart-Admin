@@ -100,9 +100,8 @@ export function ExpenseForm({
   const isValidCategory = category !== '__custom' || Boolean(customCategory.trim())
   const isValidAmount = isValidMoneyInput(amount)
   const validDate = dateToIso(date)
-  const hasValidTag = initialExpense
-    ? Boolean(festivalTagIdValue && festivalTagName)
-    : Boolean(hasCreatedTag && festivalTagName)
+  const hasValidTag = !festivalTagIdValue ||
+    (Boolean(festivalTagName) && (Boolean(initialExpense) || hasCreatedTag))
   const hasValidExpenseId = Boolean(initialExpense) || !expenseId.trim() || /^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())
   const canSave = !saving && !isSubmitting.current &&
     Boolean(hasValidExpenseId && validDate && isValidCategory && isValidAmount && paymentMethod.trim() && hasValidTag)
@@ -115,8 +114,8 @@ export function ExpenseForm({
     try {
       const categoryName = category === '__custom' ? customCategory.trim() : category
       if (!validDate) throw new Error('Enter a valid date in DD/MM/YYYY format.')
-      if (!festivalTagName || (!initialExpense && !hasCreatedTag)) {
-        throw new Error('Please select a created tag before saving the expense.')
+      if (festivalTagIdValue && (!festivalTagName || (!initialExpense && !hasCreatedTag))) {
+        throw new Error('Select a created tag or clear the Tag field to continue without one.')
       }
       if (category === '__custom' && !categoryName) throw new Error('Enter a category name.')
       if (!paymentMethod.trim()) throw new Error('Select a payment method.')
@@ -213,17 +212,14 @@ export function ExpenseForm({
               <input type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
                 className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
             </label>
-            <label className="block text-sm font-medium text-slate-700">Tag
-              <select value={festivalTagIdValue} onChange={event => setFestivalTagIdValue(event.target.value)} required
+            <label className="block text-sm font-medium text-slate-700">Tag (Optional)
+              <select value={festivalTagIdValue} onChange={event => setFestivalTagIdValue(event.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-                <option value="">{festivalTagsLoading ? 'Loading tags…' : availableFestivalTags.length ? 'Select a tag' : 'No tags available. Create a tag in Accounts → Tags.'}</option>
+                <option value="">{festivalTagsLoading ? 'Loading tags…' : 'No tag'}</option>
                 {availableFestivalTags.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
               {festivalTagsLoading && <span role="status" className="mt-1.5 block text-xs text-slate-500">Loading tags…</span>}
-              {festivalTagsError && <span role="alert" className="mt-1.5 block text-xs text-rose-700">Saved tags could not be loaded. Please try again.</span>}
-              {!initialExpense && !festivalTagsLoading && !festivalTagsError && !festivalTagIdValue && (
-                <span role="alert" className="mt-1.5 block text-xs text-rose-700">Please select a created tag before saving the expense.</span>
-              )}
+              {festivalTagsError && <span role="alert" className="mt-1.5 block text-xs text-rose-700">Saved tags could not be loaded. You can continue without a tag.</span>}
             </label>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">

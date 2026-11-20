@@ -67,6 +67,7 @@ export function useOrders(filters?: {
   dateFrom?: string
   dateTo?: string
   enabled?: boolean
+  refetchInterval?: number | false
 }) {
   const serverKey = {
     status:   filters?.status   ?? 'all',
@@ -97,6 +98,7 @@ export function useOrders(filters?: {
       return snap.docs.map(d => toOrder(d.id, d.data() as Record<string, unknown>))
     },
     enabled: filters?.enabled ?? true,
+    refetchInterval: filters?.refetchInterval,
     staleTime: 1000 * 30,
   })
 

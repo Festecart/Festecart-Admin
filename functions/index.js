@@ -10,7 +10,10 @@ const PDFDocument = require('pdfkit')
 
 const FUNCTION_REGION = 'us-central1'
 const ACCOUNTS_CORS_ORIGINS = [
+  'https://admin.festecart.com',
   'https://tempadmin.festecart.com',
+  'http://localhost:5173',
+  'http://localhost:5174',
   'http://localhost:5175',
   'http://localhost:5176',
 ]

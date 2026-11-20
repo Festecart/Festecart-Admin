@@ -793,6 +793,18 @@ export async function fetchCustomerPayments(): Promise<CustomerPayment[]> {
   })
 }
 
+export async function fetchOrderPaymentDetails(orderId: string): Promise<Array<{ payment_method: string; reference_no: string }>> {
+  const snapshot = await getDocs(
+    query(collection(db, TRANSACTIONS), where('linked_order_id', '==', orderId)),
+  )
+  return snapshot.docs
+    .filter(item => item.data().type === 'income' && item.data().is_deleted !== true)
+    .map(item => ({
+      payment_method: String(item.data().payment_method ?? ''),
+      reference_no: String(item.data().reference_no ?? '').trim(),
+    }))
+}
+
 export async function fetchVendors(): Promise<VendorOption[]> {
   const snapshot = await getDocs(collection(db, 'vendors'))
   return snapshot.docs.map(item => ({
@@ -1171,7 +1183,6 @@ export async function createExpense(input: NewExpenseInput): Promise<void> {
   }
   const enteredFestivalTag = normalizeFestivalTag(input.festival_tag, 'Festival tag')
   const festivalTagIdValue = normalizeFestivalTagId(input.festival_tag_id, enteredFestivalTag, 'Festival tag')
-  if (!festivalTagIdValue) throw new Error('Please select a created tag before saving the expense.')
   const createRecord = httpsCallable<{ input: NewExpenseInput }, { success: boolean }>(
     getFunctions(app, 'us-central1'),
     'createFinancialExpense',
