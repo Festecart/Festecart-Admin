@@ -177,6 +177,7 @@ function readExpense(id: string, data: DocumentData): FinancialExpense {
     category_name: String(data.category_name ?? ''),
     vendor_id: (data.vendor_id as string | null) ?? null,
     vendor_name: String(data.vendor_name ?? ''),
+    payment_reference: String(data.payment_reference ?? ''),
     reference_no: String(data.reference_no ?? ''),
     transaction_date: data.transaction_date,
     due_date: (data.due_date as Timestamp | null) ?? null,
@@ -1163,7 +1164,6 @@ export async function recordTransaction(input: NewTransactionInput, receipt?: Fi
 export async function createExpense(input: NewExpenseInput): Promise<void> {
   requireActor()
   assertPaise(input.amount_paise, 'Expense amount')
-  if (!input.category_name.trim()) throw new Error('Choose an expense category.')
   if (!input.payment_method.trim()) throw new Error('Choose a payment method.')
   const expenseId = input.expense_id.trim()
   if (expenseId && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId)) {

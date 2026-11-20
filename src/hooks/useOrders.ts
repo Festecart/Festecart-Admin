@@ -66,6 +66,7 @@ export function useOrders(filters?: {
   search?: string
   dateFrom?: string
   dateTo?: string
+  enabled?: boolean
 }) {
   const serverKey = {
     status:   filters?.status   ?? 'all',
@@ -95,6 +96,7 @@ export function useOrders(filters?: {
       const snap = await getDocs(query(collection(db, 'orders'), ...constraints))
       return snap.docs.map(d => toOrder(d.id, d.data() as Record<string, unknown>))
     },
+    enabled: filters?.enabled ?? true,
     staleTime: 1000 * 30,
   })
 

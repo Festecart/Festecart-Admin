@@ -13,17 +13,18 @@ import {
   Trash2,
   Pencil,
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { AccountForm } from '@/components/accounts/AccountForm'
 import { ExpenseForm } from '@/components/accounts/ExpenseForm'
 import { ExpenseReceipts } from '@/components/accounts/ExpenseReceipts'
 import { MetricCard } from '@/components/accounts/MetricCard'
-import { PaymentForm } from '@/components/accounts/PaymentForm'
 import { TransactionForm } from '@/components/accounts/TransactionForm'
 import { TransactionEditForm } from '@/components/accounts/TransactionEditForm'
 import { TransactionReceiptLink } from '@/components/accounts/TransactionReceiptLink'
 import { TransactionTable } from '@/components/accounts/TransactionTable'
 import { FestivalProductTags } from '@/components/accounts/FestivalProductTags'
 import { useAccounts } from '@/hooks/useAccounts'
+import { useOrders } from '@/hooks/useOrders'
 import { festivalTagId, LEGACY_FINANCIAL_TAGS, resolveFestivalTagName } from '@/lib/festivalProducts'
 import type { FestivalCategory } from '@/lib/festivalProducts'
 import {
@@ -39,7 +40,6 @@ import {
   fetchReportExpenses,
   fetchReportTransactions,
   formatINR,
-  recordCustomerPayment,
   recordTransaction,
   PETTY_CASH_TRANSACTION_ACCOUNT_ID,
   UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID,
@@ -48,20 +48,20 @@ import type {
   FinancialExpense,
   FestivalTag,
   CustomerPayment,
-  CustomerReceivable,
   NewAccountInput,
   NewExpenseInput,
   NewTransactionInput,
-  RecordPaymentInput,
   EditTransactionInput,
   EditExpenseInput,
   FinancialTransaction,
 } from '@/types/accounts'
+import type { Order } from '@/types'
 
 type Tab = 'overview' | 'transactions' | 'expenses' | 'receivables' | 'petty_cash' | 'reports' | 'tags'
 type QuickTransactionAction = 'income' | 'expense' | 'transfer' | 'petty_cash'
 
 type DatePreset = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all'
+type CustomerPaymentStatus = 'paid' | 'partially_paid' | 'pending'
 const EXPENSES_PER_PAGE = 50
 
 function expenseSpendingPaise(expense: FinancialExpense): number {
@@ -120,6 +120,20 @@ function deleteConfirmationDetails(
 
 function localDateString(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function deliveredOrderCustomerName(order: Order): string {
+  const shippingName = typeof order.shipping_address === 'object' && order.shipping_address
+    ? order.shipping_address.name
+    : ''
+  return order.guest_name?.trim() || shippingName?.trim() || order.customer_email?.trim() ||
+    order.guest_email?.trim() || 'Customer'
+}
+
+function paymentMethodLabel(value: string): string {
+  const method = value.trim()
+  if (method.toLowerCase() === 'cod') return 'Cash on Delivery'
+  return method
 }
 
 function dateRangeFor(preset: DatePreset, customFrom: string, customTo: string) {
@@ -209,6 +223,11 @@ export default function Accounts() {
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'all' | 'income' | 'expense' | 'transfer'>('all')
   const [transactionFestivalFilter, setTransactionFestivalFilter] = useState('all')
   const [selectedTagCategory, setSelectedTagCategory] = useState<FestivalCategory | null>(null)
+  const [customerPaymentSearch, setCustomerPaymentSearch] = useState('')
+  const [customerPaymentFrom, setCustomerPaymentFrom] = useState('')
+  const [customerPaymentTo, setCustomerPaymentTo] = useState('')
+  const [customerPaymentMethodFilter, setCustomerPaymentMethodFilter] = useState('all')
+  const [customerPaymentStatusFilter, setCustomerPaymentStatusFilter] = useState<'all' | CustomerPaymentStatus>('all')
   const [transactionSuccessMessage, setTransactionSuccessMessage] = useState('')
   const transactionSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [deleteSuccessMessage, setDeleteSuccessMessage] = useState('')
@@ -222,8 +241,6 @@ export default function Accounts() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [showExpenseForm, setShowExpenseForm] = useState(false)
   const [expensePage, setExpensePage] = useState(0)
-  const [receivablePage, setReceivablePage] = useState(0)
-  const [selectedReceivable, setSelectedReceivable] = useState<CustomerReceivable | null>(null)
   const [datePreset, setDatePreset] = useState<DatePreset>('all')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
@@ -251,7 +268,6 @@ export default function Accounts() {
     expenses: expensesQuery,
     vendors: vendorsQuery,
     categories: categoriesQuery,
-    receivables: receivablesQuery,
     vendorDue: vendorDueQuery,
   } = useAccounts(dateRange)
   const reportTransactionsQuery = useQuery({
@@ -274,6 +290,10 @@ export default function Accounts() {
     queryFn: fetchCustomerPayments,
     enabled: tab === 'receivables' || tab === 'transactions',
   })
+  const deliveredOrdersQuery = useOrders({
+    status: 'delivered',
+    enabled: tab === 'receivables',
+  })
   const allTransactionsQuery = useQuery({
     queryKey: ['accounts', 'all-transactions'],
     queryFn: () => fetchReportTransactions({}),
@@ -289,14 +309,78 @@ export default function Accounts() {
   const expenses = expensesQuery.data ?? []
   const expensePageCount = Math.ceil(expenses.length / EXPENSES_PER_PAGE)
   const visibleExpenses = expenses.slice(expensePage * EXPENSES_PER_PAGE, (expensePage + 1) * EXPENSES_PER_PAGE)
-  const receivables = receivablesQuery.data ?? []
   const customerPayments: CustomerPayment[] = customerPaymentsQuery.data ?? []
+  const deliveredOrderPayments = useMemo(() => {
+    const paymentDetails = new Map<string, { methods: Set<string>; references: Set<string> }>()
+    for (const { transaction } of customerPayments) {
+      const orderId = transaction.linked_order_id
+      if (!orderId || transaction.type !== 'income') continue
+      let details = paymentDetails.get(orderId)
+      if (!details) {
+        details = { methods: new Set<string>(), references: new Set<string>() }
+        paymentDetails.set(orderId, details)
+      }
+      const method = paymentMethodLabel(transaction.payment_method)
+      if (method) details.methods.add(method)
+      if (transaction.reference_no.trim()) details.references.add(transaction.reference_no.trim())
+    }
+
+    return (deliveredOrdersQuery.data ?? []).map(order => {
+      const totalPaise = Math.max(0, Math.round(order.total * 100))
+      const receivedPaise = Math.min(totalPaise, Math.max(0, Math.round(order.amount_paid * 100)))
+      const paymentStatus: CustomerPaymentStatus = totalPaise > 0 && receivedPaise >= totalPaise
+        ? 'paid'
+        : receivedPaise > 0 ? 'partially_paid' : 'pending'
+      const deliveredDate = order.delivered_at ? new Date(order.delivered_at) : null
+      const deliveredDateKey = deliveredDate && Number.isFinite(deliveredDate.getTime())
+        ? localDateString(deliveredDate)
+        : ''
+      const details = paymentDetails.get(order.id)
+      const paymentMethods = details?.methods.size
+        ? [...details.methods]
+        : [paymentMethodLabel(order.payment_method)].filter(Boolean)
+
+      return {
+        order,
+        orderNumber: order.order_number || order.id,
+        customerName: deliveredOrderCustomerName(order),
+        deliveredDate: deliveredDateKey && deliveredDate
+          ? deliveredDate.toLocaleDateString('en-IN')
+          : '—',
+        deliveredDateKey,
+        totalPaise,
+        receivedPaise,
+        pendingPaise: totalPaise - receivedPaise,
+        paymentStatus,
+        paymentMethods,
+        referenceNumber: details ? [...details.references].join(', ') : '',
+      }
+    })
+  }, [customerPayments, deliveredOrdersQuery.data])
   const festivalTags = festivalTagsQuery.data ?? LEGACY_FINANCIAL_TAGS.map(name => ({ id: festivalTagId(name), name }))
   const displayTag = (tagId: string | null, storedName: string | null) =>
     resolveFestivalTagName(tagId, storedName, festivalTags) ?? '—'
   const transactionHistory = tab === 'transactions' ? allTransactionsQuery.data ?? transactions : transactions
-  const receivablePageCount = Math.ceil(receivables.length / EXPENSES_PER_PAGE)
-  const visibleReceivables = receivables.slice(receivablePage * EXPENSES_PER_PAGE, (receivablePage + 1) * EXPENSES_PER_PAGE)
+  const customerPaymentMethods = [...new Set(deliveredOrderPayments.flatMap(payment => payment.paymentMethods))].sort()
+  const normalizedCustomerPaymentSearch = customerPaymentSearch.trim().toLocaleLowerCase()
+  const filteredDeliveredOrderPayments = deliveredOrderPayments.filter(payment => {
+    const searchMatches = !normalizedCustomerPaymentSearch ||
+      [payment.orderNumber, payment.order.id, payment.customerName]
+        .some(value => value.toLocaleLowerCase().includes(normalizedCustomerPaymentSearch))
+    const dateMatches = (!customerPaymentFrom && !customerPaymentTo) ||
+      (Boolean(payment.deliveredDateKey) &&
+        (!customerPaymentFrom || payment.deliveredDateKey >= customerPaymentFrom) &&
+        (!customerPaymentTo || payment.deliveredDateKey <= customerPaymentTo))
+    return searchMatches &&
+      dateMatches &&
+      (customerPaymentMethodFilter === 'all' || payment.paymentMethods.includes(customerPaymentMethodFilter)) &&
+      (customerPaymentStatusFilter === 'all' || payment.paymentStatus === customerPaymentStatusFilter)
+  })
+  const deliveredOrderTotals = deliveredOrderPayments.reduce((totals, payment) => ({
+    orderValuePaise: totals.orderValuePaise + payment.totalPaise,
+    receivedPaise: totals.receivedPaise + payment.receivedPaise,
+    pendingPaise: totals.pendingPaise + payment.pendingPaise,
+  }), { orderValuePaise: 0, receivedPaise: 0, pendingPaise: 0 })
   const activeAccounts = accounts.filter(account => account.active)
   const isPettyCashSpending = (item: FinancialTransaction) =>
     item.is_petty_cash_spending === true ||
@@ -401,16 +485,6 @@ export default function Accounts() {
       showTransactionSuccess('Expense saved successfully.')
     },
   })
-  const customerPaymentMutation = useMutation({
-    mutationFn: ({ receivable, input }: { receivable: CustomerReceivable; input: RecordPaymentInput }) => recordCustomerPayment(receivable, input),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
-        queryClient.invalidateQueries({ queryKey: ['orders'] }),
-      ])
-      setSelectedReceivable(null)
-    },
-  })
   const categoryMutation = useMutation({
     mutationFn: ({ name, type }: { name: string; type: 'income' | 'expense' }) => createFinancialCategory(name, type),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['accounts', 'categories'] }),
@@ -424,8 +498,8 @@ export default function Accounts() {
     { source: 'financial_expenses', error: expensesQuery.error },
     { source: 'vendors', error: vendorsQuery.error },
     { source: 'financial_categories', error: categoriesQuery.error },
-    { source: 'orders (customer receivables)', error: receivablesQuery.error },
     { source: 'financial_transactions (customer payments)', error: customerPaymentsQuery.error },
+    { source: 'orders (delivered customer payments)', error: deliveredOrdersQuery.error },
     { source: 'site_config (festival tags)', error: festivalTagsQuery.error },
     { source: 'financial_expenses (vendor payables)', error: vendorDueQuery.error },
     { source: 'financial_transactions (reports)', error: reportTransactionsQuery.error },
@@ -656,7 +730,12 @@ export default function Accounts() {
                           <td className="px-4 py-3 text-right font-medium">{formatINR(expense.amount_paise)}</td>
                           <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${expense.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-700' : expense.payment_status === 'partially_paid' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{expense.payment_status === 'paid' ? 'Fully Paid' : expense.payment_status === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}</span></td>
                           <td className="px-4 py-3 capitalize">{expense.payment_method || '—'}</td>
-                          <td className="px-4 py-3"><p>{expense.vendor_name || '—'}</p><p className="mt-1 text-xs text-slate-500">{expense.reference_no || '—'}</p><ExpenseReceipts expense={expense} /></td>
+                          <td className="px-4 py-3">
+                            <p>{expense.vendor_name || '—'}</p>
+                            <p className="mt-1 text-xs text-slate-500">Payment ref: {expense.payment_reference || '—'}</p>
+                            <p className="mt-1 text-xs text-slate-500">Reference: {expense.reference_no || '—'}</p>
+                            <ExpenseReceipts expense={expense} />
+                          </td>
                           <td className="px-4 py-3"><div className="flex items-center gap-1">
                             <button type="button" onClick={() => setEditingExpense(expense)} aria-label={`Edit expense ${expense.description}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><Pencil size={15} /></button>
                             <button type="button" onClick={() => requestDelete({ kind: 'expense', record: expense })} aria-label={`Delete expense ${expense.description}`} className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={15} /></button>
@@ -682,73 +761,108 @@ export default function Accounts() {
         <section className="space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Customer payments</h2>
-            <p className="mt-1 text-sm text-slate-500">Payment history is linked to its order; outstanding balances remain available for recording new receipts.</p>
+            <p className="mt-1 text-sm text-slate-500">Delivered orders and their saved payment status.</p>
           </div>
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-5 py-4"><h3 className="font-semibold text-slate-900">Payment history</h3></div>
-            {customerPaymentsQuery.isPending ? <div className="p-8 text-center text-sm text-slate-500">Loading payment history…</div>
-              : customerPaymentsQuery.isError ? <div role="alert" className="p-8 text-center text-sm text-rose-700">Customer payment history is unavailable.</div>
-                : customerPayments.length === 0 ? <div className="p-8 text-center text-sm text-slate-500">No customer receipts have been recorded.</div>
-                  : <div className="overflow-x-auto">
-                    <table className="min-w-[1050px] w-full text-left text-sm">
-                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>
-                        <th className="px-4 py-3">Customer</th><th className="px-4 py-3">Order ID</th><th className="px-4 py-3">Payment Date</th>
-                        <th className="px-4 py-3">Payment Method</th><th className="px-4 py-3 text-right">Amount Received</th>
-                        <th className="px-4 py-3">Payment Status</th><th className="px-4 py-3">Linked Account</th><th className="px-4 py-3 text-right">Actions</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {customerPayments.map(({ transaction, customer_name, order_number, order_payment_status }) => (
-                          <tr key={transaction.id}>
-                            <td className="px-4 py-3 font-medium text-slate-900">{customer_name}</td>
-                            <td className="px-4 py-3">{order_number}</td>
-                            <td className="px-4 py-3">{transaction.transaction_date.toDate().toLocaleDateString('en-IN')}</td>
-                            <td className="px-4 py-3">{transaction.payment_method || '—'}</td>
-                            <td className="px-4 py-3 text-right font-semibold">{formatINR(transaction.amount_paise)}</td>
-                            <td className="px-4 py-3 capitalize">{order_payment_status.replace('_', ' ')}</td>
-                            <td className="px-4 py-3">{accounts.find(account => account.id === transaction.account_id)?.name ?? 'Unknown account'}</td>
-                            <td className="px-4 py-3 text-right">
-                              <button type="button" onClick={() => setEditingTransaction(transaction)} aria-label={`Edit payment ${transaction.transaction_id}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><Pencil size={15} /></button>
-                              <button type="button" onClick={() => requestDelete({ kind: 'transaction', record: transaction })} aria-label={`Delete payment ${transaction.transaction_id}`} className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={15} /></button>
-                            </td>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <MetricCard label="Total Delivered Order Value"
+              value={deliveredOrdersQuery.isPending ? 'Loading…' : deliveredOrdersQuery.isError ? 'Unavailable' : formatINR(deliveredOrderTotals.orderValuePaise)}
+              icon={<CircleDollarSign size={18} />} tone="blue" />
+            <MetricCard label="Total Payments Received"
+              value={deliveredOrdersQuery.isPending ? 'Loading…' : deliveredOrdersQuery.isError ? 'Unavailable' : formatINR(deliveredOrderTotals.receivedPaise)}
+              icon={<ArrowUpRight size={18} />} tone="green" />
+            <MetricCard label="Total Pending Payments"
+              value={deliveredOrdersQuery.isPending ? 'Loading…' : deliveredOrdersQuery.isError ? 'Unavailable' : formatINR(deliveredOrderTotals.pendingPaise)}
+              icon={<ArrowLeftRight size={18} />} tone="amber" />
+          </div>
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="relative min-w-[220px] flex-1">
+                <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+                <input value={customerPaymentSearch} onChange={event => setCustomerPaymentSearch(event.target.value)}
+                  placeholder="Search order ID or customer"
+                  className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-sm" />
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-500">From
+                <input type="date" value={customerPaymentFrom} max={customerPaymentTo || undefined}
+                  onChange={event => setCustomerPaymentFrom(event.target.value)}
+                  className="rounded-xl border border-slate-300 px-2 py-2 text-sm text-slate-700" />
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-500">To
+                <input type="date" value={customerPaymentTo} min={customerPaymentFrom || undefined}
+                  onChange={event => setCustomerPaymentTo(event.target.value)}
+                  className="rounded-xl border border-slate-300 px-2 py-2 text-sm text-slate-700" />
+              </label>
+              <select aria-label="Filter customer payments by method" value={customerPaymentMethodFilter}
+                onChange={event => setCustomerPaymentMethodFilter(event.target.value)}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="all">All payment methods</option>
+                {customerPaymentMethods.map(method => <option key={method} value={method}>{method}</option>)}
+              </select>
+              <select aria-label="Filter customer payments by status" value={customerPaymentStatusFilter}
+                onChange={event => setCustomerPaymentStatusFilter(event.target.value as typeof customerPaymentStatusFilter)}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="all">All payment statuses</option>
+                <option value="paid">Fully Paid</option>
+                <option value="partially_paid">Partially Paid</option>
+                <option value="pending">Unpaid</option>
+              </select>
+            </div>
+            {deliveredOrdersQuery.isPending
+              ? <div className="p-8 text-center text-sm text-slate-500">Loading delivered orders…</div>
+              : deliveredOrdersQuery.isError
+                ? <div role="alert" className="p-8 text-center text-sm text-rose-700">Delivered orders are unavailable.</div>
+                : deliveredOrderPayments.length === 0
+                  ? <div className="p-8 text-center text-sm text-slate-500">No delivered orders.</div>
+                  : filteredDeliveredOrderPayments.length === 0
+                    ? <div className="p-8 text-center text-sm text-slate-500">No delivered orders match these filters.</div>
+                    : <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-[1450px] w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                          <tr>
+                            <th className="px-4 py-3">Order ID</th>
+                            <th className="px-4 py-3">Delivered Date</th>
+                            <th className="px-4 py-3">Customer Name</th>
+                            <th className="px-4 py-3 text-right">Total Order Amount</th>
+                            <th className="px-4 py-3 text-right">Amount Received</th>
+                            <th className="px-4 py-3 text-right">Pending Amount</th>
+                            <th className="px-4 py-3">Payment Method</th>
+                            <th className="px-4 py-3">Payment Status</th>
+                            <th className="px-4 py-3">Reference Number</th>
+                            <th className="px-4 py-3">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>}
-          </section>
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-5 py-4"><h3 className="font-semibold text-slate-900">Outstanding customer orders</h3></div>
-            {receivablesQuery.isPending ? <div className="p-8 text-center text-sm text-slate-500">Loading customer balances…</div>
-              : receivablesQuery.isError ? <div className="rounded-xl bg-rose-50 p-5 text-sm text-rose-700">Customer balances are unavailable. Existing Orders access must be permitted for this account.</div>
-                : receivables.length === 0 ? <div className="p-8 text-center text-sm text-slate-500">There are no outstanding customer payments.</div>
-                  : <div className="overflow-x-auto">
-                    <table className="min-w-[760px] w-full text-left text-sm">
-                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>
-                        <th className="px-4 py-3">Order / Customer</th><th className="px-4 py-3">Order status</th><th className="px-4 py-3 text-right">Total</th><th className="px-4 py-3 text-right">Received</th><th className="px-4 py-3 text-right">Outstanding</th><th className="px-4 py-3">Action</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {visibleReceivables.map(order => (
-                          <tr key={order.id}>
-                            <td className="px-4 py-3"><p className="font-semibold text-slate-900">{order.order_number}</p><p className="mt-1 text-xs text-slate-500">{order.customer_name}</p></td>
-                            <td className="px-4 py-3 capitalize">{order.status.replace(/_/g, ' ')}</td>
-                            <td className="px-4 py-3 text-right">{formatINR(order.total_paise)}</td>
-                            <td className="px-4 py-3 text-right">{formatINR(order.paid_paise)}</td>
-                            <td className="px-4 py-3 text-right font-semibold">{formatINR(order.outstanding_paise)}</td>
-                            <td className="px-4 py-3"><button type="button" onClick={() => setSelectedReceivable(order)} className="whitespace-nowrap rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Record receipt</button></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {receivablePageCount > 1 && (
-                      <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm text-slate-600">
-                        <span>Page {receivablePage + 1} of {receivablePageCount} · {receivables.length} outstanding orders</span>
-                        <div className="flex gap-2">
-                          <button type="button" disabled={receivablePage === 0} onClick={() => setReceivablePage(page => page - 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40">Previous</button>
-                          <button type="button" disabled={receivablePage + 1 >= receivablePageCount} onClick={() => setReceivablePage(page => page + 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40">Next</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>}
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {filteredDeliveredOrderPayments.map(payment => (
+                            <tr key={payment.order.id}>
+                              <td className="px-4 py-3 font-medium text-slate-900">{payment.orderNumber}</td>
+                              <td className="px-4 py-3 whitespace-nowrap">{payment.deliveredDate}</td>
+                              <td className="px-4 py-3">{payment.customerName}</td>
+                              <td className="px-4 py-3 text-right">{formatINR(payment.totalPaise)}</td>
+                              <td className="px-4 py-3 text-right font-semibold">{formatINR(payment.receivedPaise)}</td>
+                              <td className="px-4 py-3 text-right">{formatINR(payment.pendingPaise)}</td>
+                              <td className="px-4 py-3">{payment.paymentMethods.join(', ') || '—'}</td>
+                              <td className="px-4 py-3">
+                                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                  payment.paymentStatus === 'paid' ? 'bg-emerald-50 text-emerald-700'
+                                    : payment.paymentStatus === 'partially_paid' ? 'bg-amber-50 text-amber-700'
+                                      : 'bg-rose-50 text-rose-700'
+                                }`}>
+                                  {payment.paymentStatus === 'paid' ? 'Fully Paid'
+                                    : payment.paymentStatus === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">{payment.referenceNumber || '—'}</td>
+                              <td className="px-4 py-3">
+                                <Link to={`/orders/${payment.order.id}`}
+                                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                                  View
+                                </Link>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>}
           </section>
         </section>
       )}
@@ -1005,11 +1119,6 @@ export default function Accounts() {
           onEditSave={input => editingExpense
             ? editExpenseMutation.mutateAsync({ expense: editingExpense, input })
             : Promise.reject(new Error('Select an expense to edit.'))} />
-      )}
-      {selectedReceivable && (
-        <PaymentForm title="Record customer receipt" detail={`${selectedReceivable.order_number} · ${selectedReceivable.customer_name}`}
-          outstandingPaise={selectedReceivable.outstanding_paise} accounts={activeAccounts} saving={customerPaymentMutation.isPending}
-          onClose={() => setSelectedReceivable(null)} onSave={input => customerPaymentMutation.mutateAsync({ receivable: selectedReceivable, input })} />
       )}
       {pendingDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4" role="presentation">

@@ -69,6 +69,7 @@ export interface FinancialExpense {
   category_name: string
   vendor_id: string | null
   vendor_name: string
+  payment_reference: string
   reference_no: string
   transaction_date: Timestamp
   due_date: Timestamp | null
@@ -125,6 +126,7 @@ export interface NewExpenseInput {
   category_name: string
   vendor_id: string | null
   vendor_name: string
+  payment_reference: string
   reference_no: string
   transaction_date: string
   amount_paise: number
@@ -167,6 +169,7 @@ export interface EditExpenseInput {
   category_name: string
   vendor_id: string | null
   vendor_name: string
+  payment_reference: string
   reference_no: string
   transaction_date: string
   amount_paise: number

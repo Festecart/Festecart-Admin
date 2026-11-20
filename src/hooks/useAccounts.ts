@@ -4,7 +4,6 @@ import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore'
 import {
   fetchAccountTotals,
   fetchAccounts,
-  fetchCustomerReceivables,
   fetchFinancialCategories,
   fetchExpenses,
   fetchTransactionPage,
@@ -55,15 +54,10 @@ export function useAccounts(range: AccountDateRange = {}) {
     queryKey: ['accounts', 'categories'],
     queryFn: fetchFinancialCategories,
   })
-  const receivables = useQuery({
-    queryKey: ['accounts', 'customer-receivables'],
-    queryFn: fetchCustomerReceivables,
-    refetchInterval: 30_000,
-  })
   const vendorDue = useQuery({
     queryKey: ['accounts', 'vendor-due'],
     queryFn: fetchVendorDueTotal,
     refetchInterval: 30_000,
   })
-  return { accounts, totals, transactions, expenses, vendors, categories, receivables, vendorDue }
+  return { accounts, totals, transactions, expenses, vendors, categories, vendorDue }
 }

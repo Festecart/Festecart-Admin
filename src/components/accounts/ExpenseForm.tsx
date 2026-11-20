@@ -73,7 +73,7 @@ export function ExpenseForm({
 }) {
   const [amount, setAmount] = useState(initialExpense ? (initialExpense.amount_paise / 100).toFixed(2) : '')
   const [date, setDate] = useState(initialExpense ? dateInput(initialExpense.transaction_date) : '')
-  const [category, setCategory] = useState(initialExpense?.category_name ?? CATEGORIES[0])
+  const [category, setCategory] = useState(initialExpense?.category_name ?? '')
   const [customCategory, setCustomCategory] = useState('')
   const [expenseId, setExpenseId] = useState(initialExpense?.expense_id ?? '')
   const [description, setDescription] = useState(initialExpense?.description ?? '')
@@ -81,6 +81,7 @@ export function ExpenseForm({
     initialExpense?.festival_tag_id ?? (initialExpense?.festival_tag ? festivalTagId(initialExpense.festival_tag) : ''),
   )
   const [vendorId, setVendorId] = useState(initialExpense?.vendor_id ?? '')
+  const paymentReference = initialExpense?.payment_reference ?? ''
   const [reference, setReference] = useState(initialExpense?.reference_no ?? '')
   const [paymentMethod, setPaymentMethod] = useState(initialExpense?.payment_method ?? '')
   const [error, setError] = useState('')
@@ -96,7 +97,7 @@ export function ExpenseForm({
   const festivalTagName = availableFestivalTags.find(tag => tag.id === festivalTagIdValue)?.name ?? null
   const hasCreatedTag = !festivalTagsLoading && !festivalTagsError &&
     Boolean(festivalTagIdValue && createdTags.some(tag => tag.id === festivalTagIdValue))
-  const isValidCategory = category === '__custom' ? Boolean(customCategory.trim()) : Boolean(category)
+  const isValidCategory = category !== '__custom' || Boolean(customCategory.trim())
   const isValidAmount = isValidMoneyInput(amount)
   const validDate = dateToIso(date)
   const hasValidTag = initialExpense
@@ -117,13 +118,13 @@ export function ExpenseForm({
       if (!festivalTagName || (!initialExpense && !hasCreatedTag)) {
         throw new Error('Please select a created tag before saving the expense.')
       }
+      if (category === '__custom' && !categoryName) throw new Error('Enter a category name.')
       if (!paymentMethod.trim()) throw new Error('Select a payment method.')
       if (!initialExpense && expenseId.trim() && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())) {
         throw new Error('Enter an Expense ID using only letters, numbers, and hyphens.')
       }
       const amountValue = paise(amount, 'amount')
       if (category === '__custom') {
-        if (!categoryName) throw new Error('Enter a category name.')
         await onCreateCategory(categoryName, 'expense')
       }
       if (initialExpense) {
@@ -133,6 +134,7 @@ export function ExpenseForm({
           category_name: categoryName,
           vendor_id: vendorId || null,
           vendor_name: vendor?.name ?? (vendorId === initialExpense.vendor_id ? initialExpense.vendor_name : ''),
+          payment_reference: paymentReference.trim(),
           reference_no: reference,
           transaction_date: validDate,
           amount_paise: amountValue,
@@ -147,6 +149,7 @@ export function ExpenseForm({
           category_name: categoryName,
           vendor_id: vendorId || null,
           vendor_name: vendor?.name ?? '',
+          payment_reference: paymentReference.trim(),
           reference_no: reference,
           transaction_date: validDate,
           amount_paise: amountValue,
@@ -172,89 +175,98 @@ export function ExpenseForm({
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block text-sm font-medium text-slate-700">Expense ID (Optional)
-            <input type="text" value={expenseId} onChange={event => setExpenseId(event.target.value)}
-              placeholder="Enter Expense ID" maxLength={64} pattern="[A-Za-z0-9-]{1,64}" title="Use only letters, numbers, and hyphens."
-              readOnly={Boolean(initialExpense)}
-              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal text-slate-700 read-only:bg-slate-50" />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">Expense Date
-            <span className="mt-1.5 flex gap-2">
-              <input type="text" inputMode="numeric" autoComplete="off" maxLength={10} value={date}
-                onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required
-                aria-invalid={Boolean(date && !validDate)}
-                className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-              <span className="relative grid w-12 shrink-0 place-items-center">
-                <button type="button" aria-label="Open expense date calendar"
-                  onClick={() => {
-                    const picker = datePickerRef.current
-                    if (!picker) return
-                    if (typeof picker.showPicker === 'function') picker.showPicker()
-                    else picker.click()
-                  }}
-                  className="grid h-full w-full place-items-center rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50">
-                  <CalendarDays size={18} aria-hidden="true" />
-                </button>
-                <input ref={datePickerRef} type="date" aria-label="Choose expense date from calendar" value={validDate}
-                  onChange={event => setDate(isoToDate(event.target.value))}
-                  tabIndex={-1} className="pointer-events-none absolute h-px w-px opacity-0" />
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-700">Expense ID (Optional) / Cash / UPI / Bank / Ref Number
+              <input type="text" value={expenseId} onChange={event => setExpenseId(event.target.value)}
+                placeholder="Enter Expense ID" maxLength={64} pattern="[A-Za-z0-9-]{1,64}" title="Use only letters, numbers, and hyphens."
+                readOnly={Boolean(initialExpense)}
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal text-slate-700 read-only:bg-slate-50" />
+            </label>
+            <label className="block text-sm font-medium text-slate-700">Expense Date
+              <span className="mt-1.5 flex gap-2">
+                <input type="text" inputMode="numeric" autoComplete="off" maxLength={10} value={date}
+                  onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required
+                  aria-invalid={Boolean(date && !validDate)}
+                  className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+                <span className="relative grid w-12 shrink-0 place-items-center">
+                  <button type="button" aria-label="Open expense date calendar"
+                    onClick={() => {
+                      const picker = datePickerRef.current
+                      if (!picker) return
+                      if (typeof picker.showPicker === 'function') picker.showPicker()
+                      else picker.click()
+                    }}
+                    className="grid h-full w-full place-items-center rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50">
+                    <CalendarDays size={18} aria-hidden="true" />
+                  </button>
+                  <input ref={datePickerRef} type="date" aria-label="Choose expense date from calendar" value={validDate}
+                    onChange={event => setDate(isoToDate(event.target.value))}
+                    tabIndex={-1} className="pointer-events-none absolute h-px w-px opacity-0" />
+                </span>
               </span>
-            </span>
-            {date && !validDate && <span role="alert" className="mt-1 block text-xs text-rose-700">Enter a real date in DD/MM/YYYY format.</span>}
-          </label>
-          <label className="block text-sm font-medium text-slate-700">Amount (₹)
-            <input type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
-              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">Tag
-            <select value={festivalTagIdValue} onChange={event => setFestivalTagIdValue(event.target.value)} required
-              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-              <option value="">{festivalTagsLoading ? 'Loading tags…' : availableFestivalTags.length ? 'Select a tag' : 'No tags available. Create a tag in Accounts → Tags.'}</option>
-              {availableFestivalTags.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-            {festivalTagsLoading && <span role="status" className="mt-1.5 block text-xs text-slate-500">Loading tags…</span>}
-            {festivalTagsError && <span role="alert" className="mt-1.5 block text-xs text-rose-700">Saved tags could not be loaded. Please try again.</span>}
-            {!initialExpense && !festivalTagsLoading && !festivalTagsError && !festivalTagIdValue && (
-              <span role="alert" className="mt-1.5 block text-xs text-rose-700">Please select a created tag before saving the expense.</span>
-            )}
-          </label>
-          <label className="block text-sm font-medium text-slate-700">Category
-            <select value={category} onChange={event => setCategory(event.target.value)} required
-              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-              {[...new Set([...CATEGORIES, ...categories.filter(item => item.type === 'expense').map(item => item.name)])].map(item => <option key={item}>{item}</option>)}
-              <option value="__custom">Add custom category…</option>
-            </select>
-            {category === '__custom' && (
-              <input aria-label="Custom category" value={customCategory} onChange={event => setCustomCategory(event.target.value)}
-                placeholder="Enter custom category" required maxLength={80}
-                className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            )}
-          </label>
-          <label className="block text-sm font-medium text-slate-700">Description (Optional)
-            <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
-              placeholder="What was purchased or paid for?"
-              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">Payment Method
-            <select value={paymentMethod} onChange={event => setPaymentMethod(event.target.value)} required
-              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-              <option value="">Select a payment method</option>
-              {initialExpense?.payment_method && !PAYMENT_METHODS.includes(initialExpense.payment_method) && (
-                <option value={initialExpense.payment_method} disabled>Existing: {initialExpense.payment_method} (unchanged)</option>
+              {date && !validDate && <span role="alert" className="mt-1 block text-xs text-rose-700">Enter a real date in DD/MM/YYYY format.</span>}
+            </label>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-700">Amount (₹)
+              <input type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+            </label>
+            <label className="block text-sm font-medium text-slate-700">Tag
+              <select value={festivalTagIdValue} onChange={event => setFestivalTagIdValue(event.target.value)} required
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
+                <option value="">{festivalTagsLoading ? 'Loading tags…' : availableFestivalTags.length ? 'Select a tag' : 'No tags available. Create a tag in Accounts → Tags.'}</option>
+                {availableFestivalTags.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              {festivalTagsLoading && <span role="status" className="mt-1.5 block text-xs text-slate-500">Loading tags…</span>}
+              {festivalTagsError && <span role="alert" className="mt-1.5 block text-xs text-rose-700">Saved tags could not be loaded. Please try again.</span>}
+              {!initialExpense && !festivalTagsLoading && !festivalTagsError && !festivalTagIdValue && (
+                <span role="alert" className="mt-1.5 block text-xs text-rose-700">Please select a created tag before saving the expense.</span>
               )}
-              {PAYMENT_METHODS.map(item => <option key={item}>{item}</option>)}
-            </select>
-          </label>
-          <label className="block text-sm font-medium text-slate-700">Vendor (Optional)
-            <select value={vendorId} onChange={event => setVendorId(event.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-              <option value="">No linked vendor</option>
-              {initialExpense?.vendor_id && !vendors.some(item => item.id === initialExpense.vendor_id) && <option value={initialExpense.vendor_id}>{initialExpense.vendor_name || initialExpense.vendor_id}</option>}
-              {vendors.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>
-          <label className="block text-sm font-medium text-slate-700 sm:col-span-2">Reference Number (Optional)
+            </label>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-700">Category (Optional)
+              <select value={category} onChange={event => setCategory(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
+                <option value="">No category</option>
+                {[...new Set([...CATEGORIES, ...categories.filter(item => item.type === 'expense').map(item => item.name)])].map(item => <option key={item}>{item}</option>)}
+                <option value="__custom">Add custom category…</option>
+              </select>
+              {category === '__custom' && (
+                <input aria-label="Custom category" value={customCategory} onChange={event => setCustomCategory(event.target.value)}
+                  placeholder="Enter custom category" required maxLength={80}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+              )}
+            </label>
+            <label className="block text-sm font-medium text-slate-700">Description (Optional)
+              <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
+                placeholder="What was purchased or paid for?"
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+            </label>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-700">Payment Method
+              <select value={paymentMethod} onChange={event => setPaymentMethod(event.target.value)} required
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
+                <option value="">Select a payment method</option>
+                {initialExpense?.payment_method && !PAYMENT_METHODS.includes(initialExpense.payment_method) && (
+                  <option value={initialExpense.payment_method} disabled>Existing: {initialExpense.payment_method} (unchanged)</option>
+                )}
+                {PAYMENT_METHODS.map(item => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+            <label className="block text-sm font-medium text-slate-700">Vendor (Optional)
+              <select value={vendorId} onChange={event => setVendorId(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
+                <option value="">No linked vendor</option>
+                {initialExpense?.vendor_id && !vendors.some(item => item.id === initialExpense.vendor_id) && <option value={initialExpense.vendor_id}>{initialExpense.vendor_name || initialExpense.vendor_id}</option>}
+                {vendors.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <label className="block text-sm font-medium text-slate-700">Reference Number (Optional)
             <input value={reference} onChange={event => setReference(event.target.value)} maxLength={200}
               className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
           </label>

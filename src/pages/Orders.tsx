@@ -155,7 +155,7 @@ export default function Orders() {
   const [isExportingLogistics, setIsExportingLogistics] = useState(false)
   const [isLogisticsExportMenuOpen, setIsLogisticsExportMenuOpen] = useState(false)
   const [horizontalScroll, setHorizontalScroll] = useState({ position: 0, max: 0 })
-  const [viewMode, setViewMode] = useState<'list' | 'board'>('board')
+  const [viewMode, setViewMode] = useState<'list' | 'board'>('list')
   const columnPreferences = useTableColumnPreferences(
     'festecart-admin:table-columns:orders',
     ORDER_TABLE_COLUMNS,

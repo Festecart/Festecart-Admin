@@ -1197,9 +1197,10 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
     throw new HttpsError('invalid-argument', 'The Expense ID is invalid.')
   }
   const description = requireText(input.description, 'Description', 250, true)
-  const categoryName = requireText(input.category_name, 'Category', 80, false)
+  const categoryName = requireText(input.category_name, 'Category', 80, true)
   const vendorId = input.vendor_id == null || input.vendor_id === '' ? null : requireRecordId(input.vendor_id, 'Vendor ID')
   const suppliedVendorName = requireText(input.vendor_name, 'Vendor name', 120, true)
+  const paymentReference = requireText(input.payment_reference, 'Payment reference', 200, true)
   const reference = requireText(input.reference_no, 'Reference', 200, true)
   const date = requireDate(input.transaction_date, 'Expense date')
   const amount = requirePaise(input.amount_paise, 'Expense amount', false)
@@ -1261,6 +1262,7 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
       category_name: categoryName,
       vendor_id: vendorId,
       vendor_name: vendorId ? canonicalVendorName : '',
+      payment_reference: paymentReference,
       reference_no: reference,
       transaction_date: date,
       due_date: null,
@@ -1345,9 +1347,10 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
     const current = snapshot.data()
     if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'Deleted expenses cannot be edited.')
     const description = requireText(input.description, 'Description', 250, true)
-    const categoryName = requireText(input.category_name, 'Category', 80, false)
+    const categoryName = requireText(input.category_name, 'Category', 80, true)
     const vendorId = input.vendor_id == null || input.vendor_id === '' ? null : requireRecordId(input.vendor_id, 'Vendor ID')
     const vendorName = requireText(input.vendor_name, 'Vendor name', 120, true)
+    const paymentReference = requireText(input.payment_reference ?? current.payment_reference ?? '', 'Payment reference', 200, true)
     const reference = requireText(input.reference_no, 'Reference', 200, true)
     const date = requireDate(input.transaction_date, 'Expense date')
     const amount = requirePaise(input.amount_paise, 'Expense amount', false)
@@ -1380,6 +1383,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
       category_name: categoryName,
       vendor_id: vendorId,
       vendor_name: vendorName,
+      payment_reference: paymentReference,
       reference_no: reference,
       transaction_date: date,
       amount_paise: amount,
@@ -1401,6 +1405,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
           category_name: current.category_name,
           vendor_id: current.vendor_id ?? null,
           vendor_name: current.vendor_name ?? '',
+          payment_reference: current.payment_reference ?? '',
           reference_no: current.reference_no ?? '',
           transaction_date: current.transaction_date,
           amount_paise: current.amount_paise,
@@ -1413,6 +1418,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
           category_name: categoryName,
           vendor_id: vendorId,
           vendor_name: vendorName,
+          payment_reference: paymentReference,
           reference_no: reference,
           transaction_date: date,
           amount_paise: amount,
