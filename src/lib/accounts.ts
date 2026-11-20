@@ -1176,7 +1176,6 @@ export async function recordTransaction(input: NewTransactionInput, receipt?: Fi
 export async function createExpense(input: NewExpenseInput): Promise<void> {
   requireActor()
   assertPaise(input.amount_paise, 'Expense amount')
-  if (!input.payment_method.trim()) throw new Error('Choose a payment method.')
   const expenseId = input.expense_id.trim()
   if (expenseId && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId)) {
     throw new Error('Enter an Expense ID using only letters, numbers, and hyphens.')
@@ -1192,6 +1191,7 @@ export async function createExpense(input: NewExpenseInput): Promise<void> {
       input: {
         ...input,
         expense_id: expenseId,
+        payment_method: input.payment_method.trim(),
         festival_tag: enteredFestivalTag,
         festival_tag_id: festivalTagIdValue,
       },
@@ -1215,7 +1215,10 @@ export async function createExpense(input: NewExpenseInput): Promise<void> {
     ].includes(failure.errorCode)) {
       throw new Error(failure.errorMessage)
     }
-    throw new Error('The expense service is unavailable. Please try again shortly.')
+    const detail = failure.errorMessage && failure.errorMessage !== 'INTERNAL'
+      ? `: ${failure.errorMessage}`
+      : ''
+    throw new Error(`Expense could not be saved (${failure.errorCode})${detail}. Your entries are still in the form; correct the issue or try again.`)
   }
 }
 

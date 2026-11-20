@@ -1207,13 +1207,12 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
   const reference = requireText(input.reference_no, 'Reference', 200, true)
   const date = requireDate(input.transaction_date, 'Expense date')
   const amount = requirePaise(input.amount_paise, 'Expense amount', false)
-  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
-  if (!['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod)) {
+  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, true)
+  if (paymentMethod && !['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod)) {
     throw new HttpsError('invalid-argument', 'Choose Cash, UPI or Bank Transfer as the payment method.')
   }
   const festivalTag = requireFestivalTag(input.festival_tag)
   const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
-  if (!festivalTagId) throw new HttpsError('invalid-argument', 'Please select a created tag.')
 
   const expenseCollection = db.collection('financial_expenses')
   const expenseRef = expenseCollection.doc()
@@ -1234,22 +1233,24 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
       expenseIdRef ? transaction.get(expenseIdRef) : Promise.resolve(null),
       Promise.all(existingExpenseQueries.map(existingQuery => transaction.get(existingQuery))),
       vendorRef ? transaction.get(vendorRef) : Promise.resolve(null),
-      transaction.get(tagsRef),
+      festivalTagId ? transaction.get(tagsRef) : Promise.resolve(null),
     ])
     if ((expenseIdSnapshot && expenseIdSnapshot.exists) || existingExpenseSnapshots.some(snapshot => !snapshot.empty)) {
       throw new HttpsError('already-exists', 'This Expense ID already exists. Please enter a different ID.')
     }
     if (vendorRef && !vendorSnapshot.exists) throw new HttpsError('not-found', 'The selected vendor no longer exists.')
-    const tagsData = tagsSnapshot.exists ? tagsSnapshot.data() : {}
-    const tagName = (tagsData.custom_tags && tagsData.custom_tags[festivalTagId]) ||
-      (tagsData.tag_names && tagsData.tag_names[festivalTagId])
-    if (typeof tagName !== 'string' || !tagName.trim()) {
+    const tagsData = tagsSnapshot && tagsSnapshot.exists ? tagsSnapshot.data() : {}
+    const tagName = festivalTagId
+      ? (tagsData.custom_tags && tagsData.custom_tags[festivalTagId]) ||
+        (tagsData.tag_names && tagsData.tag_names[festivalTagId])
+      : null
+    if (festivalTagId && (typeof tagName !== 'string' || !tagName.trim())) {
       throw new HttpsError('failed-precondition', 'Please select a tag created in Accounts → Tags.')
     }
     const canonicalVendorName = vendorSnapshot
       ? String(vendorSnapshot.data().business_name || vendorSnapshot.data().name || suppliedVendorName).trim()
       : ''
-    const resolvedTagName = tagName.trim()
+    const resolvedTagName = typeof tagName === 'string' ? tagName.trim() : null
     const paymentStatus = 'paid'
     if (expenseIdRef) {
       transaction.create(expenseIdRef, {
@@ -1362,7 +1363,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
     const isFullAmountSpending = current.is_full_amount_spending === true
     const paid = isFullAmountSpending ? amount : requirePaise(current.paid_paise, 'Paid amount', true)
     const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
-    if (!['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod) && paymentMethod !== current.payment_method) {
+    if (paymentMethod && !['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod) && paymentMethod !== current.payment_method) {
       throw new HttpsError('invalid-argument', 'Choose Cash, UPI or Bank Transfer as the payment method.')
     }
     if (!isFullAmountSpending && amount < paid) {

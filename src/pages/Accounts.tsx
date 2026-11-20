@@ -496,7 +496,7 @@ export default function Accounts() {
     mutationFn: (input: NewExpenseInput) => createExpense(input),
     onSuccess: () => {
       setShowExpenseForm(false)
-      showTransactionSuccess('Expense saved successfully.', 5000)
+      showTransactionSuccess('Expense saved successfully.')
       void queryClient.invalidateQueries({ queryKey: ['accounts'] })
     },
   })

@@ -104,7 +104,8 @@ export function ExpenseForm({
     (Boolean(festivalTagName) && (Boolean(initialExpense) || hasCreatedTag))
   const hasValidExpenseId = Boolean(initialExpense) || !expenseId.trim() || /^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())
   const canSave = !saving && !isSubmitting.current &&
-    Boolean(hasValidExpenseId && validDate && isValidCategory && isValidAmount && paymentMethod.trim() && hasValidTag)
+    Boolean(hasValidExpenseId && validDate && isValidCategory && isValidAmount && hasValidTag &&
+      (!initialExpense || paymentMethod.trim()))
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -118,7 +119,7 @@ export function ExpenseForm({
         throw new Error('Select a created tag or clear the Tag field to continue without one.')
       }
       if (category === '__custom' && !categoryName) throw new Error('Enter a category name.')
-      if (!paymentMethod.trim()) throw new Error('Select a payment method.')
+      if (initialExpense && !paymentMethod.trim()) throw new Error('Select a payment method.')
       if (!initialExpense && expenseId.trim() && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())) {
         throw new Error('Enter an Expense ID using only letters, numbers, and hyphens.')
       }
@@ -137,7 +138,7 @@ export function ExpenseForm({
           reference_no: reference,
           transaction_date: validDate,
           amount_paise: amountValue,
-          payment_method: paymentMethod,
+          payment_method: paymentMethod.trim(),
           festival_tag: festivalTagName,
           festival_tag_id: festivalTagIdValue || null,
         })
@@ -152,7 +153,7 @@ export function ExpenseForm({
           reference_no: reference,
           transaction_date: validDate,
           amount_paise: amountValue,
-          payment_method: paymentMethod,
+          payment_method: paymentMethod.trim(),
           festival_tag: festivalTagName,
           festival_tag_id: festivalTagIdValue || null,
         })
@@ -243,8 +244,8 @@ export function ExpenseForm({
             </label>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">Payment Method
-              <select value={paymentMethod} onChange={event => setPaymentMethod(event.target.value)} required
+            <label className="block text-sm font-medium text-slate-700">{initialExpense ? 'Payment Method' : 'Payment Method (Optional)'}
+              <select value={paymentMethod} onChange={event => setPaymentMethod(event.target.value)} required={Boolean(initialExpense)}
                 className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
                 <option value="">Select a payment method</option>
                 {initialExpense?.payment_method && !PAYMENT_METHODS.includes(initialExpense.payment_method) && (
