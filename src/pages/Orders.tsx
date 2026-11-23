@@ -486,46 +486,50 @@ export default function Orders() {
         </div>
       </div>
       <section className="shrink-0 rounded-xl border border-gray-200 bg-white p-3 sm:p-4"
-        aria-labelledby="orders-statistics-heading">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <h2 id="orders-statistics-heading" className="text-sm font-semibold text-gray-900">Orders Statistics</h2>
-            <p className="text-xs text-gray-500">Pending orders are in Confirmed status. Delivered Order Value includes delivered orders only.</p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <label className="sr-only" htmlFor="orders-statistics-range">Statistics date range</label>
-            <select id="orders-statistics-range" value={statisticsRange}
-              onChange={event => setStatisticsRange(event.target.value as StatisticsDateRange)}
-              className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500">
-              {STATISTICS_DATE_RANGES.map(range => (
-                <option key={range.value} value={range.value}>{range.label}</option>
-              ))}
-            </select>
-            {statisticsRange === 'custom' && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <label className="sr-only" htmlFor="orders-statistics-from">Custom statistics from date</label>
-                <input id="orders-statistics-from" type="date" value={statisticsCustomFrom}
-                  max={statisticsCustomTo || undefined} onChange={event => setStatisticsCustomFrom(event.target.value)}
-                  className="rounded-md border border-gray-200 px-2 py-1.5 text-xs text-gray-700" />
-                <span className="text-xs text-gray-400">to</span>
-                <label className="sr-only" htmlFor="orders-statistics-to">Custom statistics to date</label>
-                <input id="orders-statistics-to" type="date" value={statisticsCustomTo}
-                  min={statisticsCustomFrom || undefined} max={dateString(new Date())}
-                  onChange={event => setStatisticsCustomTo(event.target.value)}
-                  className="rounded-md border border-gray-200 px-2 py-1.5 text-xs text-gray-700" />
+        aria-labelledby={viewMode === 'list' ? 'orders-statistics-heading' : undefined}>
+        {viewMode === 'list' && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h2 id="orders-statistics-heading" className="text-sm font-semibold text-gray-900">Orders Statistics</h2>
+                <p className="text-xs text-gray-500">Pending orders are in Confirmed status. Delivered Order Value includes delivered orders only.</p>
               </div>
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                <label className="sr-only" htmlFor="orders-statistics-range">Statistics date range</label>
+                <select id="orders-statistics-range" value={statisticsRange}
+                  onChange={event => setStatisticsRange(event.target.value as StatisticsDateRange)}
+                  className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500">
+                  {STATISTICS_DATE_RANGES.map(range => (
+                    <option key={range.value} value={range.value}>{range.label}</option>
+                  ))}
+                </select>
+                {statisticsRange === 'custom' && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <label className="sr-only" htmlFor="orders-statistics-from">Custom statistics from date</label>
+                    <input id="orders-statistics-from" type="date" value={statisticsCustomFrom}
+                      max={statisticsCustomTo || undefined} onChange={event => setStatisticsCustomFrom(event.target.value)}
+                      className="rounded-md border border-gray-200 px-2 py-1.5 text-xs text-gray-700" />
+                    <span className="text-xs text-gray-400">to</span>
+                    <label className="sr-only" htmlFor="orders-statistics-to">Custom statistics to date</label>
+                    <input id="orders-statistics-to" type="date" value={statisticsCustomTo}
+                      min={statisticsCustomFrom || undefined} max={dateString(new Date())}
+                      onChange={event => setStatisticsCustomTo(event.target.value)}
+                      className="rounded-md border border-gray-200 px-2 py-1.5 text-xs text-gray-700" />
+                  </div>
+                )}
+              </div>
+            </div>
+            {statisticsError && (
+              <p role="alert" className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
+                Could not load order statistics: {statisticsError instanceof Error ? statisticsError.message : 'Unknown error'}
+              </p>
             )}
-          </div>
-        </div>
-        {statisticsError && (
-          <p role="alert" className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
-            Could not load order statistics: {statisticsError instanceof Error ? statisticsError.message : 'Unknown error'}
-          </p>
+            {statisticsRange === 'custom' && !statisticsRangeValid && (
+              <p className="mt-1 text-xs text-amber-700">Choose a valid start and end date for the statistics.</p>
+            )}
+            {renderStatisticsCards()}
+          </>
         )}
-        {statisticsRange === 'custom' && !statisticsRangeValid && (
-          <p className="mt-1 text-xs text-amber-700">Choose a valid start and end date for the statistics.</p>
-        )}
-        {renderStatisticsCards()}
         {logisticsExportError && (
           <p role="alert" className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
             {logisticsExportError}

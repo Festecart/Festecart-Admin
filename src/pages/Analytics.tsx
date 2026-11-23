@@ -782,6 +782,12 @@ export default function Analytics() {
     }
     return getRange(preset)
   }, [preset, customFrom, customTo])
+  const tagAnalyticsRange = useMemo(
+    (): DateRange => selectedTagId === 'all'
+      ? range
+      : { from: new Date(0), to: new Date() },
+    [selectedTagId, range],
+  )
 
   const { data, isLoading, error, refetch } = useAnalytics(range)
   const selectedTag = analyticsTags.find(tag => tag.id === selectedTagId)
@@ -822,20 +828,24 @@ export default function Analytics() {
       {/* ── Date range ── */}
       <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
         <div className="flex flex-wrap gap-1.5 items-center">
-          {PRESETS.map(p => (
-            <button key={p.value} onClick={() => setPreset(p.value)}
-              className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${preset === p.value ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-              {p.label}
-            </button>
-          ))}
-          {preset === 'custom' && (
-            <div className="flex items-center gap-1.5 ml-1">
-              <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
-                className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
-              <span className="text-gray-400 text-xs">–</span>
-              <input type="date" value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
-                className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
-            </div>
+          {selectedTagId === 'all' && (
+            <>
+              {PRESETS.map(p => (
+                <button key={p.value} onClick={() => setPreset(p.value)}
+                  className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${preset === p.value ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {p.label}
+                </button>
+              ))}
+              {preset === 'custom' && (
+                <div className="flex items-center gap-1.5 ml-1">
+                  <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                    className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
+                  <span className="text-gray-400 text-xs">–</span>
+                  <input type="date" value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
+                    className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
+                </div>
+              )}
+            </>
           )}
           <details className="relative">
             <summary
@@ -845,10 +855,10 @@ export default function Analytics() {
                 }
               }}
               className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-50 [&::-webkit-details-marker]:hidden">
-              Tags <ChevronDown size={13} aria-hidden="true" />
+              {selectedTagId === 'all' ? 'Tags' : selectedTag?.name ?? 'Tags'} <ChevronDown size={13} aria-hidden="true" />
             </summary>
             <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-md border border-gray-200 bg-white p-1 shadow-lg">
-              {[{ id: 'all', name: 'All Tags' }, ...analyticsTags].map(tag => (
+              {analyticsTags.filter(tag => !tag.is_custom).map(tag => (
                 <button key={tag.id} type="button" onClick={e => {
                   setSelectedTagId(tag.id)
                   e.currentTarget.closest('details')?.removeAttribute('open')
@@ -862,6 +872,12 @@ export default function Analytics() {
               ))}
             </div>
           </details>
+          {selectedTagId !== 'all' && (
+            <button type="button" onClick={() => setSelectedTagId('all')}
+              className="ml-auto whitespace-nowrap flex items-center gap-1.5 text-xs border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors">
+              Back to Analytics
+            </button>
+          )}
         </div>
       </div>
 
@@ -871,7 +887,7 @@ export default function Analytics() {
           <FestivalTagAnalyticsSection
             tagId={selectedTag.id}
             tagName={selectedTag.name}
-            range={range}
+            range={tagAnalyticsRange}
             productIds={productIds}
           />
         ) : null
