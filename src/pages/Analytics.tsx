@@ -805,7 +805,7 @@ export default function Analytics() {
           <p className="text-xs text-gray-500 mt-0.5">Revenue, orders, customers &amp; regional performance</p>
         </div>
         <div className="flex items-center gap-2">
-          {data && (
+          {selectedTagId === 'all' && data && (
             <button onClick={() => exportCSV(data, range)}
               className="flex items-center gap-1.5 text-xs border border-gray-300 text-gray-600 px-3 py-2 rounded-lg hover:bg-white transition-colors">
               <Download size={13} /> Export CSV
@@ -878,11 +878,11 @@ export default function Analytics() {
       )}
 
       {/* ── Error ── */}
-      {(error || tagError) && (
+      {((selectedTagId === 'all' && error) || tagError) && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-red-700 text-sm">
             <AlertCircle size={16} />
-            <span>{error
+            <span>{selectedTagId === 'all' && error
               ? `Failed to load analytics: ${(error as Error).message}`
               : `Failed to load tags: ${(tagError as Error).message}`}</span>
           </div>
@@ -898,57 +898,61 @@ export default function Analytics() {
         </div>
       )}
 
-      {/* ── KPIs ── */}
-      {isLoading && !data ? <KPISkel /> : data && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <KPI label="Total Revenue"     value={fmtINR(data.totalRevenue)}      icon={IndianRupee} color={C.indigo} />
-          <KPI label="Earned Value"      value={fmtINR(data.totalEarnedValue)} icon={IndianRupee} color={C.green} sub="Actual paid − logistics cost" />
-          <KPI label="Total Orders"      value={data.totalOrders}               icon={ShoppingBag} color={C.blue} />
-          <KPI label="Avg Order Value"   value={fmtINR(data.averageOrderValue)} icon={TrendingUp}  color={C.green} />
-          <KPI label="Total Customers"   value={data.totalCustomers}            icon={Users}       color={C.sky} />
-          <KPI label="New Customers"     value={data.newCustomers}              icon={Users}       color={C.purple} sub={`${data.returningCustomers} returning`} />
-          <KPI label="Cancelled Orders"  value={data.cancelledOrders}           icon={XCircle}     color={C.red}    sub={`${data.cancellationRate}% rate`} />
-          <KPI label="COD Orders"        value={data.codOrders}                 icon={Truck}       color={C.amber} />
-          <KPI label="Prepaid Orders"    value={data.prepaidOrders}             icon={CreditCard}  color={C.teal} />
-        </div>
+      {selectedTagId === 'all' && (
+        <>
+          {/* ── KPIs ── */}
+          {isLoading && !data ? <KPISkel /> : data && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <KPI label="Total Revenue"     value={fmtINR(data.totalRevenue)}      icon={IndianRupee} color={C.indigo} />
+              <KPI label="Earned Value"      value={fmtINR(data.totalEarnedValue)} icon={IndianRupee} color={C.green} sub="Actual paid − logistics cost" />
+              <KPI label="Total Orders"      value={data.totalOrders}               icon={ShoppingBag} color={C.blue} />
+              <KPI label="Avg Order Value"   value={fmtINR(data.averageOrderValue)} icon={TrendingUp}  color={C.green} />
+              <KPI label="Total Customers"   value={data.totalCustomers}            icon={Users}       color={C.sky} />
+              <KPI label="New Customers"     value={data.newCustomers}              icon={Users}       color={C.purple} sub={`${data.returningCustomers} returning`} />
+              <KPI label="Cancelled Orders"  value={data.cancelledOrders}           icon={XCircle}     color={C.red}    sub={`${data.cancellationRate}% rate`} />
+              <KPI label="COD Orders"        value={data.codOrders}                 icon={Truck}       color={C.amber} />
+              <KPI label="Prepaid Orders"    value={data.prepaidOrders}             icon={CreditCard}  color={C.teal} />
+            </div>
+          )}
+
+          {/* ── Revenue chart (full width) ── */}
+          {isLoading && !data ? <Sk className="h-80" /> : data && <RevenueChart data={data} />}
+
+          {/* ── Orders & Payment ── */}
+          {isLoading && !data ? (
+            <div className="grid sm:grid-cols-2 gap-4"><Sk className="h-64" /><Sk className="h-64" /></div>
+          ) : data && (
+            <div className="grid sm:grid-cols-2 gap-4">
+              <StatusChart data={data} />
+              <PaymentChart data={data} />
+            </div>
+          )}
+
+          {/* ── Customers ── */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <Users size={14} /> Customer Activity
+            </h2>
+            {isLoading && !data ? <Sk className="h-48" /> : data && <CustomerSection data={data} />}
+          </div>
+
+          {/* ── Geographic ── */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <MapPin size={14} /> Geographic Performance
+            </h2>
+            {isLoading && !data ? <Sk className="h-64" /> : data && <GeoSection data={data} />}
+          </div>
+
+          {/* ── Coupons ── */}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <Download size={14} /> Coupon Analytics
+            </h2>
+            {isLoading && !data ? <Sk className="h-40" /> : data && <CouponSection data={data} />}
+          </div>
+        </>
       )}
-
-      {/* ── Revenue chart (full width) ── */}
-      {isLoading && !data ? <Sk className="h-80" /> : data && <RevenueChart data={data} />}
-
-      {/* ── Orders & Payment ── */}
-      {isLoading && !data ? (
-        <div className="grid sm:grid-cols-2 gap-4"><Sk className="h-64" /><Sk className="h-64" /></div>
-      ) : data && (
-        <div className="grid sm:grid-cols-2 gap-4">
-          <StatusChart data={data} />
-          <PaymentChart data={data} />
-        </div>
-      )}
-
-      {/* ── Customers ── */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-          <Users size={14} /> Customer Activity
-        </h2>
-        {isLoading && !data ? <Sk className="h-48" /> : data && <CustomerSection data={data} />}
-      </div>
-
-      {/* ── Geographic ── */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-          <MapPin size={14} /> Geographic Performance
-        </h2>
-        {isLoading && !data ? <Sk className="h-64" /> : data && <GeoSection data={data} />}
-      </div>
-
-      {/* ── Coupons ── */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-          <Download size={14} /> Coupon Analytics
-        </h2>
-        {isLoading && !data ? <Sk className="h-40" /> : data && <CouponSection data={data} />}
-      </div>
 
     </div>
   )
