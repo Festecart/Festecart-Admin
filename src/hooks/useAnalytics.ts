@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import {
   db, collection, getDocs, query, where, orderBy, Timestamp,
 } from '@/lib/firebase'
+import { fetchReportExpenses } from '@/lib/accounts'
+import { fetchFestivalProductsByIds, festivalTagId } from '@/lib/festivalProducts'
 import type {
   DateRange, AnalyticsData,
   RevenueByDay, RevenueByMonth, SalesByGeo, SalesByCategory, TopProduct,
@@ -244,6 +246,117 @@ export function useAnalytics(range: DateRange) {
 
       const orders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }))
       return aggregateOrders(orders, productCategoryMap)
+    },
+  })
+}
+
+export interface FestivalTagProductSales {
+  productId: string
+  name: string
+  quantity: number
+  sales: number
+}
+
+export interface FestivalTagAnalyticsData {
+  linkedProductCount: number
+  linkedProductsFound: number
+  ordersInRange: number
+  totalOrders: number
+  deliveredOrders: number
+  matchingExpenseCount: number
+  deliveredSales: number
+  expenses: number
+  unitsSold: number
+  productsSold: number
+  productSales: FestivalTagProductSales[]
+}
+
+function localDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function useFestivalTagAnalytics(range: DateRange, tagId: string, productIds: readonly string[]) {
+  return useQuery({
+    queryKey: [
+      'analytics',
+      'festival-tag',
+      tagId,
+      range.from.toISOString(),
+      range.to.toISOString(),
+      [...productIds].sort(),
+    ],
+    enabled: Boolean(tagId && tagId !== 'all'),
+    staleTime: 1000 * 60 * 5,
+    queryFn: async (): Promise<FestivalTagAnalyticsData> => {
+      const productIdSet = new Set(productIds)
+      const [ordersSnapshot, expenses, linkedProducts] = await Promise.all([
+        getDocs(query(
+          collection(db, 'orders'),
+          where('created_at', '>=', Timestamp.fromDate(range.from)),
+          where('created_at', '<=', Timestamp.fromDate(range.to)),
+          orderBy('created_at', 'desc'),
+        )),
+        fetchReportExpenses({ from: localDateKey(range.from), to: localDateKey(range.to) }),
+        fetchFestivalProductsByIds([...productIdSet]),
+      ])
+
+      const orders: Record<string, any>[] = ordersSnapshot.docs
+        .map(document => ({ id: document.id, ...document.data() }))
+      const matchingOrders = orders.filter(order =>
+        (order.items ?? []).some((item: Record<string, any>) => productIdSet.has(item.product_id)),
+      )
+      const deliveredOrders = matchingOrders.filter(order => order.status === 'delivered')
+      const productNameById = new Map(linkedProducts.map(product => [product.id, product.name]))
+      const productSales = new Map<string, FestivalTagProductSales>()
+      let unitsSold = 0
+      let deliveredSales = 0
+
+      for (const order of deliveredOrders) {
+        for (const item of (order.items ?? []) as Record<string, any>[]) {
+          if (!productIdSet.has(item.product_id)) continue
+          const quantity = Number(item.quantity ?? 0)
+          const price = Number(item.price ?? 0)
+          if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price)) continue
+          const sales = price * quantity
+          unitsSold += quantity
+          deliveredSales += sales
+          const existing = productSales.get(item.product_id) ?? {
+            productId: item.product_id,
+            name: productNameById.get(item.product_id) ?? item.name ?? item.product_id,
+            quantity: 0,
+            sales: 0,
+          }
+          existing.quantity += quantity
+          existing.sales += sales
+          productSales.set(item.product_id, existing)
+        }
+      }
+
+      const matchingExpenses = expenses.filter(expense => {
+        const expenseTagId = expense.festival_tag_id ??
+          (expense.festival_tag ? festivalTagId(expense.festival_tag) : null)
+        return expenseTagId === tagId
+      })
+      const totalExpenses = matchingExpenses.reduce((total, expense) =>
+        total + expense.amount_paise / 100, 0,
+      )
+
+      return {
+        linkedProductCount: productIds.length,
+        linkedProductsFound: linkedProducts.length,
+        ordersInRange: orders.length,
+        totalOrders: matchingOrders.length,
+        deliveredOrders: deliveredOrders.length,
+        matchingExpenseCount: matchingExpenses.length,
+        deliveredSales,
+        expenses: totalExpenses,
+        unitsSold,
+        productsSold: productSales.size,
+        productSales: [...productSales.values()].sort((left, right) => right.sales - left.sales),
+      }
     },
   })
 }

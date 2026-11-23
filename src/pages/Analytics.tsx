@@ -1,14 +1,18 @@
 import { useState, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import {
   BarChart2, RefreshCw, Download, IndianRupee, ShoppingBag,
   TrendingUp, Users, XCircle, Truck, CreditCard,
-  MapPin, AlertCircle,
+  MapPin, AlertCircle, ChevronDown, Check, Package,
 } from 'lucide-react'
-import { useAnalytics } from '@/hooks/useAnalytics'
+import { useAnalytics, useFestivalTagAnalytics } from '@/hooks/useAnalytics'
+import { fetchFestivalProductSelections, fetchFestivalTags } from '@/lib/accounts'
+import { fetchAdminCategories, fetchAdminProducts } from '@/lib/products'
+import { mergeFestivalProductSelectionsByCategory } from '@/lib/festivalProducts'
 import type { DateRange, AnalyticsData } from '@/types/analytics'
 
 // ── Design tokens ─────────────────────────────────────────────────
@@ -640,21 +644,153 @@ function CouponSection({ data }: { data: AnalyticsData }) {
   )
 }
 
+function FestivalTagAnalyticsSection({
+  tagId,
+  tagName,
+  range,
+  productIds,
+}: {
+  tagId: string
+  tagName: string
+  range: DateRange
+  productIds: readonly string[]
+}) {
+  const { data, isLoading, error, refetch } = useFestivalTagAnalytics(range, tagId, productIds)
+  const salesLessExpenses = (data?.deliveredSales ?? 0) - (data?.expenses ?? 0)
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-gray-700">{tagName} Analytics</h2>
+      {isLoading && !data ? <KPISkel /> : error ? (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+          <p role="alert" className="text-sm text-red-700">Failed to load {tagName} analytics: {(error as Error).message}</p>
+          <button onClick={() => refetch()} className="text-xs text-red-600 underline hover:text-red-800">Retry</button>
+        </div>
+      ) : data && (
+        <>
+          {data.totalOrders === 0 && data.matchingExpenseCount === 0 ? (
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-600">
+              No matching data for this tag and date range
+              {data.linkedProductCount === 0 && (
+                <p className="mt-1 text-xs text-gray-500">This tag has no linked Admin Products.</p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <KPI label="Total Orders" value={data.totalOrders} icon={ShoppingBag} color={C.blue} />
+                <KPI label="Delivered Orders" value={data.deliveredOrders} icon={Truck} color={C.green} />
+                <KPI label="Delivered Sales" value={fmtINR(data.deliveredSales)} icon={IndianRupee} color={C.indigo} />
+                <KPI label="Expenses" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
+                <KPI label="Sales Less Expenses" value={fmtINR(salesLessExpenses)} icon={TrendingUp} color={salesLessExpenses >= 0 ? C.green : C.red} />
+                <KPI label="Units Sold" value={data.unitsSold} icon={Package} color={C.orange} />
+                <KPI label="Products Sold" value={data.productsSold} icon={BarChart2} color={C.purple} />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <ChartCard title="Sales vs Expenses">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={[{ name: 'Selected Tag', sales: data.deliveredSales, expenses: data.expenses }]} margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} tickFormatter={fmtCompact} tickLine={false} axisLine={false} width={60} />
+                      <Tooltip content={<AnaTooltip currency />} />
+                      <Legend />
+                      <Bar dataKey="sales" name="Delivered Sales" fill={C.green} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="expenses" name="Expenses" fill={C.red} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Product-wise Sales Summary">
+                  {data.productSales.length === 0 ? <Empty msg="No delivered products for this tag and date range." /> : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
+                            <th className="py-2 pr-3 font-medium">Product Name</th>
+                            <th className="py-2 px-3 text-right font-medium">Quantity Sold</th>
+                            <th className="py-2 pl-3 text-right font-medium">Sales Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.productSales.map(product => (
+                            <tr key={product.productId} className="border-b border-gray-50 last:border-0">
+                              <td className="py-2 pr-3 text-gray-700">{product.name}</td>
+                              <td className="py-2 px-3 text-right text-gray-600">{product.quantity.toLocaleString('en-IN')}</td>
+                              <td className="py-2 pl-3 text-right font-semibold text-gray-900">{fmtINR(product.sales)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </ChartCard>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────
 
 export default function Analytics() {
   const [preset,     setPreset]     = useState<Preset>('30d')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo,   setCustomTo]   = useState('')
+  const [selectedTagId, setSelectedTagId] = useState('all')
+
+  const tagsQuery = useQuery({
+    queryKey: ['accounts', 'festival-tags'],
+    queryFn: fetchFestivalTags,
+  })
+  const selectionsQuery = useQuery({
+    queryKey: ['accounts', 'festival-product-selections'],
+    queryFn: fetchFestivalProductSelections,
+  })
+  const productsQuery = useQuery({
+    queryKey: ['admin-products', 'all'],
+    queryFn: () => fetchAdminProducts('all'),
+    staleTime: 30_000,
+    refetchOnMount: 'always',
+    enabled: selectedTagId !== 'all',
+  })
+  const categoriesQuery = useQuery({
+    queryKey: ['categories'],
+    queryFn: fetchAdminCategories,
+    enabled: selectedTagId !== 'all',
+  })
+  const analyticsTags = tagsQuery.data ?? []
+  const allProducts = productsQuery.data ?? []
+  const categories = categoriesQuery.data ?? []
+  const linkedProductSelections = useMemo(
+    () => mergeFestivalProductSelectionsByCategory(
+      analyticsTags,
+      selectionsQuery.data ?? {},
+      allProducts,
+      categories,
+    ),
+    [analyticsTags, selectionsQuery.data, allProducts, categories],
+  )
 
   const range = useMemo((): DateRange => {
     if (preset === 'custom' && customFrom && customTo) {
-      return { from: new Date(customFrom + 'T00:00:00'), to: new Date(customTo + 'T23:59:59') }
+      return { from: new Date(customFrom + 'T00:00:00'), to: new Date(customTo + 'T23:59:59.999') }
     }
     return getRange(preset)
   }, [preset, customFrom, customTo])
 
   const { data, isLoading, error, refetch } = useAnalytics(range)
+  const selectedTag = analyticsTags.find(tag => tag.id === selectedTagId)
+  const productIds = selectedTag ? linkedProductSelections[selectedTag.id] ?? [] : []
+  const tagAssociationsPending = selectedTagId !== 'all' && (
+    tagsQuery.isPending || selectionsQuery.isPending || productsQuery.isPending || categoriesQuery.isPending
+  )
+  const tagError = tagsQuery.error ?? selectionsQuery.error ??
+    (selectedTagId !== 'all' ? productsQuery.error ?? categoriesQuery.error : null)
 
   return (
     <div className="p-4 sm:p-6 space-y-5 bg-gray-50 min-h-screen">
@@ -701,17 +837,64 @@ export default function Analytics() {
                 className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
             </div>
           )}
+          <details className="relative">
+            <summary
+              onClick={e => {
+                if (tagsQuery.isPending || tagsQuery.isError || selectionsQuery.isPending || selectionsQuery.isError) {
+                  e.preventDefault()
+                }
+              }}
+              className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-50 [&::-webkit-details-marker]:hidden">
+              Tags <ChevronDown size={13} aria-hidden="true" />
+            </summary>
+            <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-md border border-gray-200 bg-white p-1 shadow-lg">
+              {[{ id: 'all', name: 'All Tags' }, ...analyticsTags].map(tag => (
+                <button key={tag.id} type="button" onClick={e => {
+                  setSelectedTagId(tag.id)
+                  e.currentTarget.closest('details')?.removeAttribute('open')
+                }}
+                  className={`block w-full rounded px-2.5 py-1.5 text-left text-xs ${selectedTagId === tag.id ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}>
+                  <span className="flex items-center justify-between gap-3">
+                    {tag.name}
+                    {selectedTagId === tag.id && <Check size={13} aria-label="Selected" />}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </details>
         </div>
       </div>
 
       {/* ── Error ── */}
-      {error && (
+      {selectedTag && (
+        tagAssociationsPending ? <Sk className="h-24" /> : !tagError ? (
+          <FestivalTagAnalyticsSection
+            tagId={selectedTag.id}
+            tagName={selectedTag.name}
+            range={range}
+            productIds={productIds}
+          />
+        ) : null
+      )}
+
+      {/* ── Error ── */}
+      {(error || tagError) && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-red-700 text-sm">
             <AlertCircle size={16} />
-            <span>Failed to load analytics: {(error as Error).message}</span>
+            <span>{error
+              ? `Failed to load analytics: ${(error as Error).message}`
+              : `Failed to load tags: ${(tagError as Error).message}`}</span>
           </div>
-          <button onClick={() => refetch()} className="text-xs text-red-600 underline hover:text-red-800 shrink-0">Retry</button>
+          <button onClick={() => {
+            if (tagError) {
+              const queries = [tagsQuery.refetch(), selectionsQuery.refetch()]
+              if (selectedTagId !== 'all') queries.push(productsQuery.refetch(), categoriesQuery.refetch())
+              void Promise.all(queries)
+            } else {
+              void refetch()
+            }
+          }} className="text-xs text-red-600 underline hover:text-red-800 shrink-0">Retry</button>
         </div>
       )}
 

@@ -6,6 +6,7 @@ import {
   fetchFestivalProductsByIds,
   filterAdminProductsByFestival,
   FESTIVAL_CATEGORIES,
+  mergeFestivalProductSelectionsByCategory,
   type FestivalCategory,
 } from '@/lib/festivalProducts'
 import {
@@ -63,18 +64,27 @@ export function FestivalProductTags({
     queryKey: ['categories'],
     queryFn: fetchAdminCategories,
   })
-  const persistedViewIds = viewingTag ? selectionsQuery.data?.[viewingTag.id] ?? [] : []
+  const createdTags = (tagsQuery.data ?? []).filter(tag => tag.is_custom)
+  const selectedManagementTag = createdTags.find(tag => tag.id === selectedTagId) ?? null
+  const deleteTargetTag = createdTags.find(tag => tag.id === deleteTargetId) ?? null
+  const allProducts = productsQuery.data ?? []
+  const categories = categoriesQuery.data ?? []
+  const linkedProductSelections = useMemo(
+    () => mergeFestivalProductSelectionsByCategory(
+      tagsQuery.data ?? [],
+      selectionsQuery.data ?? {},
+      allProducts,
+      categories,
+    ),
+    [tagsQuery.data, selectionsQuery.data, allProducts, categories],
+  )
+  const persistedViewIds = viewingTag ? linkedProductSelections[viewingTag.id] ?? [] : []
   const viewProductsQuery = useQuery({
     queryKey: ['accounts', 'festival-tag-products', viewingTag?.id ?? '', persistedViewIds],
     queryFn: () => fetchFestivalProductsByIds(persistedViewIds),
     enabled: viewingTag !== null,
   })
 
-  const createdTags = (tagsQuery.data ?? []).filter(tag => tag.is_custom)
-  const selectedManagementTag = createdTags.find(tag => tag.id === selectedTagId) ?? null
-  const deleteTargetTag = createdTags.find(tag => tag.id === deleteTargetId) ?? null
-  const allProducts = productsQuery.data ?? []
-  const categories = categoriesQuery.data ?? []
   const festivalProducts = useMemo(
     () => selectedFestival ? filterAdminProductsByFestival(selectedFestival, allProducts, categories) : [],
     [selectedFestival, allProducts, categories],
@@ -312,24 +322,24 @@ export function FestivalProductTags({
         {notice && <p role="status" className="border-b border-emerald-100 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800 sm:px-5">{notice}</p>}
         {deleteMutation.error instanceof Error && <p role="alert" className="border-b border-rose-100 bg-rose-50 px-4 py-2.5 text-sm text-rose-800 sm:px-5">{deleteMutation.error.message}</p>}
 
-        {tagsQuery.isPending || selectionsQuery.isPending
+        {tagsQuery.isPending || selectionsQuery.isPending || productsQuery.isPending || categoriesQuery.isPending
           ? <div className="p-8 text-center text-sm text-slate-500"><Loader2 className="mx-auto mb-2 animate-spin" size={18} />Loading created tags…</div>
-          : tagsQuery.isError || selectionsQuery.isError
-            ? <p role="alert" className="p-5 text-sm text-rose-700">Created tags or product counts could not be loaded.</p>
+          : tagsQuery.isError || selectionsQuery.isError || productsQuery.isError || categoriesQuery.isError
+            ? <p role="alert" className="p-5 text-sm text-rose-700">Created tags or linked products could not be loaded.</p>
             : createdTags.length === 0
               ? <p className="p-5 text-sm text-slate-500">No tags created yet.</p>
             : <>
                 <ol className="divide-y divide-slate-100">
                   {createdTags.map((tag, index) => {
-                    const productCount = selectionsQuery.data?.[tag.id]?.length ?? 0
-                  const isSelected = selectedTagId === tag.id
+                    const productCount = linkedProductSelections[tag.id]?.length ?? 0
+                    const isSelected = selectedTagId === tag.id
                     return (
                       <li key={tag.id} className={`flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5 ${isSelected ? 'bg-slate-50' : ''}`}>
                         <button type="button" aria-pressed={isSelected} disabled={tagFormMode !== null || deleteMutation.isPending} onClick={() => selectTag(tag)} className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-default">
                           <span className="w-6 shrink-0 text-xs font-semibold text-slate-400">{index + 1}.</span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-semibold text-slate-900">{tag.name}</span>
-                            <span className="mt-0.5 block text-xs text-slate-500">{productCount} associated product{productCount === 1 ? '' : 's'}</span>
+                            <span className="mt-0.5 block text-xs text-slate-500">{productCount} linked product{productCount === 1 ? '' : 's'}</span>
                           </span>
                         </button>
                         {isSelected && (
@@ -492,7 +502,7 @@ export function FestivalProductTags({
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
               <div>
                 <h2 id="saved-tag-title" className="font-semibold text-slate-900">Tag: {createdTags.find(tag => tag.id === viewingTag.id)?.name ?? viewingTag.name}</h2>
-                <p className="mt-1 text-xs text-slate-500">Associated Products: {selectionsQuery.isPending ? 'Loading…' : persistedViewIds.length}</p>
+                <p className="mt-1 text-xs text-slate-500">Linked Products: {selectionsQuery.isPending ? 'Loading…' : persistedViewIds.length}</p>
               </div>
               <button type="button" aria-label="Close" onClick={() => setViewingTag(null)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
             </div>

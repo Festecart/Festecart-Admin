@@ -113,6 +113,28 @@ export function filterAdminProductsByFestival(
   return products.filter(product => product.category_id != null && categoryIds.has(product.category_id))
 }
 
+export function mergeFestivalProductSelectionsByCategory(
+  tags: readonly { id: string; name: string }[],
+  savedSelections: Record<string, string[]>,
+  products: AdminProduct[],
+  categories: AdminCategory[],
+): Record<string, string[]> {
+  const selections = Object.fromEntries(
+    Object.entries(savedSelections).map(([tagId, productIds]) => [tagId, [...new Set(productIds)]]),
+  )
+
+  for (const tag of tags) {
+    const festival = getFestivalCategory(tag.name)
+    if (!festival) continue
+
+    const categoryProductIds = filterAdminProductsByFestival(festival, products, categories)
+      .map(product => product.id)
+    selections[tag.id] = [...new Set([...(selections[tag.id] ?? []), ...categoryProductIds])]
+  }
+
+  return selections
+}
+
 export async function fetchFestivalProductsByIds(productIds: string[]): Promise<FestivalProduct[]> {
   const uniqueIds = [...new Set(productIds.filter(id => id.trim()))]
   const products: FestivalProduct[] = []
