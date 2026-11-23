@@ -221,7 +221,6 @@ export default function Accounts() {
   const [transactionFrom, setTransactionFrom] = useState('')
   const [transactionTo, setTransactionTo] = useState('')
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'all' | 'income' | 'expense' | 'transfer'>('all')
-  const [transactionFestivalFilter, setTransactionFestivalFilter] = useState('all')
   const [selectedTagCategory, setSelectedTagCategory] = useState<FestivalCategory | null>(null)
   const [customerPaymentSearch, setCustomerPaymentSearch] = useState('')
   const [customerPaymentFrom, setCustomerPaymentFrom] = useState('')
@@ -412,10 +411,7 @@ export default function Accounts() {
   const filteredTransactions = useMemo(() => {
     return transactionHistory.filter(item => {
       const date = localDateString(item.transaction_date.toDate())
-      const tagId = item.festival_tag_id || (item.festival_tag ? festivalTagId(item.festival_tag) : '')
       return (transactionTypeFilter === 'all' || item.type === transactionTypeFilter) &&
-        (transactionFestivalFilter === 'all' ||
-          (transactionFestivalFilter === '__untagged' ? !tagId : tagId === transactionFestivalFilter)) &&
         (!transactionFrom || date >= transactionFrom) &&
         (!transactionTo || date <= transactionTo) &&
         (!normalizedSearch || [
@@ -428,7 +424,7 @@ export default function Accounts() {
           displayTag(item.festival_tag_id, item.festival_tag),
         ].some(value => value.toLocaleLowerCase().includes(normalizedSearch)))
     })
-  }, [normalizedSearch, transactionFestivalFilter, transactionFrom, transactionTo, transactionTypeFilter, transactionHistory, festivalTags])
+  }, [normalizedSearch, transactionFrom, transactionTo, transactionTypeFilter, transactionHistory, festivalTags])
   const accountMutation = useMutation({
     mutationFn: (input: NewAccountInput) => createAccount(input),
     onSuccess: async () => {
@@ -604,7 +600,7 @@ export default function Accounts() {
       <nav className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Accounts sections">
         {([
           ['overview', 'Overview'],
-          ['transactions', 'All Transactions'],
+          ['transactions', 'Transaction History'],
           ['expenses', 'Expenses'],
           ['receivables', 'Customer Payments'],
           ['petty_cash', 'Petty Cash'],
@@ -650,53 +646,56 @@ export default function Accounts() {
 
       {tab === 'transactions' && (
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
             <div>
-              <h2 className="font-semibold text-slate-900">All transactions</h2>
+              <h2 className="font-semibold text-slate-900">Transaction History</h2>
               <p className="mt-0.5 text-xs text-slate-500">Balance shows the account’s current balance. Transfers are shown separately from money in and out.</p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <label className="relative block">
-                <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+            <button type="button" onClick={() => downloadReportFile(
+              'accounts-transactions.csv',
+              `\uFEFF${[['Transaction ID', 'Date', 'Type', 'Reference', 'Description', 'Category', 'Tag', 'Amount (INR)', 'Account', 'Payment Status'], ...filteredTransactions.map(item => [
+                item.transaction_id,
+                item.transaction_date.toDate().toLocaleDateString('en-IN'),
+                item.type,
+                item.reference_no,
+                item.description,
+                item.category_name,
+                displayTag(item.festival_tag_id, item.festival_tag),
+                (item.amount_paise / 100).toFixed(2),
+                accounts.find(account => account.id === item.account_id)?.name ?? item.account_id,
+                transactionPaymentStatus(item, expenses, customerPayments),
+              ])].map(row => row.map(escapeCsvCell).join(',')).join('\r\n')}`,
+              'text/csv;charset=utf-8',
+            )} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700">
+              <Download size={15} /> Export Filtered
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 border-b border-slate-100 px-5 py-4 sm:grid-cols-2 lg:grid-cols-[minmax(18rem,2fr)_minmax(10rem,1fr)_minmax(10rem,1fr)_minmax(13rem,1.2fr)]">
+            <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-slate-600">
+              Search Transactions
+              <span className="relative block">
+                <Search size={16} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search transactions"
-                  className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-sm sm:w-64" />
-              </label>
-              <label className="flex items-center gap-1 text-xs text-slate-500">From
-                <input type="date" value={transactionFrom} max={transactionTo || undefined} onChange={event => setTransactionFrom(event.target.value)}
-                  className="rounded-xl border border-slate-300 px-2 py-2 text-sm text-slate-700" />
-              </label>
-              <label className="flex items-center gap-1 text-xs text-slate-500">To
-                <input type="date" value={transactionTo} min={transactionFrom || undefined} onChange={event => setTransactionTo(event.target.value)}
-                  className="rounded-xl border border-slate-300 px-2 py-2 text-sm text-slate-700" />
-              </label>
+                  className="h-10 w-full rounded-xl border border-slate-300 bg-white pl-9 pr-3 text-sm font-normal text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200" />
+              </span>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-slate-600">
+              From Date
+              <input type="date" value={transactionFrom} max={transactionTo || undefined} onChange={event => setTransactionFrom(event.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-normal text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200" />
+            </label>
+            <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-slate-600">
+              To Date
+              <input type="date" value={transactionTo} min={transactionFrom || undefined} onChange={event => setTransactionTo(event.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-normal text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200" />
+            </label>
+            <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-slate-600">
+              Transaction Type
               <select aria-label="Filter transaction type" value={transactionTypeFilter} onChange={event => setTransactionTypeFilter(event.target.value as typeof transactionTypeFilter)}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
-                <option value="all">All money movements</option><option value="income">Money received</option><option value="expense">Money spent</option><option value="transfer">Transfers</option>
+                className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm font-normal text-slate-700 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200">
+                <option value="all">All Money Movements</option><option value="income">Money received</option><option value="expense">Money spent</option><option value="transfer">Transfers</option>
               </select>
-              <select aria-label="Filter transactions by tag" value={transactionFestivalFilter} onChange={event => setTransactionFestivalFilter(event.target.value)}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
-                <option value="all">All tags</option><option value="__untagged">No tag</option>
-                {festivalTags.map(tag => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-              </select>
-              <button type="button" onClick={() => downloadReportFile(
-                'accounts-transactions.csv',
-                `\uFEFF${[['Transaction ID', 'Date', 'Type', 'Reference', 'Description', 'Category', 'Tag', 'Amount (INR)', 'Account', 'Payment Status'], ...filteredTransactions.map(item => [
-                  item.transaction_id,
-                  item.transaction_date.toDate().toLocaleDateString('en-IN'),
-                  item.type,
-                  item.reference_no,
-                  item.description,
-                  item.category_name,
-                  displayTag(item.festival_tag_id, item.festival_tag),
-                  (item.amount_paise / 100).toFixed(2),
-                  accounts.find(account => account.id === item.account_id)?.name ?? item.account_id,
-                  transactionPaymentStatus(item, expenses, customerPayments),
-                ])].map(row => row.map(escapeCsvCell).join(',')).join('\r\n')}`,
-                'text/csv;charset=utf-8',
-              )} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">
-                <Download size={15} /> Export filtered
-              </button>
-            </div>
+            </label>
           </div>
           {allTransactionsQuery.isPending ? <div className="p-8 text-center text-sm text-slate-500">Loading all transactions…</div>
             : allTransactionsQuery.isError ? <div className="p-8 text-center text-sm text-rose-700">Transaction history is unavailable. See the permission error above.</div>

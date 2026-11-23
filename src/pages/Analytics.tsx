@@ -687,7 +687,7 @@ function FestivalTagAnalyticsSection({
                 <KPI label="Products Sold" value={data.productsSold} icon={BarChart2} color={C.purple} />
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4">
                 <ChartCard title="Sales vs Expenses">
                   <ResponsiveContainer width="100%" height={280}>
                     <BarChart data={[{ name: 'Selected Tag', sales: data.deliveredSales, expenses: data.expenses }]} margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
