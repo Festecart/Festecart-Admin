@@ -102,6 +102,10 @@ export function ExpenseForm({
   const hasValidTag = !festivalTagIdValue ||
     (Boolean(festivalTagName) && (Boolean(initialExpense) || hasCreatedTag))
   const hasValidExpenseId = Boolean(initialExpense) || !expenseId.trim() || /^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())
+  const categoryOptions = [...new Set([
+    ...DEFAULT_FINANCIAL_CATEGORIES,
+    ...categories.filter(item => item.type === 'expense' && item.is_enabled !== false).map(item => item.name),
+  ])]
   const canSave = !saving && !isSubmitting.current &&
     Boolean(hasValidExpenseId && validDate && isValidCategory && isValidAmount && hasValidTag &&
       (!initialExpense || paymentMethod.trim()))
@@ -227,7 +231,10 @@ export function ExpenseForm({
               <select value={category} onChange={event => setCategory(event.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
                 <option value="">No category</option>
-                {[...new Set([...DEFAULT_FINANCIAL_CATEGORIES, ...categories.filter(item => item.type === 'expense').map(item => item.name)])].map(item => <option key={item}>{item}</option>)}
+                {initialExpense?.category_name && !categoryOptions.includes(initialExpense.category_name) && (
+                  <option value={initialExpense.category_name}>Existing: {initialExpense.category_name}</option>
+                )}
+                {categoryOptions.map(item => <option key={item}>{item}</option>)}
                 <option value="__custom">Add custom category…</option>
               </select>
               {category === '__custom' && (

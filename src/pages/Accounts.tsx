@@ -24,7 +24,9 @@ import { TransactionEditForm } from '@/components/accounts/TransactionEditForm'
 import { TransactionReceiptLink } from '@/components/accounts/TransactionReceiptLink'
 import { TransactionTable } from '@/components/accounts/TransactionTable'
 import { FestivalProductTags } from '@/components/accounts/FestivalProductTags'
+import { AccountsSettings } from '@/components/accounts/AccountsSettings'
 import { useAccounts } from '@/hooks/useAccounts'
+import { useAuth } from '@/hooks/useAuth'
 import { useOrders } from '@/hooks/useOrders'
 import { calculateOrderPaymentAmounts, eligibleDeliveredOrders, type CustomerPaymentStatus } from '@/lib/customerPayments'
 import { festivalTagId, LEGACY_FINANCIAL_TAGS, resolveFestivalTagName } from '@/lib/festivalProducts'
@@ -65,7 +67,7 @@ import type {
 } from '@/types/accounts'
 import type { Order } from '@/types'
 
-type Tab = 'overview' | 'transactions' | 'expenses' | 'income' | 'receivables' | 'petty_cash' | 'reports' | 'tags'
+type Tab = 'overview' | 'transactions' | 'expenses' | 'income' | 'receivables' | 'petty_cash' | 'reports' | 'tags' | 'settings'
 type QuickTransactionAction = 'income' | 'expense' | 'transfer' | 'petty_cash'
 
 type DatePreset = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all'
@@ -240,6 +242,7 @@ function transactionPaymentStatus(
 }
 
 export default function Accounts() {
+  const { isAccountsAdmin } = useAuth()
   const [tab, setTab] = useState<Tab>('overview')
   const [search, setSearch] = useState('')
   const [transactionFrom, setTransactionFrom] = useState('')
@@ -742,7 +745,9 @@ export default function Accounts() {
           ['petty_cash', 'Petty Cash'],
           ['reports', 'Reports'],
           ['tags', 'Tags'],
+          ['settings', 'Settings'],
         ] as const).map(([id, label]) => (
+          id === 'settings' && !isAccountsAdmin ? null :
           <button key={id} type="button" onClick={() => setTab(id)}
             className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:px-4 sm:py-2.5 ${tab === id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
             {label}
@@ -1300,6 +1305,8 @@ export default function Accounts() {
           />
         </section>
       )}
+
+      {tab === 'settings' && isAccountsAdmin && <AccountsSettings />}
 
       {showAccountForm && (
         <AccountForm key={queuedTransactionAction ?? 'default-account'} initialType={queuedTransactionAction === 'petty_cash' ? 'petty_cash' : 'cash'}

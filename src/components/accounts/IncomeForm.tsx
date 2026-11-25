@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, X } from 'lucide-react'
-import { DEFAULT_FINANCIAL_CATEGORIES, rupeesToPaise } from '@/lib/accounts'
+import { DEFAULT_INCOME_CATEGORIES, rupeesToPaise } from '@/lib/accounts'
 import { incomeDateToIso, isoToIncomeDate } from '@/lib/incomeDate'
 import { PaymentMethodField } from '@/components/accounts/PaymentMethodField'
 import type {
@@ -57,7 +57,10 @@ export function IncomeForm({
   onSave: (input: NewIncomeInput, idempotencyKey: string) => Promise<void>
   onUpdate?: (input: NewIncomeInput) => Promise<void>
 }) {
-  const availableCategories = [...new Set([...DEFAULT_FINANCIAL_CATEGORIES, ...categories.map(item => item.name).filter(Boolean)])]
+  const availableCategories = [...new Set([
+    ...DEFAULT_INCOME_CATEGORIES,
+    ...categories.filter(item => item.type === 'income' && item.is_enabled !== false).map(item => item.name).filter(Boolean),
+  ])]
   const initialCategory = initialIncome?.category_name ?? ''
   const initialCategoryIsCustom = Boolean(initialCategory && !availableCategories.includes(initialCategory))
   const initialTagId = initialIncome?.festival_tag_id ?? (initialIncome?.festival_tag ? PRESERVED_INCOME_TAG : '')

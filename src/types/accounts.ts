@@ -140,6 +140,9 @@ export interface FinancialCategory {
   id: string
   name: string
   type: 'income' | 'expense'
+  is_enabled?: boolean
+  created_at?: Timestamp
+  updated_at?: Timestamp
 }
 
 export interface AccountTotals {

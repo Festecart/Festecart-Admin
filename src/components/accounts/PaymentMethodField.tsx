@@ -1,6 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFinancialPaymentMethod, fetchFinancialPaymentMethods } from '@/lib/accounts'
+import {
+  createFinancialPaymentMethod,
+  DEFAULT_FINANCIAL_PAYMENT_METHODS,
+  fetchFinancialPaymentMethods,
+  setFinancialPaymentMethodPendingUse,
+} from '@/lib/accounts'
 
 const ADD_CUSTOM_METHOD = '__add_custom_method__'
 
@@ -24,6 +29,53 @@ export function PaymentMethodField({
   const [customName, setCustomName] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [usageError, setUsageError] = useState('')
+  const selectedCustomMethod = value &&
+    (methodsQuery.data ?? []).includes(value) &&
+    !DEFAULT_FINANCIAL_PAYMENT_METHODS.includes(value)
+    ? value
+    : ''
+
+  useEffect(() => {
+    if (!selectedCustomMethod) return
+    const sessionId = crypto.randomUUID()
+    let active = true
+    let heartbeat: number | undefined
+
+    const reportUsageError = (reason: unknown) => {
+      if (active) {
+        setUsageError(reason instanceof Error
+          ? reason.message
+          : 'This payment method could not be reserved for the unfinished transaction.')
+      } else {
+        console.error('[accounts] Could not release pending payment method usage.', reason)
+      }
+    }
+
+    const registerUsage = async () => {
+      try {
+        await setFinancialPaymentMethodPendingUse(sessionId, selectedCustomMethod)
+        if (!active) {
+          await setFinancialPaymentMethodPendingUse(sessionId, null)
+          return
+        }
+        heartbeat = window.setInterval(() => {
+          void setFinancialPaymentMethodPendingUse(sessionId, selectedCustomMethod)
+            .catch(reportUsageError)
+        }, 60_000)
+      } catch (reason) {
+        reportUsageError(reason)
+        if (active) onChange('')
+      }
+    }
+    void registerUsage()
+
+    return () => {
+      active = false
+      if (heartbeat !== undefined) window.clearInterval(heartbeat)
+      void setFinancialPaymentMethodPendingUse(sessionId, null).catch(reportUsageError)
+    }
+  }, [onChange, selectedCustomMethod])
 
   async function saveCustomMethod() {
     if (saving) return
@@ -55,6 +107,7 @@ export function PaymentMethodField({
             setError('')
           } else {
             setAdding(false)
+            setUsageError('')
             onChange(event.target.value)
           }
         }}
@@ -70,6 +123,7 @@ export function PaymentMethodField({
       {methodsQuery.isError && (
         <span role="alert" className="mt-1 block text-xs text-rose-700">Saved payment methods could not be loaded.</span>
       )}
+      {usageError && <span role="alert" className="mt-1 block text-xs text-rose-700">{usageError}</span>}
       {adding && (
         <div className="mt-2 space-y-2">
           <input
