@@ -10,6 +10,7 @@ const PDFDocument = require('pdfkit')
 
 const FUNCTION_REGION = 'us-central1'
 const ACCOUNTS_CORS_ORIGINS = [
+  'https://admin.festecart.org',
   'https://admin.festecart.com',
   'https://tempadmin.festecart.com',
   'http://localhost:5173',
@@ -28,6 +29,9 @@ const ADMIN_EMAIL = 'festecartdesi@gmail.com'
 const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxnq3FedbLxZ1ficbJTFD1kEOufULtvDX8SaXes8uzzCuvPSsJETUCvKunPVaAgQ-4m/exec'
 const UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID = '__unallocated_expense_payment__'
 const PETTY_CASH_SPENDING_ACCOUNT_ID = '__petty_cash_spending__'
+const FINANCIAL_PAYMENT_METHODS_CONFIG_ID = 'financial_expense_payment_methods'
+const DEFAULT_FINANCIAL_PAYMENT_METHODS = ['Cash', 'UPI', 'Bank Transfer']
+const FINANCIAL_INCOME_DRAFTS = 'financial_income_drafts'
 
 const STORE_NAME    = 'festecart'
 const STORE_ADDRESS = 'No-204 , 2nd Floor, Surya Prema Building, 1st Cross Rd, Manjunatha nagar, Raghuvanahalli, Bengaluru, Karnataka 560109'
@@ -736,7 +740,9 @@ function positiveStoredPaise(value, label) {
 }
 
 function addTransactionPosting(deltas, record, direction) {
-  if (record.is_petty_cash_spending === true || record.is_unallocated_expense_payment === true) return
+  if (record.posting_status === 'unposted' ||
+    record.is_petty_cash_spending === true ||
+    record.is_unallocated_expense_payment === true) return
   const amount = positiveStoredPaise(record.amount_paise, 'transaction amount')
   const accountId = requireRecordId(record.account_id, 'Transaction account')
   if (record.type === 'income') {
@@ -798,6 +804,430 @@ function expensePaymentStatus(paid, total) {
   return paid === 0 ? 'unpaid' : paid >= total ? 'paid' : 'partially_paid'
 }
 
+function approvedFinancialPaymentMethods(config) {
+  const customMethods = config && Array.isArray(config.custom_methods)
+    ? config.custom_methods.filter(method => typeof method === 'string').map(method => method.trim()).filter(Boolean)
+    : []
+  return [...DEFAULT_FINANCIAL_PAYMENT_METHODS, ...customMethods]
+}
+
+function assertApprovedFinancialPaymentMethod(method, config, allowEmpty) {
+  if (!method && allowEmpty) return
+  if (!approvedFinancialPaymentMethods(config).includes(method)) {
+    throw new HttpsError('invalid-argument', 'Choose Cash, UPI, Bank Transfer or a saved custom payment method.')
+  }
+}
+
+function normalizeIncomeInput(input, allowIncomplete, allowEmptyPaymentMethod = false) {
+  if (!input || typeof input !== 'object') throw new HttpsError('invalid-argument', 'Income details are required.')
+  const amount = input.amount_paise == null || input.amount_paise === ''
+    ? null
+    : requirePaise(input.amount_paise, 'Income amount', false)
+  const transactionDate = input.transaction_date == null || input.transaction_date === ''
+    ? null
+    : requireDate(input.transaction_date, 'Income date')
+  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, true)
+  if (!allowIncomplete && amount == null) throw new HttpsError('invalid-argument', 'Enter an amount to confirm this income.')
+  if (!allowIncomplete && transactionDate == null) throw new HttpsError('invalid-argument', 'Choose an income date to confirm this income.')
+  if (!allowIncomplete && !allowEmptyPaymentMethod && !paymentMethod) {
+    throw new HttpsError('invalid-argument', 'Choose a payment method to confirm this income.')
+  }
+  const festivalTag = requireFestivalTag(input.festival_tag)
+  const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
+  return {
+    amount_paise: amount,
+    transaction_date: transactionDate,
+    festival_tag: festivalTag,
+    festival_tag_id: festivalTagId,
+    category_name: requireText(input.category_name, 'Category', 80, true),
+    description: requireText(input.description, 'Description', 250, true),
+    payment_method: paymentMethod,
+    vendor_name: requireText(input.vendor_name, 'Vendor', 120, true),
+    reference_no: requireText(input.reference_no, 'Reference number', 200, true),
+    source_of_income: requireText(input.source_of_income, 'Source of income', 120, true),
+  }
+}
+
+function resolveConfiguredFestivalTag(tagId, suppliedName, config) {
+  if (!tagId) return null
+  const data = config || {}
+  const tagNames = data.tag_names && typeof data.tag_names === 'object' ? data.tag_names : {}
+  const customTags = data.custom_tags && typeof data.custom_tags === 'object' ? data.custom_tags : {}
+  const configuredName = customTags[tagId] || tagNames[tagId]
+  if (typeof configuredName !== 'string' || !configuredName.trim()) {
+    throw new HttpsError('failed-precondition', 'Please select a tag created in Accounts → Tags.')
+  }
+  if (suppliedName && suppliedName.trim().toLocaleLowerCase() !== configuredName.trim().toLocaleLowerCase()) {
+    throw new HttpsError('invalid-argument', 'The selected tag does not match the saved tag.')
+  }
+  return configuredName.trim()
+}
+
+exports.createUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const data = request.data && typeof request.data === 'object' ? request.data : {}
+  const input = normalizeIncomeInput(data.input, false, true)
+  const idempotencyKey = requireText(data.idempotency_key, 'Income idempotency key', 120, false)
+  if (!/^[A-Za-z0-9_-]+$/.test(idempotencyKey)) {
+    throw new HttpsError('invalid-argument', 'The income idempotency key is invalid.')
+  }
+  const transactionRef = db.collection('financial_transactions').doc(`income_${idempotencyKey}`)
+  const paymentConfigRef = db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)
+  const tagConfigRef = db.collection('site_config').doc('financial_festivals')
+  const duplicateReferenceQuery = input.reference_no
+    ? db.collection('financial_transactions').where('reference_no', '==', input.reference_no)
+    : null
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const [existingSnapshot, paymentConfigSnapshot, tagConfigSnapshot, duplicateReferences] = await Promise.all([
+      transaction.get(transactionRef),
+      transaction.get(paymentConfigRef),
+      transaction.get(tagConfigRef),
+      duplicateReferenceQuery ? transaction.get(duplicateReferenceQuery) : Promise.resolve(null),
+    ])
+    if (existingSnapshot.exists) {
+      if (existingSnapshot.data().type === 'income' &&
+        existingSnapshot.data().idempotency_key === idempotencyKey) return
+      throw new HttpsError('already-exists', 'This income record has already been saved.')
+    }
+    if (duplicateReferences && !duplicateReferences.empty) {
+      throw new HttpsError('already-exists', 'That reference is already used by an existing financial transaction.')
+    }
+
+    const paymentConfig = paymentConfigSnapshot.exists ? paymentConfigSnapshot.data() : {}
+    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, true)
+    const tagConfig = tagConfigSnapshot.exists ? tagConfigSnapshot.data() : {}
+    const festivalTag = resolveConfiguredFestivalTag(input.festival_tag_id, input.festival_tag, tagConfig)
+
+    transaction.create(transactionRef, {
+      transaction_id: `FTX-INCOME-${idempotencyKey.toUpperCase()}`,
+      type: 'income',
+      posting_status: 'unposted',
+      transaction_date: input.transaction_date,
+      reference_no: input.reference_no,
+      description: input.description,
+      category_name: input.category_name,
+      amount_paise: input.amount_paise,
+      account_id: null,
+      transfer_to_account_id: null,
+      linked_order_id: null,
+      linked_expense_id: null,
+      party_name: input.vendor_name || null,
+      source_of_income: input.source_of_income || null,
+      payment_method: input.payment_method,
+      festival_tag: festivalTag,
+      festival_tag_id: input.festival_tag_id,
+      idempotency_key: idempotencyKey,
+      receipt_paths: [],
+      created_by: actor.uid,
+      created_by_name: actor.name,
+      created_at: now,
+      audit: [{ action: 'created_unposted', admin_user_id: actor.uid, created_at: now }],
+    })
+  })
+  return { success: true, transaction_id: transactionRef.id }
+})
+
+function assertEditableReferenceIncome(income) {
+  if (!income || income.type !== 'income' || income.is_deleted === true) {
+    throw new HttpsError('failed-precondition', 'This is not an active reference income record.')
+  }
+  if (income.posting_status !== 'unposted' ||
+    (income.account_id != null && income.account_id !== '') ||
+    income.linked_order_id != null ||
+    income.linked_expense_id != null) {
+    throw new HttpsError('failed-precondition', 'Posted or linked income records cannot be changed here.')
+  }
+}
+
+exports.editUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const data = request.data && typeof request.data === 'object' ? request.data : {}
+  const transactionId = requireRecordId(data.transaction_id, 'Income record ID')
+  const rawInput = data.input && typeof data.input === 'object' ? data.input : {}
+  const input = normalizeIncomeInput(rawInput, false, true)
+  const transactionRef = db.collection('financial_transactions').doc(transactionId)
+  const paymentConfigRef = db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)
+  const tagConfigRef = db.collection('site_config').doc('financial_festivals')
+  const duplicateReferenceQuery = input.reference_no
+    ? db.collection('financial_transactions').where('reference_no', '==', input.reference_no)
+    : null
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const [incomeSnapshot, paymentConfigSnapshot, tagConfigSnapshot, duplicateReferences] = await Promise.all([
+      transaction.get(transactionRef),
+      transaction.get(paymentConfigRef),
+      transaction.get(tagConfigRef),
+      duplicateReferenceQuery ? transaction.get(duplicateReferenceQuery) : Promise.resolve(null),
+    ])
+    if (!incomeSnapshot.exists) throw new HttpsError('not-found', 'The income record no longer exists.')
+    const income = incomeSnapshot.data()
+    assertEditableReferenceIncome(income)
+    if (duplicateReferences && duplicateReferences.docs.some(function(item) {
+      return item.id !== transactionId && item.data().is_deleted !== true
+    })) {
+      throw new HttpsError('already-exists', 'That reference is already used by another financial transaction.')
+    }
+
+    const paymentConfig = paymentConfigSnapshot.exists ? paymentConfigSnapshot.data() : {}
+    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, true)
+    const tagConfig = tagConfigSnapshot.exists ? tagConfigSnapshot.data() : {}
+    const savedTagId = income.festival_tag_id ?? null
+    const requestedTagId = rawInput.festival_tag_id ?? null
+    const preserveExistingTag = Boolean(income.festival_tag &&
+      input.festival_tag === income.festival_tag &&
+      requestedTagId === savedTagId)
+    const festivalTag = preserveExistingTag
+      ? income.festival_tag
+      : resolveConfiguredFestivalTag(input.festival_tag_id, input.festival_tag, tagConfig)
+    const festivalTagId = preserveExistingTag ? savedTagId : input.festival_tag_id
+    transaction.update(transactionRef, {
+      transaction_date: input.transaction_date,
+      reference_no: input.reference_no,
+      description: input.description,
+      category_name: input.category_name,
+      amount_paise: input.amount_paise,
+      party_name: input.vendor_name || null,
+      source_of_income: input.source_of_income || null,
+      payment_method: input.payment_method,
+      festival_tag: festivalTag,
+      festival_tag_id: festivalTagId,
+      updated_by: actor.uid,
+      updated_by_name: actor.name,
+      updated_at: now,
+      audit: [
+        ...(Array.isArray(income.audit) ? income.audit : []),
+        { action: 'updated_reference_income', admin_user_id: actor.uid, created_at: now },
+      ],
+    })
+  })
+  return { success: true, transaction_id: transactionRef.id }
+})
+
+exports.deleteUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const transactionId = requireRecordId(request.data && request.data.transaction_id, 'Income record ID')
+  const transactionRef = db.collection('financial_transactions').doc(transactionId)
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const snapshot = await transaction.get(transactionRef)
+    if (!snapshot.exists) throw new HttpsError('not-found', 'The income record no longer exists.')
+    const income = snapshot.data()
+    if (income && income.type === 'income' && income.posting_status === 'unposted' && income.is_deleted === true) return
+    assertEditableReferenceIncome(income)
+    transaction.update(transactionRef, {
+      is_deleted: true,
+      deleted_by: actor.uid,
+      deleted_by_name: actor.name,
+      deleted_at: now,
+      updated_by: actor.uid,
+      updated_at: now,
+      audit: [
+        ...(Array.isArray(income.audit) ? income.audit : []),
+        { action: 'deleted_reference_income', admin_user_id: actor.uid, created_at: now },
+      ],
+    })
+  })
+  return { success: true, transaction_id: transactionRef.id }
+})
+
+exports.fetchUnpostedFinancialIncomes = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  await requireAccountsAdmin(request)
+  const snapshot = await db.collection('financial_transactions')
+    .where('posting_status', '==', 'unposted')
+    .get()
+  const items = snapshot.docs
+    .filter(function(item) {
+      const data = item.data()
+      return data.type === 'income' && data.is_deleted !== true
+    })
+    .map(function(item) {
+      const data = item.data()
+      if (!(data.transaction_date instanceof Timestamp) ||
+        !Number.isSafeInteger(data.amount_paise) || data.amount_paise <= 0) {
+        throw new HttpsError('failed-precondition', `Unposted income ${item.id} has invalid financial details.`)
+      }
+      return {
+        id: item.id,
+        transaction_id: String(data.transaction_id ?? item.id),
+        transaction_date: data.transaction_date.toDate().toISOString().slice(0, 10),
+        amount_paise: data.amount_paise,
+        festival_tag: typeof data.festival_tag === 'string' ? data.festival_tag : null,
+        festival_tag_id: typeof data.festival_tag_id === 'string' ? data.festival_tag_id : null,
+        category_name: String(data.category_name ?? ''),
+        description: String(data.description ?? ''),
+        payment_method: String(data.payment_method ?? ''),
+        vendor_name: typeof data.party_name === 'string' ? data.party_name : '',
+        reference_no: String(data.reference_no ?? ''),
+        source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : '',
+        posting_status: 'unposted',
+      }
+    })
+    .sort((left, right) => right.transaction_date.localeCompare(left.transaction_date) || right.id.localeCompare(left.id))
+  return { items }
+})
+
+exports.postUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  await requireAccountsAdmin(request)
+  throw new HttpsError('failed-precondition', 'Reference income cannot be posted to the ledger.')
+})
+
+exports.saveFinancialIncomeDraft = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const data = request.data && typeof request.data === 'object' ? request.data : {}
+  const draftId = data.draft_id
+    ? requireRecordId(data.draft_id, 'Income draft ID')
+    : db.collection(FINANCIAL_INCOME_DRAFTS).doc().id
+  const draftRef = db.collection(FINANCIAL_INCOME_DRAFTS).doc(draftId)
+  const paymentConfigRef = db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)
+  const tagConfigRef = db.collection('site_config').doc('financial_festivals')
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const [existingSnapshot, paymentConfigSnapshot, tagConfigSnapshot] = await Promise.all([
+      transaction.get(draftRef),
+      transaction.get(paymentConfigRef),
+      transaction.get(tagConfigRef),
+    ])
+    if (existingSnapshot.exists && existingSnapshot.data().status !== 'draft') {
+      throw new HttpsError('failed-precondition', 'A confirmed income record can no longer be edited as a draft.')
+    }
+    const input = normalizeIncomeInput(data.input, true)
+    const paymentConfig = paymentConfigSnapshot.exists ? paymentConfigSnapshot.data() : {}
+    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, true)
+    const tagConfig = tagConfigSnapshot.exists ? tagConfigSnapshot.data() : {}
+    const festivalTag = resolveConfiguredFestivalTag(input.festival_tag_id, input.festival_tag, tagConfig)
+    transaction.set(draftRef, {
+      ...input,
+      festival_tag: festivalTag,
+      status: 'draft',
+      linked_transaction_id: null,
+      ...(existingSnapshot.exists
+        ? { created_by: existingSnapshot.data().created_by, created_at: existingSnapshot.data().created_at }
+        : { created_by: actor.uid, created_by_name: actor.name, created_at: now }),
+      updated_by: actor.uid,
+      updated_at: now,
+    })
+  })
+  return { success: true, draft_id: draftId }
+})
+
+exports.deleteFinancialIncomeDraft = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  await requireAccountsAdmin(request)
+  const draftId = requireRecordId(request.data && request.data.draft_id, 'Income draft ID')
+  const draftRef = db.collection(FINANCIAL_INCOME_DRAFTS).doc(draftId)
+  await db.runTransaction(async function(transaction) {
+    const snapshot = await transaction.get(draftRef)
+    if (!snapshot.exists) throw new HttpsError('not-found', 'The income draft no longer exists.')
+    if (snapshot.data().status !== 'draft') throw new HttpsError('failed-precondition', 'Confirmed income records cannot be deleted as drafts.')
+    transaction.delete(draftRef)
+  })
+  return { success: true }
+})
+
+exports.createFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const input = normalizeIncomeInput(request.data, false)
+  const accountId = requireRecordId(request.data.account_id, 'Receiving account')
+  const idempotencyKey = requireText(request.data.idempotency_key, 'Idempotency key', 120, false)
+  if (!/^[A-Za-z0-9_-]+$/.test(idempotencyKey)) {
+    throw new HttpsError('invalid-argument', 'The income confirmation key is invalid.')
+  }
+  const draftId = request.data.draft_id ? requireRecordId(request.data.draft_id, 'Income draft ID') : null
+  const transactionRef = db.collection('financial_transactions').doc(`income_${idempotencyKey}`)
+  const accountRef = db.collection('financial_accounts').doc(accountId)
+  const draftRef = draftId ? db.collection(FINANCIAL_INCOME_DRAFTS).doc(draftId) : null
+  const paymentConfigRef = db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)
+  const tagConfigRef = db.collection('site_config').doc('financial_festivals')
+  const duplicateReferenceQuery = input.reference_no
+    ? db.collection('financial_transactions').where('reference_no', '==', input.reference_no)
+    : null
+  const now = Timestamp.now()
+
+  await db.runTransaction(async function(transaction) {
+    const [existingTransaction, accountSnapshot, draftSnapshot, paymentConfigSnapshot, tagConfigSnapshot, duplicateReferences] =
+      await Promise.all([
+        transaction.get(transactionRef),
+        transaction.get(accountRef),
+        draftRef ? transaction.get(draftRef) : Promise.resolve(null),
+        transaction.get(paymentConfigRef),
+        transaction.get(tagConfigRef),
+        duplicateReferenceQuery ? transaction.get(duplicateReferenceQuery) : Promise.resolve(null),
+      ])
+    if (existingTransaction.exists) {
+      if (existingTransaction.data().posting_status === 'unposted') {
+        throw new HttpsError('failed-precondition', 'This income is unposted. Post it from Income History instead.')
+      }
+      if (existingTransaction.data().idempotency_key === idempotencyKey) return
+      throw new HttpsError('already-exists', 'This income confirmation has already been recorded.')
+    }
+    if (duplicateReferences && !duplicateReferences.empty) {
+      throw new HttpsError('already-exists', 'That reference is already used by an existing financial transaction.')
+    }
+    if (!accountSnapshot.exists) throw new HttpsError('not-found', 'The selected receiving account no longer exists.')
+    const account = accountSnapshot.data()
+    if (account.active === false || !['cash', 'bank', 'upi'].includes(account.type)) {
+      throw new HttpsError('failed-precondition', 'Choose an active cash, bank or UPI account to receive this income.')
+    }
+    if (draftRef && (!draftSnapshot || !draftSnapshot.exists || draftSnapshot.data().status !== 'draft')) {
+      throw new HttpsError('failed-precondition', 'The income draft is no longer available to confirm.')
+    }
+    const paymentConfig = paymentConfigSnapshot.exists ? paymentConfigSnapshot.data() : {}
+    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, false)
+    const tagConfig = tagConfigSnapshot.exists ? tagConfigSnapshot.data() : {}
+    const festivalTag = resolveConfiguredFestivalTag(input.festival_tag_id, input.festival_tag, tagConfig)
+    const balance = account.balance_paise
+    const nextBalance = balance + input.amount_paise
+    if (!Number.isSafeInteger(balance) || balance < 0 || !Number.isSafeInteger(nextBalance)) {
+      throw new HttpsError('failed-precondition', 'The selected account has an invalid balance.')
+    }
+
+    transaction.update(accountRef, {
+      balance_paise: nextBalance,
+      updated_by: actor.uid,
+      updated_at: now,
+    })
+    transaction.create(transactionRef, {
+      transaction_id: `FTX-INCOME-${idempotencyKey.toUpperCase()}`,
+      type: 'income',
+      posting_status: 'posted',
+      transaction_date: input.transaction_date,
+      reference_no: input.reference_no,
+      description: input.description,
+      category_name: input.category_name,
+      amount_paise: input.amount_paise,
+      account_id: accountId,
+      transfer_to_account_id: null,
+      linked_order_id: null,
+      linked_expense_id: null,
+      party_name: input.vendor_name || null,
+      source_of_income: input.source_of_income || null,
+      payment_method: input.payment_method,
+      festival_tag: festivalTag,
+      festival_tag_id: input.festival_tag_id,
+      idempotency_key: idempotencyKey,
+      income_draft_id: draftId,
+      receipt_paths: [],
+      created_by: actor.uid,
+      created_by_name: actor.name,
+      created_at: now,
+      audit: [{ action: 'created', admin_user_id: actor.uid, created_at: now }],
+    })
+    if (draftRef) {
+      transaction.update(draftRef, {
+        status: 'confirmed',
+        linked_transaction_id: transactionRef.id,
+        updated_by: actor.uid,
+        updated_at: now,
+      })
+    }
+  })
+  return { success: true, transaction_id: transactionRef.id }
+})
+
 exports.editFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   const actor = await requireAccountsAdmin(request)
   const transactionId = requireRecordId(request.data && request.data.transaction_id, 'Transaction ID')
@@ -812,6 +1242,9 @@ exports.editFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async
     const current = snapshot.data()
     if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'Deleted transactions cannot be edited.')
     if (current.type === 'opening_balance') throw new HttpsError('failed-precondition', 'Opening balances cannot be edited as transactions.')
+    if (current.posting_status === 'unposted') {
+      throw new HttpsError('failed-precondition', 'Unposted income must be posted from Income History before it can be edited.')
+    }
 
     const description = requireText(input.description, 'Description', 250, false)
     const categoryName = requireText(input.category_name, 'Category', 80, false)
@@ -999,6 +1432,9 @@ exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
     if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'This transaction has already been deleted.')
     transactionType = typeof current.type === 'string' ? current.type : 'unknown'
     if (current.type === 'opening_balance') throw new HttpsError('failed-precondition', 'Opening balances cannot be deleted as transactions.')
+    if (current.posting_status === 'unposted') {
+      throw new HttpsError('failed-precondition', 'Unposted income cannot be deleted as a ledger transaction.')
+    }
     let isPettyCashSpending = current.is_petty_cash_spending === true
     if (isPettyCashSpending && (current.type !== 'expense' || current.linked_order_id || current.linked_expense_id)) {
       throw new HttpsError('failed-precondition', 'This is not a valid petty cash spending record.')
@@ -1208,9 +1644,6 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
   const date = requireDate(input.transaction_date, 'Expense date')
   const amount = requirePaise(input.amount_paise, 'Expense amount', false)
   const paymentMethod = requireText(input.payment_method, 'Payment method', 80, true)
-  if (paymentMethod && !['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod)) {
-    throw new HttpsError('invalid-argument', 'Choose Cash, UPI or Bank Transfer as the payment method.')
-  }
   const festivalTag = requireFestivalTag(input.festival_tag)
   const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
 
@@ -1226,19 +1659,26 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
   const paymentRef = db.collection('financial_transactions').doc()
   const vendorRef = vendorId ? db.collection('vendors').doc(vendorId) : null
   const tagsRef = db.collection('site_config').doc('financial_festivals')
+  const paymentMethodsRef = db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)
   const now = Timestamp.now()
 
   await db.runTransaction(async function(transaction) {
-    const [expenseIdSnapshot, existingExpenseSnapshots, vendorSnapshot, tagsSnapshot] = await Promise.all([
+    const [expenseIdSnapshot, existingExpenseSnapshots, vendorSnapshot, tagsSnapshot, paymentMethodsSnapshot] = await Promise.all([
       expenseIdRef ? transaction.get(expenseIdRef) : Promise.resolve(null),
       Promise.all(existingExpenseQueries.map(existingQuery => transaction.get(existingQuery))),
       vendorRef ? transaction.get(vendorRef) : Promise.resolve(null),
       festivalTagId ? transaction.get(tagsRef) : Promise.resolve(null),
+      paymentMethod ? transaction.get(paymentMethodsRef) : Promise.resolve(null),
     ])
     if ((expenseIdSnapshot && expenseIdSnapshot.exists) || existingExpenseSnapshots.some(snapshot => !snapshot.empty)) {
       throw new HttpsError('already-exists', 'This Expense ID already exists. Please enter a different ID.')
     }
     if (vendorRef && !vendorSnapshot.exists) throw new HttpsError('not-found', 'The selected vendor no longer exists.')
+    assertApprovedFinancialPaymentMethod(
+      paymentMethod,
+      paymentMethodsSnapshot && paymentMethodsSnapshot.exists ? paymentMethodsSnapshot.data() : {},
+      true,
+    )
     const tagsData = tagsSnapshot && tagsSnapshot.exists ? tagsSnapshot.data() : {}
     const tagName = festivalTagId
       ? (tagsData.custom_tags && tagsData.custom_tags[festivalTagId]) ||
@@ -1363,16 +1803,23 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
     const isFullAmountSpending = current.is_full_amount_spending === true
     const paid = isFullAmountSpending ? amount : requirePaise(current.paid_paise, 'Paid amount', true)
     const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
-    if (paymentMethod && !['Cash', 'UPI', 'Bank Transfer'].includes(paymentMethod) && paymentMethod !== current.payment_method) {
-      throw new HttpsError('invalid-argument', 'Choose Cash, UPI or Bank Transfer as the payment method.')
-    }
     if (!isFullAmountSpending && amount < paid) {
       throw new HttpsError('failed-precondition', 'Expense total cannot be less than the amount already paid.')
     }
     const outstanding = amount - paid
     const paymentStatus = expensePaymentStatus(paid, amount)
     const linkedQuery = db.collection('financial_transactions').where('linked_expense_id', '==', expenseId)
-    const linkedSnapshot = await transaction.get(linkedQuery)
+    const [linkedSnapshot, paymentMethodsSnapshot] = await Promise.all([
+      transaction.get(linkedQuery),
+      paymentMethod ? transaction.get(db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)) : Promise.resolve(null),
+    ])
+    if (paymentMethod && paymentMethod !== current.payment_method) {
+      assertApprovedFinancialPaymentMethod(
+        paymentMethod,
+        paymentMethodsSnapshot && paymentMethodsSnapshot.exists ? paymentMethodsSnapshot.data() : {},
+        false,
+      )
+    }
     if (linkedSnapshot.size > 499) throw new HttpsError('failed-precondition', 'This expense has too many linked payments to edit safely.')
     const activeLinkedPayments = linkedSnapshot.docs.filter(item => item.data().is_deleted !== true)
     if (isFullAmountSpending && (

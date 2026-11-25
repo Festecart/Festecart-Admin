@@ -36,6 +36,8 @@ import type {
   FinancialTransactionType,
   FestivalTag,
   CustomerReceivable,
+  NewIncomeInput,
+  UnpostedFinancialIncome,
   NewExpenseInput,
   NewAccountInput,
   NewTransactionInput,
@@ -51,6 +53,12 @@ const PAGE_SIZE = 100
 const ACCOUNTS_FUNCTION_REGION = 'us-central1'
 export const PETTY_CASH_TRANSACTION_ACCOUNT_ID = '__petty_cash_spending__'
 export const UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID = '__unallocated_expense_payment__'
+export const DEFAULT_FINANCIAL_CATEGORIES = [
+  'Purchases', 'Packaging', 'Transportation', 'Marketing', 'Salaries',
+  'Delivery', 'Utilities', 'Miscellaneous', 'Tea',
+]
+export const DEFAULT_FINANCIAL_PAYMENT_METHODS = ['Cash', 'UPI', 'Bank Transfer']
+const PAYMENT_METHODS_CONFIG = 'financial_expense_payment_methods'
 
 function requireActor() {
   const user = auth.currentUser
@@ -138,6 +146,8 @@ function readTransaction(id: string, data: DocumentData): FinancialTransaction {
     party_name: (data.party_name as string | null) ?? null,
     receipt_paths: Array.isArray(data.receipt_paths) ? data.receipt_paths.filter((path): path is string => typeof path === 'string') : [],
     payment_method: String(data.payment_method ?? ''),
+    source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : null,
+    idempotency_key: typeof data.idempotency_key === 'string' ? data.idempotency_key : null,
     festival_tag: festivalTag,
     festival_tag_id: normalizeFestivalTagId(data.festival_tag_id, festivalTag, `Transaction ${id} festival tag`),
     is_petty_cash_spending: data.is_petty_cash_spending === true,
@@ -332,14 +342,25 @@ export async function fetchTransactionPage(
   cursor: QueryDocumentSnapshot<DocumentData> | null,
 ): Promise<FinancialTransactionPage> {
   const baseQuery = query(collection(db, TRANSACTIONS), orderBy('transaction_date', 'desc'))
-  const pageQuery = cursor
-    ? query(baseQuery, startAfter(cursor), limit(PAGE_SIZE))
-    : query(baseQuery, limit(PAGE_SIZE))
-  const snapshot = await getDocs(pageQuery)
+  const items: FinancialTransaction[] = []
+  let nextCursor = cursor
+  let hasMore = true
+  while (items.length < PAGE_SIZE && hasMore) {
+    const remaining = PAGE_SIZE - items.length
+    const pageQuery = nextCursor
+      ? query(baseQuery, startAfter(nextCursor), limit(remaining))
+      : query(baseQuery, limit(remaining))
+    const snapshot = await getDocs(pageQuery)
+    const postedDocuments = snapshot.docs.filter(item =>
+      item.data().is_deleted !== true && item.data().posting_status !== 'unposted')
+    items.push(...postedDocuments.map(item => readTransaction(item.id, item.data())))
+    nextCursor = snapshot.docs[snapshot.docs.length - 1] ?? nextCursor
+    hasMore = snapshot.docs.length === remaining
+  }
   return {
-    items: snapshot.docs.filter(item => item.data().is_deleted !== true).map(item => readTransaction(item.id, item.data())),
-    cursor: snapshot.docs[snapshot.docs.length - 1] ?? null,
-    hasMore: snapshot.docs.length === PAGE_SIZE,
+    items,
+    cursor: nextCursor,
+    hasMore,
   }
 }
 
@@ -375,7 +396,9 @@ function rangeConstraints(range: AccountDateRange): QueryConstraint[] {
 export async function fetchReportTransactions(range: AccountDateRange): Promise<FinancialTransaction[]> {
   const baseQuery = query(collection(db, TRANSACTIONS), ...rangeConstraints(range), orderBy('transaction_date', 'desc'))
   const documents = await fetchAllPages(baseQuery)
-  return documents.filter(item => item.data().is_deleted !== true).map(item => readTransaction(item.id, item.data()))
+  return documents
+    .filter(item => item.data().is_deleted !== true && item.data().posting_status !== 'unposted')
+    .map(item => readTransaction(item.id, item.data()))
 }
 
 function logExpenseReadError(source: string, error: unknown): void {
@@ -798,7 +821,7 @@ export async function fetchOrderPaymentDetails(orderId: string): Promise<Array<{
     query(collection(db, TRANSACTIONS), where('linked_order_id', '==', orderId)),
   )
   return snapshot.docs
-    .filter(item => item.data().type === 'income' && item.data().is_deleted !== true)
+    .filter(item => item.data().type === 'income' && item.data().posting_status !== 'unposted' && item.data().is_deleted !== true)
     .map(item => ({
       payment_method: String(item.data().payment_method ?? ''),
       reference_no: String(item.data().reference_no ?? '').trim(),
@@ -820,6 +843,150 @@ export async function fetchFinancialCategories(): Promise<FinancialCategory[]> {
     name: String(item.data().name ?? ''),
     type: item.data().type === 'income' ? 'income' : 'expense',
   }))
+}
+
+function normalizePaymentMethod(value: string): string {
+  return value.trim().replace(/\s+/g, ' ')
+}
+
+export async function fetchFinancialPaymentMethods(): Promise<string[]> {
+  const snapshot = await getDoc(doc(db, 'site_config', PAYMENT_METHODS_CONFIG))
+  const configured = snapshot.exists() && Array.isArray(snapshot.data().custom_methods)
+    ? snapshot.data().custom_methods.filter((value: unknown): value is string => typeof value === 'string')
+    : []
+  const methods = new Map<string, string>()
+  for (const method of [...DEFAULT_FINANCIAL_PAYMENT_METHODS, ...configured]) {
+    const normalized = normalizePaymentMethod(method)
+    if (normalized) methods.set(normalized.toLocaleLowerCase(), normalized)
+  }
+  return [...methods.values()]
+}
+
+export async function createFinancialPaymentMethod(nameInput: string): Promise<string> {
+  const actor = requireActor()
+  const name = normalizePaymentMethod(nameInput)
+  if (!name || name.length > 80) throw new Error('Payment method names must contain 1–80 characters.')
+  const normalized = name.toLocaleLowerCase()
+  const defaults = DEFAULT_FINANCIAL_PAYMENT_METHODS.map(method => method.toLocaleLowerCase())
+  if (defaults.includes(normalized)) throw new Error('That payment method is already available.')
+  const configRef = doc(db, 'site_config', PAYMENT_METHODS_CONFIG)
+  await runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(configRef)
+    const data = snapshot.exists() ? snapshot.data() : {}
+    const configured = Array.isArray(data.custom_methods)
+      ? data.custom_methods.filter((value: unknown): value is string => typeof value === 'string')
+      : []
+    if (configured.some(method => normalizePaymentMethod(method).toLocaleLowerCase() === normalized)) {
+      throw new Error('A payment method with that name already exists.')
+    }
+    transaction.set(configRef, {
+      custom_methods: [...configured, name],
+      updated_by: actor.uid,
+      updated_at: Timestamp.now(),
+    }, { merge: true })
+  })
+  return name
+}
+
+export async function createUnpostedFinancialIncome(
+  input: NewIncomeInput,
+  idempotencyKey: string,
+): Promise<void> {
+  const functionName = 'createUnpostedFinancialIncome'
+  const createIncome = httpsCallable<
+    { input: NewIncomeInput; idempotency_key: string },
+    { success: boolean; transaction_id: string }
+  >(getFunctions(app, ACCOUNTS_FUNCTION_REGION), functionName)
+  try {
+    await createIncome({ input, idempotency_key: idempotencyKey })
+  } catch (error) {
+    const details = error && typeof error === 'object'
+      ? error as { code?: unknown; message?: unknown; details?: unknown }
+      : {}
+    console.error('[accounts] Income save callable failed', {
+      functionName,
+      region: ACCOUNTS_FUNCTION_REGION,
+      projectId: app.options.projectId || 'unknown',
+      errorCode: typeof details.code === 'string' ? details.code : 'unknown',
+      errorMessage: typeof details.message === 'string'
+        ? details.message
+        : error === undefined ? 'Unknown error' : String(error),
+      errorDetails: details.details,
+      error,
+    })
+    throw error
+  }
+}
+
+export async function editUnpostedFinancialIncome(
+  transactionId: string,
+  input: NewIncomeInput,
+): Promise<void> {
+  const editIncome = httpsCallable<
+    { transaction_id: string; input: NewIncomeInput },
+    { success: boolean; transaction_id: string }
+  >(getFunctions(app, ACCOUNTS_FUNCTION_REGION), 'editUnpostedFinancialIncome')
+  await editIncome({ transaction_id: transactionId, input })
+}
+
+export async function deleteUnpostedFinancialIncome(transactionId: string): Promise<void> {
+  const deleteIncome = httpsCallable<
+    { transaction_id: string },
+    { success: boolean; transaction_id: string }
+  >(getFunctions(app, ACCOUNTS_FUNCTION_REGION), 'deleteUnpostedFinancialIncome')
+  await deleteIncome({ transaction_id: transactionId })
+}
+
+export async function fetchUnpostedFinancialIncomes(): Promise<UnpostedFinancialIncome[]> {
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, TRANSACTIONS),
+      where('posting_status', '==', 'unposted'),
+    ))
+    return snapshot.docs
+      .filter(item => item.data().type === 'income' && item.data().is_deleted !== true)
+      .map<UnpostedFinancialIncome>(item => {
+        const data = item.data()
+        if (!(data.transaction_date instanceof Timestamp) ||
+          !Number.isSafeInteger(data.amount_paise) || data.amount_paise <= 0) {
+          throw new Error(`Unposted income ${item.id} has invalid financial details.`)
+        }
+        return {
+          id: item.id,
+          transaction_id: typeof data.transaction_id === 'string' ? data.transaction_id : item.id,
+          transaction_date: data.transaction_date.toDate().toISOString().slice(0, 10),
+          amount_paise: data.amount_paise,
+          festival_tag: typeof data.festival_tag === 'string' ? data.festival_tag : null,
+          festival_tag_id: typeof data.festival_tag_id === 'string' ? data.festival_tag_id : null,
+          category_name: typeof data.category_name === 'string' ? data.category_name : '',
+          description: typeof data.description === 'string' ? data.description : '',
+          payment_method: typeof data.payment_method === 'string' ? data.payment_method : '',
+          vendor_name: typeof data.party_name === 'string' ? data.party_name : '',
+          reference_no: typeof data.reference_no === 'string' ? data.reference_no : '',
+          source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : '',
+          posting_status: 'unposted',
+          editable: (data.account_id == null || data.account_id === '') &&
+            data.linked_order_id == null &&
+            data.linked_expense_id == null,
+        }
+      })
+      .sort((left, right) => right.transaction_date.localeCompare(left.transaction_date) || right.id.localeCompare(left.id))
+  } catch (error) {
+    const details = error && typeof error === 'object'
+      ? error as { code?: unknown; message?: unknown }
+      : {}
+    console.error('[accounts] Firestore unposted income read failed', {
+      sourceCollection: TRANSACTIONS,
+      projectId: app.options.projectId || 'unknown',
+      databaseId: 'festecart',
+      errorCode: typeof details.code === 'string' || typeof details.code === 'number' ? details.code : 'unknown',
+      errorMessage: typeof details.message === 'string'
+        ? details.message
+        : error === undefined ? 'Unknown error' : String(error),
+      error,
+    })
+    throw error
+  }
 }
 
 export async function refreshAccountsAdminClaims(): Promise<void> {

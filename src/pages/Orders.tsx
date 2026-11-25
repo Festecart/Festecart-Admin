@@ -23,13 +23,13 @@ const STATUS_OPTIONS: { value: OrderStatus; label: string }[] = [
 ]
 
 const ORDER_TABLE_COLUMNS = [
-  { id: 'order_number', label: 'Order No' },
-  { id: 'order_date', label: 'Order Date' },
-  { id: 'customer_name', label: 'Customer Name' },
-  { id: 'phone', label: 'Phone' },
-  { id: 'items', label: 'Items' },
-  { id: 'products', label: 'Products' },
-  { id: 'product_cost', label: 'Product Cost' },
+  { id: 'order_number', label: 'Order No', canHide: false },
+  { id: 'order_date', label: 'Order Date', canHide: false },
+  { id: 'customer_name', label: 'Customer Name', canHide: false },
+  { id: 'phone', label: 'Phone', canHide: false },
+  { id: 'items', label: 'Items', canHide: false },
+  { id: 'products', label: 'Products', canHide: false },
+  { id: 'product_cost', label: 'Product Cost', canHide: false },
   { id: 'coupon_name', label: 'Coupon Name' },
   { id: 'coupon_amount', label: 'Coupon Amount' },
   { id: 'additional_discount', label: 'Additional Discount' },
@@ -42,6 +42,10 @@ const ORDER_TABLE_COLUMNS = [
   { id: 'payment_status', label: 'Payment Status' },
   { id: 'order_status', label: 'Order Status' },
 ]
+
+const ORDER_TABLE_STORAGE_KEY = 'festecart-admin:table-columns:orders'
+const ORDER_TABLE_ORDER_VERSION_KEY = `${ORDER_TABLE_STORAGE_KEY}:order-version`
+const ORDER_TABLE_ORDER_VERSION = '5'
 
 function customerName(order: Order): string {
   return order.guest_name?.trim() || order.shipping_address?.name?.trim() || '—'
@@ -156,10 +160,42 @@ export default function Orders() {
   const [isLogisticsExportMenuOpen, setIsLogisticsExportMenuOpen] = useState(false)
   const [horizontalScroll, setHorizontalScroll] = useState({ position: 0, max: 0 })
   const [viewMode, setViewMode] = useState<'list' | 'board'>('list')
-  const columnPreferences = useTableColumnPreferences(
-    'festecart-admin:table-columns:orders',
-    ORDER_TABLE_COLUMNS,
-  )
+  useEffect(() => {
+    if (window.localStorage.getItem(ORDER_TABLE_ORDER_VERSION_KEY) === ORDER_TABLE_ORDER_VERSION) return
+
+    const saved = window.localStorage.getItem(ORDER_TABLE_STORAGE_KEY)
+    if (!saved) {
+      window.localStorage.setItem(ORDER_TABLE_ORDER_VERSION_KEY, ORDER_TABLE_ORDER_VERSION)
+      return
+    }
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(saved)
+    } catch {
+      return
+    }
+
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      !Array.isArray((parsed as { order?: unknown }).order) ||
+      !Array.isArray((parsed as { hidden?: unknown }).hidden)
+    ) return
+
+    const settings = parsed as { order: unknown[]; hidden: unknown[] }
+    const defaultIds = ORDER_TABLE_COLUMNS.map(column => column.id)
+
+    if (JSON.stringify(settings.order) !== JSON.stringify(defaultIds)) {
+      window.localStorage.setItem(
+        ORDER_TABLE_STORAGE_KEY,
+        JSON.stringify({ ...parsed, order: defaultIds }),
+      )
+    }
+    window.localStorage.setItem(ORDER_TABLE_ORDER_VERSION_KEY, ORDER_TABLE_ORDER_VERSION)
+  }, [ORDER_TABLE_ORDER_VERSION])
+  const columnPreferences = useTableColumnPreferences(ORDER_TABLE_STORAGE_KEY, ORDER_TABLE_COLUMNS)
 
   const { data: filteredOrders, isLoading, error: ordersError } = useOrders({
     search,

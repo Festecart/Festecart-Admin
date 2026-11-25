@@ -36,6 +36,8 @@ export interface FinancialTransaction {
   party_name: string | null
   receipt_paths: string[]
   payment_method: string
+  source_of_income?: string | null
+  idempotency_key?: string | null
   festival_tag: string | null
   festival_tag_id: string | null
   is_petty_cash_spending?: boolean
@@ -43,6 +45,36 @@ export interface FinancialTransaction {
   created_by: string
   created_by_name: string
   created_at: Timestamp
+}
+
+export interface NewIncomeInput {
+  amount_paise: number
+  transaction_date: string
+  festival_tag: string | null
+  festival_tag_id: string | null
+  category_name: string
+  description: string
+  payment_method: string
+  vendor_name: string
+  reference_no: string
+  source_of_income: string
+}
+
+export interface UnpostedFinancialIncome {
+  id: string
+  transaction_id: string
+  amount_paise: number
+  transaction_date: string
+  festival_tag: string | null
+  festival_tag_id: string | null
+  category_name: string
+  description: string
+  payment_method: string
+  vendor_name: string
+  reference_no: string
+  source_of_income: string
+  posting_status: 'unposted'
+  editable: boolean
 }
 
 export interface EditTransactionInput {

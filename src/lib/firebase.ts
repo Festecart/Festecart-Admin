@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { connectAuthEmulator, getAuth } from 'firebase/auth'
 import {
+  connectFirestoreEmulator,
   getFirestore,
   collection,
   doc,
@@ -23,7 +24,8 @@ import {
   type QueryConstraint,
   type Transaction,
 } from 'firebase/firestore'
-import { getStorage } from 'firebase/storage'
+import { connectStorageEmulator, getStorage } from 'firebase/storage'
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions'
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -41,6 +43,16 @@ export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getA
 export const auth    = getAuth(app)
 export const db      = getFirestore(app, 'festecart')
 export const storage = getStorage(app)
+
+if (import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') {
+  if (!app.options.projectId?.startsWith('demo-')) {
+    throw new Error('Firebase emulators require a demo-* project ID.')
+  }
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
+  connectFirestoreEmulator(db, '127.0.0.1', 8080)
+  connectStorageEmulator(storage, '127.0.0.1', 9199)
+  connectFunctionsEmulator(getFunctions(app, 'us-central1'), '127.0.0.1', 5001)
+}
 
 // Re-export Firestore helpers so callers only import from this file
 export {

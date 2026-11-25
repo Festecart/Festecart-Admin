@@ -1,11 +1,10 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, X } from 'lucide-react'
+import { DEFAULT_FINANCIAL_CATEGORIES } from '@/lib/accounts'
 import { festivalTagId } from '@/lib/festivalProducts'
+import { PaymentMethodField } from '@/components/accounts/PaymentMethodField'
 import type { EditExpenseInput, FinancialCategory, FinancialExpense, NewExpenseInput, VendorOption } from '@/types/accounts'
 import type { FestivalTag } from '@/types/accounts'
-
-const CATEGORIES = ['Purchases', 'Packaging', 'Transportation', 'Marketing', 'Salaries', 'Delivery', 'Utilities', 'Miscellaneous']
-const PAYMENT_METHODS = ['Cash', 'UPI', 'Bank Transfer']
 
 function dateInput(value: FinancialExpense['transaction_date']): string {
   const date = value.toDate()
@@ -228,7 +227,7 @@ export function ExpenseForm({
               <select value={category} onChange={event => setCategory(event.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
                 <option value="">No category</option>
-                {[...new Set([...CATEGORIES, ...categories.filter(item => item.type === 'expense').map(item => item.name)])].map(item => <option key={item}>{item}</option>)}
+                {[...new Set([...DEFAULT_FINANCIAL_CATEGORIES, ...categories.filter(item => item.type === 'expense').map(item => item.name)])].map(item => <option key={item}>{item}</option>)}
                 <option value="__custom">Add custom category…</option>
               </select>
               {category === '__custom' && (
@@ -245,14 +244,8 @@ export function ExpenseForm({
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block text-sm font-medium text-slate-700">{initialExpense ? 'Payment Method' : 'Payment Method (Optional)'}
-              <select value={paymentMethod} onChange={event => setPaymentMethod(event.target.value)} required={Boolean(initialExpense)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-                <option value="">Select a payment method</option>
-                {initialExpense?.payment_method && !PAYMENT_METHODS.includes(initialExpense.payment_method) && (
-                  <option value={initialExpense.payment_method} disabled>Existing: {initialExpense.payment_method} (unchanged)</option>
-                )}
-                {PAYMENT_METHODS.map(item => <option key={item}>{item}</option>)}
-              </select>
+              <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} required={Boolean(initialExpense)}
+                legacyValue={initialExpense?.payment_method} />
             </label>
             <label className="block text-sm font-medium text-slate-700">Vendor (Optional)
               <select value={vendorId} onChange={event => setVendorId(event.target.value)}

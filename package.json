@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:emulators": "vite --mode emulator",
+    "emulators:start": "firebase emulators:start --project demo-income-test --only auth,firestore,functions,storage",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:income:emulator": "node scripts/run-income-emulator-tests.cjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.2",

@@ -16,6 +16,7 @@ import {
 import { Link } from 'react-router-dom'
 import { AccountForm } from '@/components/accounts/AccountForm'
 import { ExpenseForm } from '@/components/accounts/ExpenseForm'
+import { IncomeForm } from '@/components/accounts/IncomeForm'
 import { ExpenseReceipts } from '@/components/accounts/ExpenseReceipts'
 import { MetricCard } from '@/components/accounts/MetricCard'
 import { TransactionForm } from '@/components/accounts/TransactionForm'
@@ -28,6 +29,7 @@ import { useOrders } from '@/hooks/useOrders'
 import { calculateOrderPaymentAmounts, eligibleDeliveredOrders, type CustomerPaymentStatus } from '@/lib/customerPayments'
 import { festivalTagId, LEGACY_FINANCIAL_TAGS, resolveFestivalTagName } from '@/lib/festivalProducts'
 import type { FestivalCategory } from '@/lib/festivalProducts'
+import { isoToIncomeDate } from '@/lib/incomeDate'
 import {
   createAccount,
   createFinancialCategory,
@@ -40,8 +42,12 @@ import {
   fetchFestivalTags,
   fetchReportExpenses,
   fetchReportTransactions,
+  fetchUnpostedFinancialIncomes,
+  editUnpostedFinancialIncome,
+  deleteUnpostedFinancialIncome,
   formatINR,
   recordTransaction,
+  createUnpostedFinancialIncome,
   PETTY_CASH_TRANSACTION_ACCOUNT_ID,
   UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID,
 } from '@/lib/accounts'
@@ -51,6 +57,7 @@ import type {
   CustomerPayment,
   NewAccountInput,
   NewExpenseInput,
+  NewIncomeInput,
   NewTransactionInput,
   EditTransactionInput,
   EditExpenseInput,
@@ -58,7 +65,7 @@ import type {
 } from '@/types/accounts'
 import type { Order } from '@/types'
 
-type Tab = 'overview' | 'transactions' | 'expenses' | 'receivables' | 'petty_cash' | 'reports' | 'tags'
+type Tab = 'overview' | 'transactions' | 'expenses' | 'income' | 'receivables' | 'petty_cash' | 'reports' | 'tags'
 type QuickTransactionAction = 'income' | 'expense' | 'transfer' | 'petty_cash'
 
 type DatePreset = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all'
@@ -78,6 +85,23 @@ type DeleteConfirmationDetails = {
   category: string
   tag: string
   amount: string
+}
+
+type IncomeHistoryRow = {
+  key: string
+  id: string
+  date: string
+  dateLabel: string
+  amount: number
+  paymentMethod: string
+  source: string
+  category: string
+  tag: string
+  description: string
+  vendor: string
+  reference: string
+  editable: boolean
+  input: NewIncomeInput
 }
 
 function isDisplayableExpenseId(value: string | null | undefined): value is string {
@@ -239,7 +263,13 @@ export default function Accounts() {
   const [editingTransaction, setEditingTransaction] = useState<FinancialTransaction | null>(null)
   const [editingExpense, setEditingExpense] = useState<FinancialExpense | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
+  const [editingIncome, setEditingIncome] = useState<IncomeHistoryRow | null>(null)
+  const [incomeToDelete, setIncomeToDelete] = useState<IncomeHistoryRow | null>(null)
   const [showExpenseForm, setShowExpenseForm] = useState(false)
+  const [showIncomeForm, setShowIncomeForm] = useState(false)
+  const [incomeSearch, setIncomeSearch] = useState('')
+  const [incomeFrom, setIncomeFrom] = useState('')
+  const [incomeTo, setIncomeTo] = useState('')
   const [expensePage, setExpensePage] = useState(0)
   const [datePreset, setDatePreset] = useState<DatePreset>('all')
   const [customFrom, setCustomFrom] = useState('')
@@ -316,7 +346,12 @@ export default function Accounts() {
   const allTransactionsQuery = useQuery({
     queryKey: ['accounts', 'all-transactions'],
     queryFn: () => fetchReportTransactions({}),
-    enabled: tab === 'transactions',
+    enabled: tab === 'transactions' || tab === 'income',
+  })
+  const unpostedIncomesQuery = useQuery({
+    queryKey: ['accounts', 'unposted-incomes'],
+    queryFn: fetchUnpostedFinancialIncomes,
+    enabled: tab === 'income',
   })
   const festivalTagsQuery = useQuery({
     queryKey: ['accounts', 'festival-tags'],
@@ -375,6 +410,81 @@ export default function Accounts() {
   const displayTag = (tagId: string | null, storedName: string | null) =>
     resolveFestivalTagName(tagId, storedName, festivalTags) ?? '—'
   const transactionHistory = tab === 'transactions' ? allTransactionsQuery.data ?? transactions : transactions
+  const incomeHistoryRows = useMemo(() => {
+    const postedRows = (allTransactionsQuery.data ?? [])
+      .filter(item => item.type === 'income')
+      .map<IncomeHistoryRow>(item => {
+        const transactionDate = item.transaction_date.toDate().toISOString().slice(0, 10)
+        const input: NewIncomeInput = {
+          amount_paise: item.amount_paise,
+          transaction_date: transactionDate,
+          festival_tag: item.festival_tag,
+          festival_tag_id: item.festival_tag_id,
+          category_name: item.category_name,
+          description: item.description,
+          payment_method: item.payment_method,
+          vendor_name: item.party_name ?? '',
+          reference_no: item.reference_no,
+          source_of_income: item.source_of_income ?? '',
+        }
+        return {
+          key: `transaction-${item.id}`,
+          id: item.id,
+          date: transactionDate,
+          dateLabel: isoToIncomeDate(transactionDate),
+          amount: item.amount_paise,
+          paymentMethod: item.payment_method || '—',
+          source: item.source_of_income || '—',
+          category: item.category_name || '—',
+          tag: displayTag(item.festival_tag_id, item.festival_tag),
+          description: item.description || '—',
+          vendor: item.party_name || '—',
+          reference: item.reference_no || '—',
+          editable: false,
+          input,
+        }
+      })
+    const unpostedRows = (unpostedIncomesQuery.data ?? [])
+      .map<IncomeHistoryRow>(item => {
+        const input: NewIncomeInput = {
+          amount_paise: item.amount_paise,
+          transaction_date: item.transaction_date,
+          festival_tag: item.festival_tag,
+          festival_tag_id: item.festival_tag_id,
+          category_name: item.category_name,
+          description: item.description,
+          payment_method: item.payment_method,
+          vendor_name: item.vendor_name,
+          reference_no: item.reference_no,
+          source_of_income: item.source_of_income,
+        }
+        return {
+          key: `reference-${item.id}`,
+          id: item.id,
+          date: item.transaction_date,
+          dateLabel: isoToIncomeDate(item.transaction_date),
+          amount: item.amount_paise,
+          paymentMethod: item.payment_method || '—',
+          source: item.source_of_income || '—',
+          category: item.category_name || '—',
+          tag: displayTag(item.festival_tag_id, item.festival_tag),
+          description: item.description || '—',
+          vendor: item.vendor_name || '—',
+          reference: item.reference_no || '—',
+          editable: item.editable,
+          input,
+        }
+      })
+    return [...postedRows, ...unpostedRows].sort((left, right) =>
+      right.date.localeCompare(left.date) || right.key.localeCompare(left.key))
+  }, [allTransactionsQuery.data, unpostedIncomesQuery.data, festivalTags])
+  const normalizedIncomeSearch = incomeSearch.trim().toLocaleLowerCase()
+  const filteredIncomeRows = incomeHistoryRows.filter(item =>
+    (!incomeFrom || item.date >= incomeFrom) &&
+    (!incomeTo || item.date <= incomeTo) &&
+    (!normalizedIncomeSearch || [
+      item.paymentMethod, item.source, item.category, item.tag, item.description, item.vendor, item.reference,
+    ].some(value => value.toLocaleLowerCase().includes(normalizedIncomeSearch))))
   const customerPaymentMethods = [...new Set(deliveredOrderPayments.flatMap(payment => payment.paymentMethods))].sort()
   const normalizedCustomerPaymentSearch = customerPaymentSearch.trim().toLocaleLowerCase()
   const filteredDeliveredOrderPayments = deliveredOrderPayments.filter(payment => {
@@ -446,6 +556,30 @@ export default function Accounts() {
       setQuickTransactionAction(null)
     },
   })
+  const unpostedIncomeMutation = useMutation({
+    mutationFn: ({ input, idempotencyKey }: { input: NewIncomeInput; idempotencyKey: string }) =>
+      createUnpostedFinancialIncome(input, idempotencyKey),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['accounts', 'unposted-incomes'] })
+      showTransactionSuccess('Income saved successfully.', 5000)
+    },
+  })
+  const editIncomeMutation = useMutation({
+    mutationFn: ({ transactionId, input }: { transactionId: string; input: NewIncomeInput }) =>
+      editUnpostedFinancialIncome(transactionId, input),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['accounts', 'unposted-incomes'] })
+      showTransactionSuccess('Income updated successfully.', 5000)
+    },
+  })
+  const deleteIncomeMutation = useMutation({
+    mutationFn: (transactionId: string) => deleteUnpostedFinancialIncome(transactionId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['accounts', 'unposted-incomes'] })
+      setIncomeToDelete(null)
+      showDeleteSuccess('Income deleted successfully.')
+    },
+  })
   const editTransactionMutation = useMutation({
     mutationFn: ({ transaction, input }: { transaction: FinancialTransaction; input: EditTransactionInput }) => editTransaction(transaction, input),
     onSuccess: async (_result, variables) => {
@@ -506,6 +640,7 @@ export default function Accounts() {
     { source: 'financial_transactions', error: totalsQuery.error },
     { source: 'financial_transactions', error: transactionsQuery.error },
     { source: 'financial_transactions (all transactions)', error: allTransactionsQuery.error },
+    { source: 'financial_transactions (Income history)', error: unpostedIncomesQuery.error },
     { source: 'financial_expenses', error: expensesQuery.error },
     { source: 'vendors', error: vendorsQuery.error },
     { source: 'financial_categories', error: categoriesQuery.error },
@@ -602,6 +737,7 @@ export default function Accounts() {
           ['overview', 'Overview'],
           ['transactions', 'Transaction History'],
           ['expenses', 'Expenses'],
+          ['income', 'Income'],
           ['receivables', 'Customer Payments'],
           ['petty_cash', 'Petty Cash'],
           ['reports', 'Reports'],
@@ -619,7 +755,7 @@ export default function Accounts() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Spending overview</h2>
-              <p className="mt-1 text-sm text-slate-500">Expenses paid and Petty Cash spending for the selected period.</p>
+              <p className="mt-1 text-sm text-slate-500">Income received, expenses paid, and Petty Cash spending for the selected period.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -636,7 +772,8 @@ export default function Accounts() {
               )}
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard label="Income Received" value={loadingOrUnavailable(totalsQuery.isPending, totalsQuery.isError, totalsQuery.data?.income_paise)} icon={<ArrowUpRight size={18} />} tone="green" />
             <MetricCard label="Total Expenses Paid" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, expensesPaidPaise)} icon={<ArrowUpRight size={18} />} tone="red" />
             <MetricCard label="Total Petty Cash Spent" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, pettyCashSpentPaise)} icon={<CircleDollarSign size={18} />} tone="amber" />
             <MetricCard label="Total Spending" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, totalSpendingPaise)} icon={<ArrowLeftRight size={18} />} tone="blue" />
@@ -768,6 +905,107 @@ export default function Accounts() {
                       </div>
                     </div>
                   )}
+                </div>}
+        </section>
+      )}
+
+      {tab === 'income' && (
+        <section className="space-y-5">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Income</h2>
+              <p className="mt-1 text-sm text-slate-500">Keep income records for reference.</p>
+            </div>
+            <button type="button" onClick={() => { setEditingIncome(null); setShowIncomeForm(true) }}
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">
+              <Plus size={16} /> Add Income
+            </button>
+          </div>
+
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="min-w-[220px] flex-1 text-xs font-medium text-slate-600">Search Income
+                <span className="relative mt-1 block">
+                  <Search size={16} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input value={incomeSearch} onChange={event => setIncomeSearch(event.target.value)} placeholder="Search category, description, vendor or reference"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white pl-9 pr-3 text-sm font-normal text-slate-700" />
+                </span>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">From Date
+                <input type="date" value={incomeFrom} max={incomeTo || undefined} onChange={event => setIncomeFrom(event.target.value)}
+                  className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-normal text-slate-700" />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">To Date
+                <input type="date" value={incomeTo} min={incomeFrom || undefined} onChange={event => setIncomeTo(event.target.value)}
+                  className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-normal text-slate-700" />
+              </label>
+              <button type="button" onClick={() => downloadReportFile(
+                'accounts-income.csv',
+                `\uFEFF${[['Income Date', 'Amount (INR)', 'Payment Method', 'Source of Income', 'Category', 'Tag', 'Description', 'Vendor', 'Reference Number'], ...filteredIncomeRows.map(item => [
+                  item.dateLabel,
+                  (item.amount / 100).toFixed(2),
+                  item.paymentMethod,
+                  item.source,
+                  item.category,
+                  item.tag,
+                  item.description,
+                  item.vendor,
+                  item.reference,
+                ])].map(row => row.map(escapeCsvCell).join(',')).join('\r\n')}`,
+                'text/csv;charset=utf-8',
+              )} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700">
+                <Download size={15} /> Export CSV
+              </button>
+            </div>
+          </section>
+
+          {allTransactionsQuery.isPending || unpostedIncomesQuery.isPending
+            ? <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Loading income history…</div>
+            : allTransactionsQuery.isError || unpostedIncomesQuery.isError
+              ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center text-sm text-rose-700">Income history is unavailable. Check your admin access and retry.</div>
+              : filteredIncomeRows.length === 0
+                ? <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">No income records match these filters.</div>
+                : <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-[1350px] w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>
+                      <th className="px-4 py-3">Income Date</th><th className="px-4 py-3 text-right">Amount</th>
+                      <th className="px-4 py-3">Payment Method</th><th className="px-4 py-3">Source of Income</th>
+                      <th className="px-4 py-3">Category</th><th className="px-4 py-3">Tag</th>
+                      <th className="px-4 py-3">Description</th><th className="px-4 py-3">Vendor</th>
+                      <th className="px-4 py-3">Reference Number</th><th className="px-4 py-3">Actions</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredIncomeRows.map(item => (
+                        <tr key={item.key}>
+                          <td className="whitespace-nowrap px-4 py-3">{item.dateLabel}</td>
+                          <td className="px-4 py-3 text-right font-medium">{formatINR(item.amount)}</td>
+                          <td className="px-4 py-3">{item.paymentMethod}</td>
+                          <td className="px-4 py-3">{item.source}</td>
+                          <td className="px-4 py-3">{item.category}</td>
+                          <td className="px-4 py-3">{item.tag}</td>
+                          <td className="px-4 py-3 text-slate-700">{item.description}</td>
+                          <td className="px-4 py-3">{item.vendor}</td>
+                          <td className="px-4 py-3">{item.reference}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1">
+                              <button type="button" disabled={!item.editable || editIncomeMutation.isPending}
+                                onClick={() => { setShowIncomeForm(false); setEditingIncome(item) }}
+                                aria-label={`Edit income ${item.dateLabel}`} title={item.editable ? 'Edit income' : 'Previously posted income is read-only'}
+                                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">
+                                <Pencil size={15} />
+                              </button>
+                              <button type="button" disabled={!item.editable || deleteIncomeMutation.isPending}
+                                onClick={() => { deleteIncomeMutation.reset(); setIncomeToDelete(item) }}
+                                aria-label={`Delete income ${item.dateLabel}`} title={item.editable ? 'Delete income' : 'Previously posted income is read-only'}
+                                className="rounded-lg p-2 text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40">
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>}
         </section>
       )}
@@ -1126,6 +1364,52 @@ export default function Accounts() {
           onEditSave={input => editingExpense
             ? editExpenseMutation.mutateAsync({ expense: editingExpense, input })
             : Promise.reject(new Error('Select an expense to edit.'))} />
+      )}
+      {(showIncomeForm || editingIncome) && (
+        <IncomeForm
+          key={editingIncome ? `edit-income-${editingIncome.id}` : 'new-income'}
+          categories={categoriesQuery.data ?? []}
+          festivalTags={festivalTagsQuery.data ?? []}
+          initialIncome={editingIncome?.input}
+          saving={unpostedIncomeMutation.isPending || editIncomeMutation.isPending}
+          onCreateCategory={(name, type) => categoryMutation.mutateAsync({ name, type })}
+          onClose={() => { setShowIncomeForm(false); setEditingIncome(null) }}
+          onSave={(input, idempotencyKey) => unpostedIncomeMutation.mutateAsync({ input, idempotencyKey })}
+          onUpdate={input => editingIncome
+            ? editIncomeMutation.mutateAsync({ transactionId: editingIncome.id, input })
+            : Promise.reject(new Error('Select an income record to edit.'))} />
+      )}
+      {incomeToDelete && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4" role="presentation">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="delete-income-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl sm:p-6">
+            <h2 id="delete-income-title" className="text-lg font-semibold text-slate-900">Delete Income?</h2>
+            <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-xl bg-slate-50 p-3 text-sm">
+              <dt className="text-slate-500">Income Date</dt><dd className="text-right font-medium text-slate-800">{incomeToDelete.dateLabel}</dd>
+              <dt className="text-slate-500">Amount</dt><dd className="text-right font-semibold text-slate-900">{formatINR(incomeToDelete.amount)}</dd>
+              <dt className="text-slate-500">Description</dt><dd className="text-right font-medium text-slate-800">{incomeToDelete.description}</dd>
+            </dl>
+            <p className="mt-3 text-sm text-slate-600">Are you sure you want to delete this income record? This action cannot be undone.</p>
+            {deleteIncomeMutation.error && (
+              <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">
+                {deleteIncomeMutation.error instanceof Error
+                  ? deleteIncomeMutation.error.message
+                  : 'Unable to delete income. Please try again.'}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" disabled={deleteIncomeMutation.isPending}
+                onClick={() => { setIncomeToDelete(null); deleteIncomeMutation.reset() }}
+                className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button" disabled={deleteIncomeMutation.isPending}
+                onClick={() => deleteIncomeMutation.mutate(incomeToDelete.id)}
+                className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                {deleteIncomeMutation.isPending ? 'Deleting…' : 'Delete Income'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
       {pendingDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4" role="presentation">
