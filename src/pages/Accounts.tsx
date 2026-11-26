@@ -832,7 +832,7 @@ export default function Accounts() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Spending overview</h2>
-              <p className="mt-1 text-sm text-slate-500">Total Spending adds income received, expenses paid, and Petty Cash spending for the selected period.</p>
+              <p className="mt-1 text-sm text-slate-500">Income Received includes posted income and added income records. Total Spending adds income received, expenses paid, and Petty Cash spending for the selected period.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -849,8 +849,9 @@ export default function Accounts() {
               )}
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <MetricCard label="Income Received" value={loadingOrUnavailable(totalsQuery.isPending, totalsQuery.isError, totalsQuery.data?.income_paise)} icon={<ArrowUpRight size={18} />} tone="green" />
+            <MetricCard label="Income Added" value={loadingOrUnavailable(totalsQuery.isPending, totalsQuery.isError, totalsQuery.data?.added_income_paise)} icon={<Plus size={18} />} tone="blue" />
             <MetricCard label="Total Expenses Paid" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, expensesPaidPaise)} icon={<ArrowUpRight size={18} />} tone="red" />
             <MetricCard label="Total Petty Cash Spent" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, pettyCashSpentPaise)} icon={<CircleDollarSign size={18} />} tone="amber" />
             <MetricCard label="Total Spending" value={loadingOrUnavailable(totalsQuery.isPending || reportTransactionsQuery.isPending || reportExpensesQuery.isPending, totalsQuery.isError || reportTransactionsQuery.isError || reportExpensesQuery.isError, totalSpendingPaise)} icon={<ArrowLeftRight size={18} />} tone="blue" />

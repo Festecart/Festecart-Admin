@@ -38,6 +38,7 @@ export interface FinancialTransaction {
   payment_method: string
   source_of_income?: string | null
   idempotency_key?: string | null
+  posting_status?: 'unposted'
   festival_tag: string | null
   festival_tag_id: string | null
   is_petty_cash_spending?: boolean
@@ -73,6 +74,7 @@ export interface UnpostedFinancialIncome {
   vendor_name: string
   reference_no: string
   source_of_income: string
+  receipt_paths: string[]
   posting_status: 'unposted'
   editable: boolean
 }
@@ -147,6 +149,7 @@ export interface FinancialCategory {
 
 export interface AccountTotals {
   income_paise: number
+  added_income_paise: number
   expense_paise: number
 }
 
