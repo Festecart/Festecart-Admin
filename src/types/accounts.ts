@@ -147,6 +147,7 @@ export interface FinancialCategory {
   type: 'income' | 'expense'
   is_default?: boolean
   is_enabled?: boolean
+  is_permanently_deleted?: boolean
   created_at?: Timestamp
   updated_at?: Timestamp
 }

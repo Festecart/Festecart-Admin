@@ -849,23 +849,15 @@ export async function fetchOrderPaymentDetails(orderId: string): Promise<Array<{
 }
 
 export async function fetchVendors(): Promise<VendorOption[]> {
-  const snapshot = await getDocs(collection(db, 'vendors'))
-  return snapshot.docs
-    .filter(item => {
-      const data = item.data()
-      return data.is_financial_vendor === true
-        ? data.is_enabled !== false
-        : data.financial_vendor_enabled !== false
-    })
-    .map(item => ({
-      id: item.id,
-      name: financialVendorDisplayName(item.data(), item.id),
-    }))
+  return (await fetchFinancialVendors())
+    .filter(vendor => vendor.is_enabled)
+    .map(({ id, name }) => ({ id, name }))
 }
 
 export async function fetchFinancialVendors(): Promise<FinancialVendor[]> {
   const snapshot = await getDocs(collection(db, 'vendors'))
-  return snapshot.docs
+  const vendors = snapshot.docs
+    .filter(item => item.data().financial_vendor_permanently_deleted !== true)
     .map(item => {
       const data = item.data()
       const isDefault = data.is_financial_vendor !== true
@@ -883,6 +875,16 @@ export async function fetchFinancialVendors(): Promise<FinancialVendor[]> {
       }
     })
     .sort((left, right) => left.name.localeCompare(right.name))
+  const unique = new Map<string, FinancialVendor>()
+  for (const vendor of vendors) {
+    const key = normalizeFinancialVendorName(vendor.name)
+    const existing = unique.get(key)
+    if (!existing || (vendor.is_enabled && !existing.is_enabled) ||
+      (vendor.is_enabled === existing.is_enabled && existing.is_default === false && vendor.is_default)) {
+      unique.set(key, vendor)
+    }
+  }
+  return [...unique.values()]
 }
 
 export async function fetchFinancialCategories(): Promise<FinancialCategory[]> {
@@ -893,18 +895,21 @@ export async function fetchFinancialCategories(): Promise<FinancialCategory[]> {
   const history = readCategoryHistory(settingsSnapshot.exists() ? settingsSnapshot.data() : undefined)
   const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : undefined
   const managedDefaults = readManagedDefaultCategories(settings)
+  const deletedDefaultIds = readDeletedDefaultCategoryIds(settings)
   const defaults = [
     ...DEFAULT_FINANCIAL_CATEGORIES.map(name => ({ name, type: 'expense' as const })),
     ...DEFAULT_INCOME_CATEGORIES.map(name => ({ name, type: 'income' as const })),
   ].map(item => {
     const id = defaultFinancialCategoryId(item.type, item.name)
     const managed = managedDefaults[id]
+    const isPermanentlyDeleted = deletedDefaultIds.has(id)
     return {
       id,
       name: managed?.name ?? item.name,
       type: item.type,
       is_default: true,
-      is_enabled: managed?.is_enabled !== false,
+      is_enabled: !isPermanentlyDeleted && managed?.is_enabled !== false,
+      is_permanently_deleted: isPermanentlyDeleted,
       updated_at: managed?.updated_at,
     }
   })
@@ -920,7 +925,17 @@ export async function fetchFinancialCategories(): Promise<FinancialCategory[]> {
       : history[item.id]?.updated_at ??
         (item.data().created_at instanceof Timestamp ? item.data().created_at : undefined),
   }))
-  return [...defaults, ...custom].sort((left, right) => left.name.localeCompare(right.name))
+  const unique = new Map<string, FinancialCategory>()
+  const permanentlyDeletedDefaults = defaults.filter(category => category.is_permanently_deleted)
+  for (const category of [...defaults, ...custom].filter(category => !category.is_permanently_deleted)) {
+    const key = normalizeFinancialCategoryName(category.name)
+    const existing = unique.get(key)
+    if (!existing || (category.is_enabled !== false && existing.is_enabled === false) ||
+      (category.is_enabled === existing.is_enabled && existing.is_default === false && category.is_default)) {
+      unique.set(key, category)
+    }
+  }
+  return [...unique.values(), ...permanentlyDeletedDefaults].sort((left, right) => left.name.localeCompare(right.name))
 }
 
 function normalizePaymentMethod(value: string): string {
@@ -958,6 +973,35 @@ function readManagedDefaultCategories(
         : [],
     }]]
   }))
+}
+
+function readDeletedDefaultCategoryIds(data: DocumentData | undefined): Set<string> {
+  const validIds = new Set([
+    ...DEFAULT_FINANCIAL_CATEGORIES.map(name => defaultFinancialCategoryId('expense', name)),
+    ...DEFAULT_INCOME_CATEGORIES.map(name => defaultFinancialCategoryId('income', name)),
+  ])
+  return new Set(
+    (Array.isArray(data?.deleted_default_categories) ? data.deleted_default_categories : [])
+      .filter((id: unknown): id is string => typeof id === 'string' && validIds.has(id)),
+  )
+}
+
+function defaultFinancialCategoryNames(data: DocumentData | undefined): Set<string> {
+  const managedDefaults = readManagedDefaultCategories(data)
+  const names = [
+    ...DEFAULT_FINANCIAL_CATEGORIES.map(name => ({
+      name,
+      managed: managedDefaults[defaultFinancialCategoryId('expense', name)],
+    })),
+    ...DEFAULT_INCOME_CATEGORIES.map(name => ({
+      name,
+      managed: managedDefaults[defaultFinancialCategoryId('income', name)],
+    })),
+  ]
+  return new Set(names.flatMap(({ name, managed }) => [
+    name,
+    ...(managed ? [managed.name, ...managed.historical_names] : []),
+  ]).map(normalizeFinancialCategoryName))
 }
 
 function normalizeFinancialVendorName(value: string): string {
@@ -1050,6 +1094,22 @@ function readManagedDefaultPaymentMethods(value: unknown): FinancialPaymentMetho
   })
 }
 
+function readDeletedDefaultPaymentMethodIds(value: unknown): Set<string> {
+  const validIds = new Set(DEFAULT_FINANCIAL_PAYMENT_METHODS.map(defaultPaymentMethodId))
+  return new Set(
+    (Array.isArray(value) ? value : [])
+      .filter((id: unknown): id is string => typeof id === 'string' && validIds.has(id)),
+  )
+}
+
+function defaultPaymentMethodNames(data: DocumentData | undefined): Set<string> {
+  const managedDefaults = readManagedDefaultPaymentMethods(data?.managed_default_methods)
+  return new Set([
+    ...DEFAULT_FINANCIAL_PAYMENT_METHODS,
+    ...managedDefaults.flatMap(method => [method.name, ...(method.historical_names ?? [])]),
+  ].map(name => normalizePaymentMethod(name).toLocaleLowerCase()))
+}
+
 function readPaymentMethodUsage(value: unknown): Record<string, { method_id: string; expires_at: Timestamp }> {
   if (!value || typeof value !== 'object') return {}
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([id, entry]) => {
@@ -1064,6 +1124,7 @@ function readPaymentMethodUsage(value: unknown): Record<string, { method_id: str
 function paymentMethodsFromConfig(data: DocumentData | undefined): FinancialPaymentMethod[] {
   const managed = readManagedPaymentMethods(data?.managed_methods)
   const managedDefaults = readManagedDefaultPaymentMethods(data?.managed_default_methods)
+  const deletedDefaultIds = readDeletedDefaultPaymentMethodIds(data?.deleted_default_methods)
   const suppressedLegacyNames = new Set(
     [
       ...managed.flatMap(item => [item.legacy_name, ...(item.historical_names ?? [])]),
@@ -1088,6 +1149,7 @@ function paymentMethodsFromConfig(data: DocumentData | undefined): FinancialPaym
   })
   const defaults = DEFAULT_FINANCIAL_PAYMENT_METHODS.map(name => {
     const id = defaultPaymentMethodId(name)
+    if (deletedDefaultIds.has(id)) return null
     return managedDefaults.find(method => method.id === id) ?? {
       id,
       name,
@@ -1096,7 +1158,7 @@ function paymentMethodsFromConfig(data: DocumentData | undefined): FinancialPaym
     }
   })
   const unique = new Map<string, FinancialPaymentMethod>()
-  for (const method of [...defaults, ...managed, ...legacy]) {
+  for (const method of [...defaults.filter((item): item is FinancialPaymentMethod => item !== null), ...managed, ...legacy]) {
     const key = method.name.toLocaleLowerCase()
     const existing = unique.get(key)
     if (!existing || (method.is_enabled && !existing.is_enabled) ||
@@ -1175,7 +1237,11 @@ export async function saveFinancialPaymentMethod(input: {
       ? configured.find(method => method.id === input.id)
       : configured.find(method => !method.is_default && !method.is_enabled && method.name.toLocaleLowerCase() === normalized)
     if (input.id && !current) throw new Error('This payment method no longer exists.')
-    if (configured.some(method => method.id !== current?.id && method.is_enabled &&
+    if (!current?.is_default && defaultPaymentMethodNames(data).has(normalized)) {
+      throw new Error('That name is reserved for a default payment method.')
+    }
+    if (configured.some(method => method.id !== current?.id &&
+      (method.is_default || method.is_enabled) &&
       method.name.toLocaleLowerCase() === normalized)) {
       throw new Error('A payment method with that name already exists.')
     }
@@ -1277,31 +1343,10 @@ export async function deleteFinancialPaymentMethod(methodId: string): Promise<vo
 
     const now = Timestamp.now()
     if (method.is_default) {
-      if (!method.is_enabled) throw new Error('This payment method has already been removed.')
-      const managedDefaults = readManagedDefaultPaymentMethods(data.managed_default_methods)
-      const baseName = DEFAULT_FINANCIAL_PAYMENT_METHODS.find(name => defaultPaymentMethodId(name) === method.id)
-      const historicalNames = new Set([
-        ...(method.historical_names ?? []),
-        baseName,
-        method.name,
-      ].filter((value): value is string => Boolean(value)))
-      const removedMethod = {
-        ...method,
-        is_enabled: false,
-        updated_at: now,
-        historical_names: [...historicalNames],
-      }
-      const nextDefaults = managedDefaults.some(item => item.id === method.id)
-        ? managedDefaults.map(item => item.id === method.id ? removedMethod : item)
-        : [...managedDefaults, removedMethod]
+      const deletedDefaultIds = readDeletedDefaultPaymentMethodIds(data.deleted_default_methods)
+      if (deletedDefaultIds.has(method.id)) throw new Error('This payment method has already been permanently deleted.')
       transaction.set(configRef, {
-        managed_default_methods: nextDefaults.map(item => ({
-          id: item.id,
-          name: item.name,
-          is_enabled: item.is_enabled,
-          ...(item.updated_at ? { updated_at: item.updated_at } : {}),
-          historical_names: item.historical_names ?? [],
-        })),
+        deleted_default_methods: [...new Set([...deletedDefaultIds, method.id])],
         updated_by: actor.uid,
         updated_at: now,
         accounts_settings_updated_at: now,
@@ -1369,10 +1414,11 @@ export async function saveFinancialVendor(input: { id?: string; name: string }):
   const vendorsSnapshot = await getDocs(vendorsCollection)
   if (vendorsSnapshot.docs.some(item => {
     const data = item.data()
+    const isDefault = data.is_financial_vendor !== true
     const isInactive = data.is_financial_vendor === true
       ? data.is_enabled === false
       : data.financial_vendor_enabled === false
-    return item.id !== input.id && !isInactive &&
+    return item.id !== input.id && (isDefault || !isInactive) &&
       normalizeFinancialVendorName(financialVendorDisplayName(data, item.id)) === normalizedName
   })) {
     throw new Error('A vendor with that name already exists.')
@@ -1394,6 +1440,9 @@ export async function saveFinancialVendor(input: { id?: string; name: string }):
 
     if (vendorSnapshot.exists()) {
       const currentData = vendorSnapshot.data()
+      if (currentData.financial_vendor_permanently_deleted === true) {
+        throw new Error('This vendor has been permanently removed from Accounts.')
+      }
       if (currentData.is_financial_vendor === true) {
         transaction.update(vendorRef, {
           business_name: name,
@@ -1443,7 +1492,7 @@ export async function deleteFinancialVendor(vendorId: string): Promise<void> {
     const data = vendorSnapshot.data()
     const isCustom = data.is_financial_vendor === true
     const isEnabled = isCustom ? data.is_enabled !== false : data.financial_vendor_enabled !== false
-    if (!isEnabled) {
+    if (data.financial_vendor_permanently_deleted === true || (isCustom && !isEnabled)) {
       throw new Error('This vendor has already been removed.')
     }
     transaction.update(vendorRef, isCustom
@@ -1454,6 +1503,7 @@ export async function deleteFinancialVendor(vendorId: string): Promise<void> {
         }
       : {
           financial_vendor_enabled: false,
+          financial_vendor_permanently_deleted: true,
           financial_vendor_updated_by: actor.uid,
           financial_vendor_updated_at: now,
         })
@@ -1698,6 +1748,10 @@ export async function createFinancialCategory(nameInput: string, type: 'income' 
     if (snapshot.exists() && snapshot.data().is_enabled !== false) {
       throw new Error('A category with that name already exists.')
     }
+    const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : {}
+    if (defaultFinancialCategoryNames(settings).has(normalizeFinancialCategoryName(name))) {
+      throw new Error('That name is reserved for a default category.')
+    }
     if (snapshot.exists()) {
       transaction.update(categoryRef, { name, is_enabled: true })
     } else {
@@ -1710,7 +1764,6 @@ export async function createFinancialCategory(nameInput: string, type: 'income' 
         created_at: now,
       })
     }
-    const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : {}
     const history = readCategoryHistory(settings)
     const previousNames = history[categoryRef.id]?.names ?? []
     history[categoryRef.id] = { names: [...new Set([...previousNames, name])], updated_at: now }
@@ -1735,8 +1788,16 @@ export async function updateFinancialCategory(
   const categories = await fetchFinancialCategories()
   const currentCategory = categories.find(item => item.id === categoryId)
   if (!currentCategory) throw new Error('This category no longer exists.')
+  if (currentCategory.is_permanently_deleted) throw new Error('This category has been permanently deleted.')
+  if (!currentCategory.is_default) {
+    const settingsSnapshot = await getDoc(doc(db, 'site_config', PAYMENT_METHODS_CONFIG))
+    const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : undefined
+    if (defaultFinancialCategoryNames(settings).has(normalizeFinancialCategoryName(name))) {
+      throw new Error('That name is reserved for a default category.')
+    }
+  }
   if (categories.some(item =>
-    item.id !== categoryId && item.is_enabled !== false &&
+    item.id !== categoryId && (item.is_default || item.is_enabled !== false) &&
     normalizeFinancialCategoryName(item.name) === normalizeFinancialCategoryName(name))) {
     throw new Error('A category with that name already exists.')
   }
@@ -1805,8 +1866,27 @@ export async function updateFinancialCategory(
 }
 
 export async function deleteFinancialCategory(categoryId: string): Promise<void> {
+  const actor = requireActor()
   const category = (await fetchFinancialCategories()).find(item => item.id === categoryId)
   if (!category) throw new Error('This category no longer exists.')
+  if (category.is_permanently_deleted) throw new Error('This category has already been permanently deleted.')
+  if (category.is_default) {
+    const settingsRef = doc(db, 'site_config', PAYMENT_METHODS_CONFIG)
+    const now = Timestamp.now()
+    await runTransaction(db, async transaction => {
+      const settingsSnapshot = await transaction.get(settingsRef)
+      const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : {}
+      const deletedDefaultIds = readDeletedDefaultCategoryIds(settings)
+      if (deletedDefaultIds.has(categoryId)) throw new Error('This category has already been permanently deleted.')
+      transaction.set(settingsRef, {
+        deleted_default_categories: [...new Set([...deletedDefaultIds, categoryId])],
+        updated_by: actor.uid,
+        updated_at: now,
+        accounts_settings_updated_at: now,
+      }, { merge: true })
+    })
+    return
+  }
   if (category.is_enabled === false) throw new Error('This category has already been removed.')
   await updateFinancialCategory(categoryId, { name: category.name, is_enabled: false })
 }

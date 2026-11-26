@@ -33,9 +33,9 @@ import type { FinancialPaymentMethod, FinancialVendor } from '@/lib/accounts'
 import type { FinancialCategory } from '@/types/accounts'
 
 type SettingsDeleteTarget =
-  | { kind: 'payment'; id: string; name: string }
-  | { kind: 'category'; id: string; name: string }
-  | { kind: 'vendor'; id: string; name: string }
+  | { kind: 'payment'; id: string; name: string; isDefault: boolean }
+  | { kind: 'category'; id: string; name: string; isDefault: boolean }
+  | { kind: 'vendor'; id: string; name: string; isDefault: boolean }
 
 const inputClass = 'min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100'
 const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white transition-colors disabled:cursor-not-allowed disabled:opacity-50'
@@ -172,7 +172,7 @@ export function AccountsSettings() {
     is_enabled: true,
   }))
   const customMethods = methods.filter(method => !method.is_default && method.is_enabled)
-  const categories = categoriesQuery.data ?? []
+  const categories = (categoriesQuery.data ?? []).filter(category => !category.is_permanently_deleted)
   const defaultCategories = categories.filter(category => category.is_default)
   const customCategories = categories.filter(category =>
     !category.is_default && category.is_enabled !== false)
@@ -239,7 +239,9 @@ export function AccountsSettings() {
       if (target.kind === 'payment') await deleteFinancialPaymentMethod(target.id)
       else if (target.kind === 'category') await deleteFinancialCategory(target.id)
       else await deleteFinancialVendor(target.id)
-    }, `${target.kind === 'payment' ? 'Payment method' : target.kind === 'category' ? 'Category' : 'Vendor'} removed successfully.`)
+    }, target.isDefault
+      ? `${target.kind === 'payment' ? 'Payment method' : target.kind === 'category' ? 'Category' : 'Vendor'} permanently deleted.`
+      : `${target.kind === 'payment' ? 'Payment method' : target.kind === 'category' ? 'Category' : 'Vendor'} removed successfully.`)
     setDeleteTarget(null)
   }
 
@@ -354,7 +356,7 @@ export function AccountsSettings() {
                           onRestore={() => void perform(async () => {
                             await saveFinancialPaymentMethod({ id: method.id, name: method.name, is_enabled: true })
                           }, 'Payment method restored successfully.')}
-                          onDelete={() => setDeleteTarget({ kind: 'payment', id: method.id, name: method.name })}
+                          onDelete={() => setDeleteTarget({ kind: 'payment', id: method.id, name: method.name, isDefault: method.is_default })}
                         />
                       ))}
                       {customMethods.map(method => (
@@ -371,7 +373,7 @@ export function AccountsSettings() {
                             await saveFinancialPaymentMethod({ id: method.id, name: editingMethod?.name ?? method.name })
                             setEditingMethod(null)
                           }, 'Payment method updated successfully.')}
-                          onDelete={() => setDeleteTarget({ kind: 'payment', id: method.id, name: method.name })}
+                          onDelete={() => setDeleteTarget({ kind: 'payment', id: method.id, name: method.name, isDefault: method.is_default })}
                         />
                       ))}
                     </tbody>
@@ -435,7 +437,7 @@ export function AccountsSettings() {
                           onRestore={() => void perform(async () => {
                             await updateFinancialCategory(category.id, { name: category.name, is_enabled: true })
                           }, 'Category restored successfully.')}
-                          onDelete={() => setDeleteTarget({ kind: 'category', id: category.id, name: category.name })}
+                          onDelete={() => setDeleteTarget({ kind: 'category', id: category.id, name: category.name, isDefault: category.is_default === true })}
                         />
                       ))}
                       {customCategories.map(category => (
@@ -458,7 +460,7 @@ export function AccountsSettings() {
                           onRestore={() => void perform(async () => {
                             await updateFinancialCategory(category.id, { name: category.name, is_enabled: true })
                           }, 'Category restored successfully.')}
-                          onDelete={() => setDeleteTarget({ kind: 'category', id: category.id, name: category.name })}
+                          onDelete={() => setDeleteTarget({ kind: 'category', id: category.id, name: category.name, isDefault: category.is_default === true })}
                         />
                       ))}
                     </tbody>
@@ -523,7 +525,7 @@ export function AccountsSettings() {
                           onRestore={() => void perform(async () => {
                             await saveFinancialVendor({ id: vendor.id, name: vendor.name })
                           }, 'Vendor restored successfully.')}
-                          onDelete={() => setDeleteTarget({ kind: 'vendor', id: vendor.id, name: vendor.name })}
+                          onDelete={() => setDeleteTarget({ kind: 'vendor', id: vendor.id, name: vendor.name, isDefault: vendor.is_default })}
                         />
                       ))}
                     </tbody>
@@ -547,10 +549,16 @@ export function AccountsSettings() {
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-50 text-rose-600"><Trash2 size={18} /></span>
               <div>
                 <h2 id="settings-delete-title" className="font-semibold text-slate-900">
-                  {deleteTarget.kind === 'payment' ? 'Remove payment method?' : deleteTarget.kind === 'category' ? 'Delete category?' : 'Remove vendor?'}
+                  {deleteTarget.isDefault
+                    ? `Permanently delete ${deleteTarget.kind === 'payment' ? 'payment method' : deleteTarget.kind === 'category' ? 'category' : 'vendor'}?`
+                    : deleteTarget.kind === 'payment' ? 'Remove payment method?' : deleteTarget.kind === 'category' ? 'Delete category?' : 'Remove vendor?'}
                 </h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  {deleteTarget.kind === 'payment'
+                  {deleteTarget.isDefault
+                    ? deleteTarget.kind === 'vendor'
+                      ? `${deleteTarget.name} will be permanently removed from Accounts and cannot be restored. Its marketplace profile and historical records will remain unchanged.`
+                      : `${deleteTarget.name} will be permanently removed from Accounts and cannot be restored. Existing records will remain unchanged.`
+                    : deleteTarget.kind === 'payment'
                     ? `Remove '${deleteTarget.name}' from available payment methods? Existing transactions will remain unchanged.`
                     : deleteTarget.kind === 'vendor'
                       ? `${deleteTarget.name} will be hidden from Accounts forms. Its marketplace profile and historical records will remain unchanged.`
@@ -573,7 +581,9 @@ export function AccountsSettings() {
                 className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-50">Cancel</button>
               <button type="button" disabled={saving} onClick={() => void confirmDelete()}
                 className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50">
-                {saving ? (deleteTarget.kind === 'category' ? 'Deleting…' : 'Removing…') : (deleteTarget.kind === 'category' ? 'Delete' : 'Remove')}
+                {saving
+                  ? deleteTarget.isDefault ? 'Deleting permanently…' : deleteTarget.kind === 'category' ? 'Deleting…' : 'Removing…'
+                  : deleteTarget.isDefault ? 'Permanently Delete' : deleteTarget.kind === 'category' ? 'Delete' : 'Remove'}
               </button>
             </div>
           </section>
@@ -676,7 +686,10 @@ function PaymentMethodRow({
               <ActionIconButton label="Cancel editing" tone="cancel" onClick={() => onCancel?.()} disabled={saving} />
             </>
           ) : !method.is_enabled ? (
-            <ActionIconButton label={`Restore ${method.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
+            <>
+              <ActionIconButton label={`Restore ${method.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
+              {isDefault && <ActionIconButton label={`Permanently delete ${method.name}`} tone="delete" onClick={() => onDelete?.()} disabled={saving} />}
+            </>
           ) : (
             <>
               <ActionIconButton label={`Edit ${method.name}`} tone="edit" onClick={() => onEdit?.()} disabled={saving} />
@@ -743,7 +756,10 @@ function CategoryRow({
               <ActionIconButton label="Cancel editing" tone="cancel" onClick={() => onCancel?.()} disabled={saving} />
             </>
           ) : category.is_enabled === false ? (
-            <ActionIconButton label={`Restore ${category.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
+            <>
+              <ActionIconButton label={`Restore ${category.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
+              {isDefault && <ActionIconButton label={`Permanently delete ${category.name}`} tone="delete" onClick={() => onDelete?.()} disabled={saving} />}
+            </>
           ) : (
             <>
               <ActionIconButton label={`Edit ${category.name}`} tone="edit" onClick={() => onEdit?.()} disabled={saving} />
@@ -808,7 +824,10 @@ function VendorRow({
               <ActionIconButton label="Cancel editing" tone="cancel" onClick={() => onCancel?.()} disabled={saving} />
             </>
           ) : !vendor.is_enabled ? (
-            <ActionIconButton label={`Restore ${vendor.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
+            <>
+              <ActionIconButton label={`Restore ${vendor.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
+              {isDefault && <ActionIconButton label={`Permanently delete ${vendor.name}`} tone="delete" onClick={() => onDelete?.()} disabled={saving} />}
+            </>
           ) : (
             <>
               <ActionIconButton label={`Edit ${vendor.name}`} tone="edit" onClick={() => onEdit?.()} disabled={saving} />
