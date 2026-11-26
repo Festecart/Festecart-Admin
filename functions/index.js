@@ -864,13 +864,33 @@ function approvedFinancialPaymentMethods(config) {
   const customMethods = config && Array.isArray(config.custom_methods)
     ? config.custom_methods.filter(method => typeof method === 'string').map(method => method.trim()).filter(Boolean)
     : []
-  return [...DEFAULT_FINANCIAL_PAYMENT_METHODS, ...customMethods]
+  const managedDefaults = config && Array.isArray(config.managed_default_methods)
+    ? config.managed_default_methods.filter(method => method && typeof method === 'object')
+    : []
+  const defaults = DEFAULT_FINANCIAL_PAYMENT_METHODS.map(name => {
+    const id = `default_${name.toLocaleLowerCase().replace(/\s+/g, '_')}`
+    const managed = managedDefaults.find(method => method.id === id)
+    return {
+      name: typeof managed?.name === 'string' && managed.name.trim() ? managed.name.trim() : name,
+      is_enabled: managed?.is_enabled !== false,
+      historical_names: Array.isArray(managed?.historical_names)
+        ? managed.historical_names.filter(value => typeof value === 'string')
+        : [],
+    }
+  })
+  return [
+    ...defaults.flatMap(method => [
+      ...(method.is_enabled ? [method.name] : []),
+      ...method.historical_names,
+    ]),
+    ...customMethods,
+  ]
 }
 
 function assertApprovedFinancialPaymentMethod(method, config, allowEmpty) {
   if (!method && allowEmpty) return
   if (!approvedFinancialPaymentMethods(config).includes(method)) {
-    throw new HttpsError('invalid-argument', 'Choose Cash, UPI, Bank Transfer or a saved custom payment method.')
+    throw new HttpsError('invalid-argument', 'Choose an available payment method.')
   }
 }
 
@@ -1774,6 +1794,14 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
       throw new HttpsError('already-exists', 'This Expense ID already exists. Please enter a different ID.')
     }
     if (vendorRef && !vendorSnapshot.exists) throw new HttpsError('not-found', 'The selected vendor no longer exists.')
+    if (vendorRef) {
+      const vendorData = vendorSnapshot.data()
+      const isFinancialCustom = vendorData.is_financial_vendor === true
+      const vendorIsEnabled = isFinancialCustom
+        ? vendorData.is_enabled !== false
+        : vendorData.financial_vendor_enabled !== false
+      if (!vendorIsEnabled) throw new HttpsError('failed-precondition', 'The selected vendor is no longer available in Accounts.')
+    }
     assertApprovedFinancialPaymentMethod(
       paymentMethod,
       paymentMethodsSnapshot && paymentMethodsSnapshot.exists ? paymentMethodsSnapshot.data() : {},
@@ -1788,7 +1816,10 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
       throw new HttpsError('failed-precondition', 'Please select a tag created in Accounts → Tags.')
     }
     const canonicalVendorName = vendorSnapshot
-      ? String(vendorSnapshot.data().business_name || vendorSnapshot.data().name || suppliedVendorName).trim()
+      ? String(vendorSnapshot.data().financial_vendor_name ||
+        vendorSnapshot.data().business_name ||
+        vendorSnapshot.data().name ||
+        suppliedVendorName).trim()
       : ''
     const resolvedTagName = typeof tagName === 'string' ? tagName.trim() : null
     const paymentStatus = 'paid'
@@ -1912,11 +1943,26 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
     const outstanding = amount - paid
     const paymentStatus = expensePaymentStatus(paid, amount)
     const linkedQuery = db.collection('financial_transactions').where('linked_expense_id', '==', expenseId)
+    const vendorRef = vendorId ? db.collection('vendors').doc(vendorId) : null
     editPhase = 'reading linked payments'
-    const [linkedSnapshot, paymentMethodsSnapshot] = await Promise.all([
+    const [linkedSnapshot, paymentMethodsSnapshot, vendorSnapshot] = await Promise.all([
       transaction.get(linkedQuery),
       paymentMethod ? transaction.get(db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)) : Promise.resolve(null),
+      vendorRef ? transaction.get(vendorRef) : Promise.resolve(null),
     ])
+    if (vendorId && !vendorSnapshot.exists && vendorId !== current.vendor_id) {
+      throw new HttpsError('not-found', 'The selected vendor no longer exists.')
+    }
+    if (vendorSnapshot && vendorSnapshot.exists) {
+      const vendorData = vendorSnapshot.data()
+      const isFinancialCustom = vendorData.is_financial_vendor === true
+      const vendorIsEnabled = isFinancialCustom
+        ? vendorData.is_enabled !== false
+        : vendorData.financial_vendor_enabled !== false
+      if (!vendorIsEnabled && vendorId !== current.vendor_id) {
+        throw new HttpsError('failed-precondition', 'The selected vendor is no longer available in Accounts.')
+      }
+    }
     if (paymentMethod && paymentMethod !== current.payment_method) {
       assertApprovedFinancialPaymentMethod(
         paymentMethod,
@@ -1934,11 +1980,17 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
     }
 
     editPhase = 'writing expense and audit history'
+    const savedVendorName = vendorSnapshot && vendorSnapshot.exists
+      ? String(vendorSnapshot.data().financial_vendor_name ||
+        vendorSnapshot.data().business_name ||
+        vendorSnapshot.data().name ||
+        vendorName).trim()
+      : vendorName
     transaction.update(expenseRef, {
       description,
       category_name: categoryName,
       vendor_id: vendorId,
-      vendor_name: vendorName,
+      vendor_name: savedVendorName,
       payment_reference: paymentReference,
       reference_no: reference,
       transaction_date: date,
@@ -1973,7 +2025,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
           description,
           category_name: categoryName,
           vendor_id: vendorId,
-          vendor_name: vendorName,
+          vendor_name: savedVendorName,
           payment_reference: paymentReference,
           reference_no: reference,
           transaction_date: date,

@@ -8,6 +8,7 @@ import type {
   FinancialCategory,
   FestivalTag,
   NewIncomeInput,
+  VendorOption,
 } from '@/types/accounts'
 
 const PRESERVED_INCOME_TAG = '__preserved_income_tag__'
@@ -45,6 +46,9 @@ function incomeSaveErrorMessage(reason: unknown): string {
 }
 
 export function IncomeForm({
+  vendors,
+  vendorsLoading = false,
+  vendorsError = false,
   categories,
   festivalTags,
   saving,
@@ -53,6 +57,9 @@ export function IncomeForm({
   onSave,
   onUpdate,
 }: {
+  vendors: VendorOption[]
+  vendorsLoading?: boolean
+  vendorsError?: boolean
   categories: FinancialCategory[]
   festivalTags: FestivalTag[]
   saving: boolean
@@ -81,6 +88,13 @@ export function IncomeForm({
   const datePickerRef = useRef<HTMLInputElement>(null)
   const idempotencyKey = useRef(crypto.randomUUID())
   const selectedTags = festivalTags.filter(tag => tag.is_custom)
+  const vendorNames = [...new Set(vendors.map(item => item.name))]
+  const vendorOptions = [
+    ...(initialIncome?.vendor_name && !vendorNames.includes(initialIncome.vendor_name)
+      ? [{ value: initialIncome.vendor_name, label: initialIncome.vendor_name }]
+      : []),
+    ...vendorNames.map(name => ({ value: name, label: name })),
+  ]
   const selectedTag = selectedTags.find(tag => tag.id === tagId)
   const preservedTag = initialIncome &&
     (tagId === PRESERVED_INCOME_TAG
@@ -201,8 +215,9 @@ export function IncomeForm({
                 </select>
               </label>
               <label className="block text-sm font-medium text-slate-700">Vendor
-                <input value={vendor} onChange={event => setVendor(event.target.value)} maxLength={120}
-                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+                <AccountsSelect ariaLabel="Income vendor" value={vendor} options={vendorOptions}
+                  onChange={setVendor} placeholder={vendorsLoading ? 'Loading vendors…' : 'Select vendor'} />
+                {vendorsError && <span role="alert" className="mt-1.5 block text-xs text-rose-700">Vendor list could not be loaded. You can still save without selecting a vendor.</span>}
               </label>
               <label className="block text-sm font-medium text-slate-700">Reference Number
                 <input value={reference} onChange={event => setReference(event.target.value)} maxLength={200}

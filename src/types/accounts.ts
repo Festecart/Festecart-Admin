@@ -145,6 +145,7 @@ export interface FinancialCategory {
   id: string
   name: string
   type: 'income' | 'expense'
+  is_default?: boolean
   is_enabled?: boolean
   created_at?: Timestamp
   updated_at?: Timestamp

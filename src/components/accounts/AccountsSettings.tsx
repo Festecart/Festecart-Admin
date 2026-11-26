@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Store,
   Tag,
   Trash2,
   X,
@@ -16,23 +17,25 @@ import {
 import { useAuth } from '@/hooks/useAuth'
 import {
   createFinancialCategory,
-  DEFAULT_FINANCIAL_CATEGORIES,
   DEFAULT_FINANCIAL_PAYMENT_METHODS,
-  DEFAULT_INCOME_CATEGORIES,
   deleteFinancialCategory,
   deleteFinancialPaymentMethod,
+  deleteFinancialVendor,
   fetchFinancialCategories,
   fetchFinancialPaymentMethodSettings,
+  fetchFinancialVendors,
   fetchFinancialSettingsLastUpdated,
   saveFinancialPaymentMethod,
+  saveFinancialVendor,
   updateFinancialCategory,
 } from '@/lib/accounts'
-import type { FinancialPaymentMethod } from '@/lib/accounts'
+import type { FinancialPaymentMethod, FinancialVendor } from '@/lib/accounts'
 import type { FinancialCategory } from '@/types/accounts'
 
 type SettingsDeleteTarget =
   | { kind: 'payment'; id: string; name: string }
   | { kind: 'category'; id: string; name: string }
+  | { kind: 'vendor'; id: string; name: string }
 
 const inputClass = 'min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100'
 const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white transition-colors disabled:cursor-not-allowed disabled:opacity-50'
@@ -91,12 +94,12 @@ function PanelHeader({
   )
 }
 
-function RowIcon({ kind }: { kind: 'payment' | 'category' }) {
+function RowIcon({ kind }: { kind: 'payment' | 'category' | 'vendor' }) {
   return (
     <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${
-      kind === 'payment' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'
+      kind === 'payment' || kind === 'vendor' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'
     }`}>
-      {kind === 'payment' ? <CreditCard size={15} /> : <Tag size={15} />}
+      {kind === 'payment' ? <CreditCard size={15} /> : kind === 'vendor' ? <Store size={15} /> : <Tag size={15} />}
     </span>
   )
 }
@@ -141,6 +144,11 @@ export function AccountsSettings() {
     queryFn: fetchFinancialCategories,
     enabled: isAccountsAdmin,
   })
+  const vendorsQuery = useQuery({
+    queryKey: ['accounts', 'financial-vendors'],
+    queryFn: fetchFinancialVendors,
+    enabled: isAccountsAdmin,
+  })
   const updatedQuery = useQuery({
     queryKey: ['accounts', 'settings-last-updated'],
     queryFn: fetchFinancialSettingsLastUpdated,
@@ -148,36 +156,35 @@ export function AccountsSettings() {
   })
   const [methodName, setMethodName] = useState('')
   const [categoryName, setCategoryName] = useState('')
+  const [vendorName, setVendorName] = useState('')
   const [editingMethod, setEditingMethod] = useState<FinancialPaymentMethod | null>(null)
   const [editingCategory, setEditingCategory] = useState<FinancialCategory | null>(null)
+  const [editingVendor, setEditingVendor] = useState<FinancialVendor | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SettingsDeleteTarget | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const methods = methodsQuery.data ?? DEFAULT_FINANCIAL_PAYMENT_METHODS.map((name, index) => ({
-    id: `default_${index}`,
+  const methods = methodsQuery.data ?? DEFAULT_FINANCIAL_PAYMENT_METHODS.map(name => ({
+    id: `default_${name.toLocaleLowerCase().replace(/\s+/g, '_')}`,
     name,
     is_default: true,
     is_enabled: true,
   }))
   const customMethods = methods.filter(method => !method.is_default && method.is_enabled)
   const categories = categoriesQuery.data ?? []
-  const defaultCategories = [
-    ...DEFAULT_FINANCIAL_CATEGORIES.map(name => ({ name, type: 'expense' as const })),
-    ...DEFAULT_INCOME_CATEGORIES.map(name => ({ name, type: 'income' as const })),
-  ]
-  const defaultCategoryNames = new Set(defaultCategories.map(item =>
-    item.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()))
+  const defaultCategories = categories.filter(category => category.is_default)
   const customCategories = categories.filter(category =>
-    category.is_enabled !== false &&
-    !defaultCategoryNames.has(category.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()))
+    !category.is_default && category.is_enabled !== false)
+  const vendors = vendorsQuery.data ?? []
 
   async function refreshSettings() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['accounts', 'payment-method-settings'] }),
       queryClient.invalidateQueries({ queryKey: ['accounts', 'payment-methods'] }),
       queryClient.invalidateQueries({ queryKey: ['accounts', 'categories'] }),
+      queryClient.invalidateQueries({ queryKey: ['accounts', 'financial-vendors'] }),
+      queryClient.invalidateQueries({ queryKey: ['accounts', 'vendors'] }),
       queryClient.invalidateQueries({ queryKey: ['accounts', 'settings-last-updated'] }),
     ])
   }
@@ -217,13 +224,22 @@ export function AccountsSettings() {
     }, 'Category added successfully.')
   }
 
+  async function saveVendor(event: FormEvent) {
+    event.preventDefault()
+    await perform(async () => {
+      await saveFinancialVendor({ name: vendorName })
+      setVendorName('')
+    }, 'Vendor added successfully.')
+  }
+
   async function confirmDelete() {
     if (!deleteTarget) return
     const target = deleteTarget
     await perform(async () => {
       if (target.kind === 'payment') await deleteFinancialPaymentMethod(target.id)
-      else await deleteFinancialCategory(target.id)
-    }, `${target.kind === 'payment' ? 'Payment method' : 'Category'} deleted successfully.`)
+      else if (target.kind === 'category') await deleteFinancialCategory(target.id)
+      else await deleteFinancialVendor(target.id)
+    }, `${target.kind === 'payment' ? 'Payment method' : target.kind === 'category' ? 'Category' : 'Vendor'} removed successfully.`)
     setDeleteTarget(null)
   }
 
@@ -231,28 +247,36 @@ export function AccountsSettings() {
     return <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">Only authorized Accounts admins can manage these settings.</p>
   }
 
-  const isLoading = methodsQuery.isPending || categoriesQuery.isPending || updatedQuery.isPending
-  const loadError = methodsQuery.isError || categoriesQuery.isError || updatedQuery.isError
+  const isLoading = methodsQuery.isPending || categoriesQuery.isPending || vendorsQuery.isPending || updatedQuery.isPending
+  const loadError = methodsQuery.isError || categoriesQuery.isError || vendorsQuery.isError || updatedQuery.isError
 
   return (
     <div className="space-y-5">
       <header>
         <h2 className="text-xl font-bold tracking-tight text-slate-950">Accounts Settings</h2>
-        <p className="mt-1 text-sm text-slate-500">Manage custom payment methods and categories used across Accounts.</p>
+        <p className="mt-1 text-sm text-slate-500">Manage custom payment methods, categories, and vendors used across Accounts.</p>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Payment Methods"
-          value={isLoading ? '…' : loadError ? '—' : String(DEFAULT_FINANCIAL_PAYMENT_METHODS.length + customMethods.length)}
+          value={isLoading ? '…' : loadError ? '—' : String(methods.filter(method => method.is_enabled).length)}
           icon={<CreditCard size={18} />}
           tone="blue"
         />
         <StatCard
           label="Categories"
-          value={isLoading ? '…' : loadError ? '—' : String(defaultCategories.length + customCategories.length)}
+          value={isLoading ? '…' : loadError ? '—' : String(
+            defaultCategories.filter(category => category.is_enabled !== false).length + customCategories.length,
+          )}
           icon={<Tag size={18} />}
           tone="purple"
+        />
+        <StatCard
+          label="Vendors"
+          value={isLoading ? '…' : loadError ? '—' : String(vendors.filter(vendor => vendor.is_enabled).length)}
+          icon={<Store size={18} />}
+          tone="blue"
         />
         <StatCard
           label="Last Updated"
@@ -273,13 +297,14 @@ export function AccountsSettings() {
           <button type="button" onClick={() => {
             void methodsQuery.refetch()
             void categoriesQuery.refetch()
+            void vendorsQuery.refetch()
             void updatedQuery.refetch()
           }} className="ml-3 inline-flex items-center gap-1.5 font-semibold underline">
             <RefreshCw size={13} /> Retry
           </button>
         </div>
       ) : (
-        <div className="grid items-start gap-5 lg:grid-cols-2">
+        <div className="grid items-start gap-5 xl:grid-cols-3">
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <PanelHeader
               title="Payment Methods"
@@ -302,18 +327,35 @@ export function AccountsSettings() {
 
               <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[510px] table-fixed text-left">
+                  <table className="w-full min-w-[440px] table-fixed text-left">
                     <thead className="bg-slate-50">
                       <tr className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
-                        <th className="w-[42%] px-3 py-3">Method Name</th>
-                        <th className="w-[22%] px-3 py-3">Type</th>
-                        <th className="w-[22%] px-3 py-3">Updated</th>
-                        <th className="w-[14%] px-3 py-3 text-right">Actions</th>
+                        <th className="w-[35%] px-3 py-3">Method Name</th>
+                        <th className="w-[21%] px-3 py-3">Type</th>
+                        <th className="w-[21%] px-3 py-3">Updated</th>
+                        <th className="w-[23%] px-3 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {methods.filter(method => method.is_default).map(method => (
-                        <PaymentMethodRow key={method.id} method={method} />
+                        <PaymentMethodRow
+                          key={method.id}
+                          method={method}
+                          editing={editingMethod?.id === method.id}
+                          editName={editingMethod?.name ?? ''}
+                          saving={saving}
+                          onEditName={name => setEditingMethod({ ...method, name })}
+                          onEdit={() => { setError(''); setEditingMethod(method); setEditingCategory(null); setEditingVendor(null) }}
+                          onCancel={() => setEditingMethod(null)}
+                          onSave={() => void perform(async () => {
+                            await saveFinancialPaymentMethod({ id: method.id, name: editingMethod?.name ?? method.name })
+                            setEditingMethod(null)
+                          }, 'Payment method updated successfully.')}
+                          onRestore={() => void perform(async () => {
+                            await saveFinancialPaymentMethod({ id: method.id, name: method.name, is_enabled: true })
+                          }, 'Payment method restored successfully.')}
+                          onDelete={() => setDeleteTarget({ kind: 'payment', id: method.id, name: method.name })}
+                        />
                       ))}
                       {customMethods.map(method => (
                         <PaymentMethodRow
@@ -323,7 +365,7 @@ export function AccountsSettings() {
                           editName={editingMethod?.name ?? ''}
                           saving={saving}
                           onEditName={name => setEditingMethod({ ...method, name })}
-                          onEdit={() => { setError(''); setEditingMethod(method); setEditingCategory(null) }}
+                          onEdit={() => { setError(''); setEditingMethod(method); setEditingCategory(null); setEditingVendor(null) }}
                           onCancel={() => setEditingMethod(null)}
                           onSave={() => void perform(async () => {
                             await saveFinancialPaymentMethod({ id: method.id, name: editingMethod?.name ?? method.name })
@@ -343,7 +385,7 @@ export function AccountsSettings() {
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <PanelHeader
               title="Categories"
-              subtitle="Custom categories added here are available in both income and expense forms."
+              subtitle="Manage default and custom categories used in income and expense forms."
               icon={<Tag size={18} />}
               tone="purple"
             />
@@ -362,22 +404,39 @@ export function AccountsSettings() {
 
               <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[550px] table-fixed text-left">
+                  <table className="w-full min-w-[440px] table-fixed text-left">
                     <thead className="bg-slate-50">
                       <tr className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
-                        <th className="w-[38%] px-3 py-3">Category Name</th>
-                        <th className="w-[28%] px-3 py-3">Available in</th>
-                        <th className="w-[20%] px-3 py-3">Updated</th>
-                        <th className="w-[14%] px-3 py-3 text-right">Actions</th>
+                        <th className="w-[34%] px-3 py-3">Category Name</th>
+                        <th className="w-[24%] px-3 py-3">Available in</th>
+                        <th className="w-[19%] px-3 py-3">Updated</th>
+                        <th className="w-[23%] px-3 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {defaultCategories.map(item => (
-                        <CategoryRow key={`${item.type}-${item.name}`} category={{
-                          id: `default-${item.type}-${item.name}`,
-                          name: item.name,
-                          type: item.type,
-                        }} isDefault />
+                      {defaultCategories.map(category => (
+                        <CategoryRow
+                          key={category.id}
+                          category={category}
+                          isDefault
+                          editing={editingCategory?.id === category.id}
+                          editName={editingCategory?.name ?? ''}
+                          saving={saving}
+                          onEditName={name => setEditingCategory({ ...category, name })}
+                          onEdit={() => { setError(''); setEditingCategory(category); setEditingMethod(null); setEditingVendor(null) }}
+                          onCancel={() => setEditingCategory(null)}
+                          onSave={() => void perform(async () => {
+                            await updateFinancialCategory(category.id, {
+                              name: editingCategory?.name ?? category.name,
+                              is_enabled: category.is_enabled !== false,
+                            })
+                            setEditingCategory(null)
+                          }, 'Category updated successfully.')}
+                          onRestore={() => void perform(async () => {
+                            await updateFinancialCategory(category.id, { name: category.name, is_enabled: true })
+                          }, 'Category restored successfully.')}
+                          onDelete={() => setDeleteTarget({ kind: 'category', id: category.id, name: category.name })}
+                        />
                       ))}
                       {customCategories.map(category => (
                         <CategoryRow
@@ -387,7 +446,7 @@ export function AccountsSettings() {
                           editName={editingCategory?.name ?? ''}
                           saving={saving}
                           onEditName={name => setEditingCategory({ ...category, name })}
-                          onEdit={() => { setError(''); setEditingCategory(category); setEditingMethod(null) }}
+                          onEdit={() => { setError(''); setEditingCategory(category); setEditingMethod(null); setEditingVendor(null) }}
                           onCancel={() => setEditingCategory(null)}
                           onSave={() => void perform(async () => {
                             await updateFinancialCategory(category.id, {
@@ -396,12 +455,81 @@ export function AccountsSettings() {
                             })
                             setEditingCategory(null)
                           }, 'Category updated successfully.')}
+                          onRestore={() => void perform(async () => {
+                            await updateFinancialCategory(category.id, { name: category.name, is_enabled: true })
+                          }, 'Category restored successfully.')}
                           onDelete={() => setDeleteTarget({ kind: 'category', id: category.id, name: category.name })}
                         />
                       ))}
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <PanelHeader
+              title="Vendors"
+              subtitle="Manage vendor names used in Accounts forms without changing marketplace vendor profiles."
+              icon={<Store size={18} />}
+              tone="blue"
+            />
+            <div className="p-5 sm:p-6">
+              <form onSubmit={saveVendor} className="space-y-2.5">
+                <label htmlFor="settings-vendor-name" className="block text-xs font-semibold text-slate-700">Vendor Name</label>
+                <div className="flex flex-wrap gap-2">
+                  <input id="settings-vendor-name" value={vendorName} onChange={event => setVendorName(event.target.value)}
+                    placeholder="Enter custom vendor" maxLength={120} required className={inputClass} />
+                  <button type="submit" disabled={saving || !vendorName.trim()}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50">
+                    <Plus size={15} /> Save
+                  </button>
+                </div>
+              </form>
+
+              <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[440px] table-fixed text-left">
+                    <thead className="bg-slate-50">
+                      <tr className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
+                        <th className="w-[35%] px-3 py-3">Vendor Name</th>
+                        <th className="w-[21%] px-3 py-3">Type</th>
+                        <th className="w-[21%] px-3 py-3">Updated</th>
+                        <th className="w-[23%] px-3 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {vendors.map(vendor => (
+                        <VendorRow
+                          key={vendor.id}
+                          vendor={vendor}
+                          isDefault={vendor.is_default}
+                          editing={editingVendor?.id === vendor.id}
+                          editName={editingVendor?.name ?? ''}
+                          saving={saving}
+                          onEditName={name => setEditingVendor({ ...vendor, name })}
+                          onEdit={() => {
+                            setError('')
+                            setEditingVendor(vendor)
+                            setEditingMethod(null)
+                            setEditingCategory(null)
+                          }}
+                          onCancel={() => setEditingVendor(null)}
+                          onSave={() => void perform(async () => {
+                            await saveFinancialVendor({ id: vendor.id, name: editingVendor?.name ?? vendor.name })
+                            setEditingVendor(null)
+                          }, 'Vendor updated successfully.')}
+                          onRestore={() => void perform(async () => {
+                            await saveFinancialVendor({ id: vendor.id, name: vendor.name })
+                          }, 'Vendor restored successfully.')}
+                          onDelete={() => setDeleteTarget({ kind: 'vendor', id: vendor.id, name: vendor.name })}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {vendors.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-500">No vendors have been added.</p>}
               </div>
             </div>
           </section>
@@ -418,11 +546,15 @@ export function AccountsSettings() {
             <div className="flex items-start gap-3">
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-50 text-rose-600"><Trash2 size={18} /></span>
               <div>
-                <h2 id="settings-delete-title" className="font-semibold text-slate-900">{deleteTarget.kind === 'payment' ? 'Remove payment method?' : 'Delete category?'}</h2>
+                <h2 id="settings-delete-title" className="font-semibold text-slate-900">
+                  {deleteTarget.kind === 'payment' ? 'Remove payment method?' : deleteTarget.kind === 'category' ? 'Delete category?' : 'Remove vendor?'}
+                </h2>
                 <p className="mt-1 text-sm text-slate-600">
                   {deleteTarget.kind === 'payment'
                     ? `Remove '${deleteTarget.name}' from available payment methods? Existing transactions will remain unchanged.`
-                    : `${deleteTarget.name} will be removed from future dropdowns. Historical records are retained.`}
+                    : deleteTarget.kind === 'vendor'
+                      ? `${deleteTarget.name} will be hidden from Accounts forms. Its marketplace profile and historical records will remain unchanged.`
+                      : `${deleteTarget.name} will be removed from future dropdowns. Historical records are retained.`}
                 </p>
               </div>
             </div>
@@ -431,12 +563,17 @@ export function AccountsSettings() {
                 Existing transactions will keep their saved category name.
               </p>
             )}
+            {deleteTarget.kind === 'vendor' && (
+              <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500">
+                Existing expense records will keep their saved vendor details.
+              </p>
+            )}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" disabled={saving} onClick={() => setDeleteTarget(null)}
                 className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-50">Cancel</button>
               <button type="button" disabled={saving} onClick={() => void confirmDelete()}
                 className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50">
-                {saving ? (deleteTarget.kind === 'payment' ? 'Removing…' : 'Deleting…') : (deleteTarget.kind === 'payment' ? 'Remove' : 'Delete')}
+                {saving ? (deleteTarget.kind === 'category' ? 'Deleting…' : 'Removing…') : (deleteTarget.kind === 'category' ? 'Delete' : 'Remove')}
               </button>
             </div>
           </section>
@@ -498,6 +635,7 @@ function PaymentMethodRow({
   onEdit,
   onCancel,
   onSave,
+  onRestore,
   onDelete,
 }: {
   method: FinancialPaymentMethod
@@ -508,6 +646,7 @@ function PaymentMethodRow({
   onEdit?: () => void
   onCancel?: () => void
   onSave?: () => void
+  onRestore?: () => void
   onDelete?: () => void
 }) {
   const isDefault = method.is_default
@@ -522,15 +661,22 @@ function PaymentMethodRow({
             : <span className="truncate text-sm font-medium text-slate-800">{method.name}</span>}
         </div>
       </td>
-      <td className="px-3 py-3"><TypeBadge kind={isDefault ? 'default' : 'custom'}>{isDefault ? 'Default' : 'Custom'}</TypeBadge></td>
+      <td className="px-3 py-3">
+        <div className="flex flex-wrap items-center gap-1">
+          <TypeBadge kind={isDefault ? 'default' : 'custom'}>{isDefault ? 'Default' : 'Custom'}</TypeBadge>
+          {!method.is_enabled && <span className="text-[11px] text-slate-400">Removed</span>}
+        </div>
+      </td>
       <td className="px-3 py-3 text-xs text-slate-500">{formatUpdated(method.updated_at)}</td>
       <td className="px-3 py-3">
         <div className="flex justify-end gap-1">
-          {isDefault ? <span className="pr-1 text-xs text-slate-400">Protected</span> : editing ? (
+          {editing ? (
             <>
               <ActionIconButton label="Save payment method" tone="save" onClick={() => onSave?.()} disabled={saving || !editName.trim()} />
               <ActionIconButton label="Cancel editing" tone="cancel" onClick={() => onCancel?.()} disabled={saving} />
             </>
+          ) : !method.is_enabled ? (
+            <ActionIconButton label={`Restore ${method.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
           ) : (
             <>
               <ActionIconButton label={`Edit ${method.name}`} tone="edit" onClick={() => onEdit?.()} disabled={saving} />
@@ -553,6 +699,7 @@ function CategoryRow({
   onEdit,
   onCancel,
   onSave,
+  onRestore,
   onDelete,
 }: {
   category: FinancialCategory
@@ -564,6 +711,7 @@ function CategoryRow({
   onEdit?: () => void
   onCancel?: () => void
   onSave?: () => void
+  onRestore?: () => void
   onDelete?: () => void
 }) {
   return (
@@ -583,20 +731,88 @@ function CategoryRow({
             {isDefault ? category.type === 'income' ? 'Income' : 'Expense' : 'Income & Expense'}
           </span>
           <TypeBadge kind={isDefault ? 'default' : 'custom'}>{isDefault ? 'Default' : 'Custom'}</TypeBadge>
+          {category.is_enabled === false && <span className="text-[11px] text-slate-400">Removed</span>}
         </div>
       </td>
       <td className="px-3 py-3 text-xs text-slate-500">{formatUpdated(category.updated_at ?? category.created_at)}</td>
       <td className="px-3 py-3">
         <div className="flex justify-end gap-1">
-          {isDefault ? <span className="pr-1 text-xs text-slate-400">Protected</span> : editing ? (
+          {editing ? (
             <>
               <ActionIconButton label="Save category" tone="save" onClick={() => onSave?.()} disabled={saving || !editName.trim()} />
               <ActionIconButton label="Cancel editing" tone="cancel" onClick={() => onCancel?.()} disabled={saving} />
             </>
+          ) : category.is_enabled === false ? (
+            <ActionIconButton label={`Restore ${category.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
           ) : (
             <>
-              <ActionIconButton label={`Edit ${category.name}`} tone="edit" onClick={() => onEdit?.()} />
-              <ActionIconButton label={`Delete ${category.name}`} tone="delete" onClick={() => onDelete?.()} />
+              <ActionIconButton label={`Edit ${category.name}`} tone="edit" onClick={() => onEdit?.()} disabled={saving} />
+              <ActionIconButton label={`Delete ${category.name}`} tone="delete" onClick={() => onDelete?.()} disabled={saving} />
+            </>
+          )}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+function VendorRow({
+  vendor,
+  isDefault = false,
+  editing = false,
+  editName = '',
+  saving = false,
+  onEditName,
+  onEdit,
+  onCancel,
+  onSave,
+  onRestore,
+  onDelete,
+}: {
+  vendor: FinancialVendor
+  isDefault?: boolean
+  editing?: boolean
+  editName?: string
+  saving?: boolean
+  onEditName?: (name: string) => void
+  onEdit?: () => void
+  onCancel?: () => void
+  onSave?: () => void
+  onRestore?: () => void
+  onDelete?: () => void
+}) {
+  return (
+    <tr className="group">
+      <td className="px-3 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <RowIcon kind="vendor" />
+          {editing
+            ? <input autoFocus aria-label={`Edit ${vendor.name}`} value={editName}
+                onChange={event => onEditName?.(event.target.value)} maxLength={120}
+                className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-400" />
+            : <span className="truncate text-sm font-medium text-slate-800">{vendor.name}</span>}
+        </div>
+      </td>
+      <td className="px-3 py-3">
+        <div className="flex flex-wrap items-center gap-1">
+          <TypeBadge kind={isDefault ? 'default' : 'custom'}>{isDefault ? 'Default' : 'Custom'}</TypeBadge>
+          {!vendor.is_enabled && <span className="text-[11px] text-slate-400">Removed</span>}
+        </div>
+      </td>
+      <td className="px-3 py-3 text-xs text-slate-500">{formatUpdated(vendor.updated_at ?? vendor.created_at)}</td>
+      <td className="px-3 py-3">
+        <div className="flex justify-end gap-1">
+          {editing ? (
+            <>
+              <ActionIconButton label="Save vendor" tone="save" onClick={() => onSave?.()} disabled={saving || !editName.trim()} />
+              <ActionIconButton label="Cancel editing" tone="cancel" onClick={() => onCancel?.()} disabled={saving} />
+            </>
+          ) : !vendor.is_enabled ? (
+            <ActionIconButton label={`Restore ${vendor.name}`} tone="save" onClick={() => onRestore?.()} disabled={saving} />
+          ) : (
+            <>
+              <ActionIconButton label={`Edit ${vendor.name}`} tone="edit" onClick={() => onEdit?.()} disabled={saving} />
+              <ActionIconButton label={`Remove ${vendor.name}`} tone="delete" onClick={() => onDelete?.()} disabled={saving} />
             </>
           )}
         </div>

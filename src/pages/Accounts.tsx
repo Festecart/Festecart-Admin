@@ -1160,54 +1160,10 @@ export default function Accounts() {
                           <td className="whitespace-nowrap px-3 py-2">{item.dateLabel}</td>
                           <td className="px-3 py-2">{item.tag}</td>
                           <td className="px-3 py-2">
-                            {incomeRecordEdit?.id === item.id ? (
-                              <div className="space-y-1">
-                                <input aria-label="Income vendor" value={incomeRecordEdit.vendor}
-                                  onChange={event => setIncomeRecordEdit(current => current ? { ...current, vendor: event.target.value } : current)}
-                                  maxLength={120} placeholder="Vendor"
-                                  className="w-full rounded-lg border border-slate-300 px-2 py-0.5 text-xs" />
-                                <input aria-label="Income payment reference" value={incomeRecordEdit.paymentReference}
-                                  onChange={event => setIncomeRecordEdit(current => current ? { ...current, paymentReference: event.target.value } : current)}
-                                  maxLength={200} placeholder="Payment ref"
-                                  className="w-full rounded-lg border border-slate-300 px-2 py-0.5 text-xs" />
-                                <input aria-label="Income reference number" value={incomeRecordEdit.reference}
-                                  onChange={event => setIncomeRecordEdit(current => current ? { ...current, reference: event.target.value } : current)}
-                                  maxLength={200} placeholder="Reference"
-                                  className="w-full rounded-lg border border-slate-300 px-2 py-0.5 text-xs" />
-                                <div className="flex items-center gap-1">
-                                  <button type="button" disabled={editIncomeMutation.isPending}
-                                    onClick={() => void saveIncomeRecordEdit(item.id, item.input)}
-                                    aria-label="Save income record details"
-                                    className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
-                                    <Check size={15} />
-                                  </button>
-                                  <button type="button" onClick={() => { setIncomeRecordEdit(null); setIncomeRecordEditError('') }}
-                                    aria-label="Cancel income record edit"
-                                    className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">
-                                    <X size={15} />
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <>
-                                <p className="leading-tight">
-                                  {item.vendor}
-                                  {item.editable && (
-                                    <button type="button" onClick={() => startIncomeRecordEdit(item.id, item.input)}
-                                      aria-label="Edit income record details"
-                                      className="ml-1 inline-flex rounded-lg p-1 align-middle text-slate-500 hover:bg-slate-100">
-                                      <Pencil size={14} />
-                                    </button>
-                                  )}
-                                </p>
-                                <p className="mt-0.5 text-xs leading-tight text-slate-500">Payment ref: {item.paymentReference}</p>
-                                <p className="mt-0.5 text-xs leading-tight text-slate-500">Reference: {item.reference}</p>
-                              </>
-                            )}
+                            <p className="leading-tight">{item.vendor}</p>
+                            <p className="mt-0.5 text-xs leading-tight text-slate-500">Payment ref: {item.paymentReference}</p>
+                            <p className="mt-0.5 text-xs leading-tight text-slate-500">Reference: {item.reference}</p>
                             <IncomeReceipts transactionId={item.id} receiptPaths={item.receiptPaths} />
-                            {incomeRecordEditError && incomeRecordEdit?.id === item.id && (
-                              <p role="alert" className="mt-1 max-w-[220px] text-xs text-rose-700">{incomeRecordEditError}</p>
-                            )}
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-1">
@@ -1818,6 +1774,9 @@ export default function Accounts() {
       {(showIncomeForm || editingIncome) && (
         <IncomeForm
           key={editingIncome ? `edit-income-${editingIncome.id}` : 'new-income'}
+          vendors={vendorsQuery.data ?? []}
+          vendorsLoading={vendorsQuery.isFetching}
+          vendorsError={vendorsQuery.isError}
           categories={categoriesQuery.data ?? []}
           festivalTags={festivalTagsQuery.data ?? []}
           initialIncome={editingIncome?.input}

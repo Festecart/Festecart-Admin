@@ -72,6 +72,13 @@ export interface FinancialPaymentMethod {
   legacy_name?: string
 }
 
+export interface FinancialVendor extends VendorOption {
+  is_default: boolean
+  is_enabled: boolean
+  created_at?: Timestamp
+  updated_at?: Timestamp
+}
+
 function requireActor() {
   const user = auth.currentUser
   if (!user) throw new Error('Sign in with an admin account to use Accounts.')
@@ -843,10 +850,39 @@ export async function fetchOrderPaymentDetails(orderId: string): Promise<Array<{
 
 export async function fetchVendors(): Promise<VendorOption[]> {
   const snapshot = await getDocs(collection(db, 'vendors'))
-  return snapshot.docs.map(item => ({
-    id: item.id,
-    name: String(item.data().business_name ?? item.data().name ?? item.id),
-  }))
+  return snapshot.docs
+    .filter(item => {
+      const data = item.data()
+      return data.is_financial_vendor === true
+        ? data.is_enabled !== false
+        : data.financial_vendor_enabled !== false
+    })
+    .map(item => ({
+      id: item.id,
+      name: financialVendorDisplayName(item.data(), item.id),
+    }))
+}
+
+export async function fetchFinancialVendors(): Promise<FinancialVendor[]> {
+  const snapshot = await getDocs(collection(db, 'vendors'))
+  return snapshot.docs
+    .map(item => {
+      const data = item.data()
+      const isDefault = data.is_financial_vendor !== true
+      return {
+        id: item.id,
+        name: financialVendorDisplayName(data, item.id),
+        is_default: isDefault,
+        is_enabled: isDefault
+          ? data.financial_vendor_enabled !== false
+          : data.is_enabled !== false,
+        created_at: data.created_at instanceof Timestamp ? data.created_at : undefined,
+        updated_at: isDefault
+          ? data.financial_vendor_updated_at instanceof Timestamp ? data.financial_vendor_updated_at : undefined
+          : data.updated_at instanceof Timestamp ? data.updated_at : undefined,
+      }
+    })
+    .sort((left, right) => left.name.localeCompare(right.name))
 }
 
 export async function fetchFinancialCategories(): Promise<FinancialCategory[]> {
@@ -855,10 +891,28 @@ export async function fetchFinancialCategories(): Promise<FinancialCategory[]> {
     getDoc(doc(db, 'site_config', PAYMENT_METHODS_CONFIG)),
   ])
   const history = readCategoryHistory(settingsSnapshot.exists() ? settingsSnapshot.data() : undefined)
-  return snapshot.docs.map(item => ({
+  const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : undefined
+  const managedDefaults = readManagedDefaultCategories(settings)
+  const defaults = [
+    ...DEFAULT_FINANCIAL_CATEGORIES.map(name => ({ name, type: 'expense' as const })),
+    ...DEFAULT_INCOME_CATEGORIES.map(name => ({ name, type: 'income' as const })),
+  ].map(item => {
+    const id = defaultFinancialCategoryId(item.type, item.name)
+    const managed = managedDefaults[id]
+    return {
+      id,
+      name: managed?.name ?? item.name,
+      type: item.type,
+      is_default: true,
+      is_enabled: managed?.is_enabled !== false,
+      updated_at: managed?.updated_at,
+    }
+  })
+  const custom: FinancialCategory[] = snapshot.docs.map(item => ({
     id: item.id,
     name: String(item.data().name ?? ''),
     type: item.data().type === 'income' ? 'income' : 'expense',
+    is_default: false,
     is_enabled: item.data().is_enabled !== false,
     created_at: item.data().created_at instanceof Timestamp ? item.data().created_at : undefined,
     updated_at: item.data().updated_at instanceof Timestamp
@@ -866,6 +920,7 @@ export async function fetchFinancialCategories(): Promise<FinancialCategory[]> {
       : history[item.id]?.updated_at ??
         (item.data().created_at instanceof Timestamp ? item.data().created_at : undefined),
   }))
+  return [...defaults, ...custom].sort((left, right) => left.name.localeCompare(right.name))
 }
 
 function normalizePaymentMethod(value: string): string {
@@ -876,12 +931,51 @@ function normalizeFinancialCategoryName(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
 }
 
+function defaultFinancialCategoryId(type: 'income' | 'expense', name: string): string {
+  return `default_${type}_${encodeURIComponent(name.toLocaleLowerCase())}`
+}
+
+function readManagedDefaultCategories(
+  data: DocumentData | undefined,
+): Record<string, { name: string; is_enabled: boolean; updated_at?: Timestamp; historical_names: string[] }> {
+  const raw = data?.managed_default_categories
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const validIds = new Set([
+    ...DEFAULT_FINANCIAL_CATEGORIES.map(name => defaultFinancialCategoryId('expense', name)),
+    ...DEFAULT_INCOME_CATEGORIES.map(name => defaultFinancialCategoryId('income', name)),
+  ])
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>).flatMap(([id, value]) => {
+    if (!validIds.has(id) || !value || typeof value !== 'object') return []
+    const item = value as Record<string, unknown>
+    const name = typeof item.name === 'string' ? item.name.trim().replace(/\s+/g, ' ') : ''
+    if (!name) return []
+    return [[id, {
+      name,
+      is_enabled: item.is_enabled !== false,
+      ...(item.updated_at instanceof Timestamp ? { updated_at: item.updated_at } : {}),
+      historical_names: Array.isArray(item.historical_names)
+        ? item.historical_names.filter((entry: unknown): entry is string => typeof entry === 'string')
+        : [],
+    }]]
+  }))
+}
+
+function normalizeFinancialVendorName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function financialVendorDisplayName(data: DocumentData, id: string): string {
+  return String(data.financial_vendor_name ?? data.business_name ?? data.name ?? id)
+}
+
 export function getFinancialCategoryOptions(categories: FinancialCategory[]): string[] {
+  const hasLoadedDefaultCategories = categories.some(category => category.is_default)
   const names = [
-    ...DEFAULT_FINANCIAL_CATEGORIES,
-    ...DEFAULT_INCOME_CATEGORIES,
+    ...(hasLoadedDefaultCategories
+      ? categories.filter(category => category.is_default && category.is_enabled !== false).map(category => category.name)
+      : [...DEFAULT_FINANCIAL_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]),
     ...categories
-      .filter(category => category.is_enabled !== false)
+      .filter(category => !category.is_default && category.is_enabled !== false)
       .map(category => category.name),
   ]
   const uniqueNames = new Map<string, string>()
@@ -931,6 +1025,31 @@ function readManagedPaymentMethods(value: unknown): Array<FinancialPaymentMethod
   })
 }
 
+function defaultPaymentMethodId(name: string): string {
+  return `default_${name.toLocaleLowerCase().replace(/\s+/g, '_')}`
+}
+
+function readManagedDefaultPaymentMethods(value: unknown): FinancialPaymentMethod[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item: unknown) => {
+    if (!item || typeof item !== 'object') return []
+    const data = item as Record<string, unknown>
+    const id = typeof data.id === 'string' ? data.id : ''
+    const name = typeof data.name === 'string' ? normalizePaymentMethod(data.name) : ''
+    if (!id || !name || !DEFAULT_FINANCIAL_PAYMENT_METHODS.some(method => defaultPaymentMethodId(method) === id)) return []
+    return [{
+      id,
+      name,
+      is_default: true,
+      is_enabled: data.is_enabled !== false,
+      updated_at: data.updated_at instanceof Timestamp ? data.updated_at : undefined,
+      historical_names: Array.isArray(data.historical_names)
+        ? data.historical_names.filter((entry: unknown): entry is string => typeof entry === 'string').map(normalizePaymentMethod)
+        : [],
+    }]
+  })
+}
+
 function readPaymentMethodUsage(value: unknown): Record<string, { method_id: string; expires_at: Timestamp }> {
   if (!value || typeof value !== 'object') return {}
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([id, entry]) => {
@@ -944,11 +1063,12 @@ function readPaymentMethodUsage(value: unknown): Record<string, { method_id: str
 
 function paymentMethodsFromConfig(data: DocumentData | undefined): FinancialPaymentMethod[] {
   const managed = readManagedPaymentMethods(data?.managed_methods)
+  const managedDefaults = readManagedDefaultPaymentMethods(data?.managed_default_methods)
   const suppressedLegacyNames = new Set(
-    managed.flatMap(item => [
-      item.legacy_name,
-      ...(item.historical_names ?? []),
-    ]).map(name => name?.toLocaleLowerCase()).filter((name): name is string => Boolean(name)),
+    [
+      ...managed.flatMap(item => [item.legacy_name, ...(item.historical_names ?? [])]),
+      ...managedDefaults.flatMap(item => [item.name, ...(item.historical_names ?? [])]),
+    ].map(name => name?.toLocaleLowerCase()).filter((name): name is string => Boolean(name)),
   )
   const names = Array.isArray(data?.custom_methods)
     ? data.custom_methods.filter((name: unknown): name is string => typeof name === 'string')
@@ -966,16 +1086,21 @@ function paymentMethodsFromConfig(data: DocumentData | undefined): FinancialPaym
       updated_at: data?.updated_at instanceof Timestamp ? data.updated_at : undefined,
     }]
   })
-  const defaults = DEFAULT_FINANCIAL_PAYMENT_METHODS.map(name => ({
-    id: `default_${name.toLocaleLowerCase().replace(/\s+/g, '_')}`,
-    name,
-    is_default: true,
-    is_enabled: true,
-  }))
+  const defaults = DEFAULT_FINANCIAL_PAYMENT_METHODS.map(name => {
+    const id = defaultPaymentMethodId(name)
+    return managedDefaults.find(method => method.id === id) ?? {
+      id,
+      name,
+      is_default: true,
+      is_enabled: true,
+    }
+  })
   const unique = new Map<string, FinancialPaymentMethod>()
   for (const method of [...defaults, ...managed, ...legacy]) {
     const key = method.name.toLocaleLowerCase()
-    if (!unique.has(key) || (unique.get(key)?.id.startsWith('legacy_') && !method.id.startsWith('legacy_'))) {
+    const existing = unique.get(key)
+    if (!existing || (method.is_enabled && !existing.is_enabled) ||
+      (existing.id.startsWith('legacy_') && !method.id.startsWith('legacy_'))) {
       unique.set(key, method)
     }
   }
@@ -1049,20 +1174,51 @@ export async function saveFinancialPaymentMethod(input: {
     const current = input.id
       ? configured.find(method => method.id === input.id)
       : configured.find(method => !method.is_default && !method.is_enabled && method.name.toLocaleLowerCase() === normalized)
-    if (input.id && (!current || current.is_default)) {
-      throw new Error('This custom payment method no longer exists or cannot be changed.')
-    }
-    if (configured.some(method =>
-      method.id !== current?.id && method.name.toLocaleLowerCase() === normalized)) {
+    if (input.id && !current) throw new Error('This payment method no longer exists.')
+    if (configured.some(method => method.id !== current?.id && method.is_enabled &&
+      method.name.toLocaleLowerCase() === normalized)) {
       throw new Error('A payment method with that name already exists.')
     }
+    const updatedAt = Timestamp.now()
+    const historicalNames = new Set([
+      ...(current?.historical_names ?? []),
+      ...(current && current.name !== name ? [current.name] : []),
+    ].map(normalizePaymentMethod).filter(Boolean))
+
+    if (current?.is_default) {
+      const method: FinancialPaymentMethod = {
+        ...current,
+        name,
+        is_enabled: input.is_enabled ?? current.is_enabled,
+        updated_at: updatedAt,
+        historical_names: [...historicalNames],
+      }
+      const managedDefaults = readManagedDefaultPaymentMethods(data.managed_default_methods)
+      const nextDefaults = managedDefaults.some(item => item.id === method.id)
+        ? managedDefaults.map(item => item.id === method.id ? method : item)
+        : [...managedDefaults, method]
+      transaction.set(configRef, {
+        managed_default_methods: nextDefaults.map(item => ({
+          id: item.id,
+          name: item.name,
+          is_enabled: item.is_enabled,
+          ...(item.updated_at ? { updated_at: item.updated_at } : {}),
+          historical_names: item.historical_names ?? [],
+        })),
+        updated_by: actor.uid,
+        updated_at: updatedAt,
+        accounts_settings_updated_at: updatedAt,
+      }, { merge: true })
+      saved = method
+      return
+    }
+
     const managed = readManagedPaymentMethods(data.managed_methods)
     const id = input.id ?? current?.id ?? generatedId
     const existingManaged = managed.find(method => method.id === id)
     const legacyName = existingManaged?.legacy_name ??
       (current?.id.startsWith('legacy_') ? current.name : undefined)
-    const updatedAt = Timestamp.now()
-    const historicalNames = new Set([
+    const customHistoricalNames = new Set([
       ...(existingManaged?.historical_names ?? []),
       ...(existingManaged?.legacy_name ? [existingManaged.legacy_name] : []),
       ...(current && current.name !== name ? [current.name] : []),
@@ -1073,7 +1229,7 @@ export async function saveFinancialPaymentMethod(input: {
       is_default: false,
       is_enabled: input.is_enabled ?? (input.id ? current?.is_enabled ?? true : true),
       updated_at: updatedAt,
-      historical_names: [...historicalNames],
+      historical_names: [...customHistoricalNames],
       ...(legacyName ? { legacy_name: legacyName } : {}),
     }
     const nextManaged = existingManaged
@@ -1117,9 +1273,42 @@ export async function deleteFinancialPaymentMethod(methodId: string): Promise<vo
     const data = snapshot.exists() ? snapshot.data() : {}
     const configured = paymentMethodsFromConfig(data)
     const method = configured.find(item => item.id === methodId)
-    if (!method || method.is_default) throw new Error('This custom payment method cannot be deleted.')
+    if (!method) throw new Error('This payment method no longer exists.')
 
     const now = Timestamp.now()
+    if (method.is_default) {
+      if (!method.is_enabled) throw new Error('This payment method has already been removed.')
+      const managedDefaults = readManagedDefaultPaymentMethods(data.managed_default_methods)
+      const baseName = DEFAULT_FINANCIAL_PAYMENT_METHODS.find(name => defaultPaymentMethodId(name) === method.id)
+      const historicalNames = new Set([
+        ...(method.historical_names ?? []),
+        baseName,
+        method.name,
+      ].filter((value): value is string => Boolean(value)))
+      const removedMethod = {
+        ...method,
+        is_enabled: false,
+        updated_at: now,
+        historical_names: [...historicalNames],
+      }
+      const nextDefaults = managedDefaults.some(item => item.id === method.id)
+        ? managedDefaults.map(item => item.id === method.id ? removedMethod : item)
+        : [...managedDefaults, removedMethod]
+      transaction.set(configRef, {
+        managed_default_methods: nextDefaults.map(item => ({
+          id: item.id,
+          name: item.name,
+          is_enabled: item.is_enabled,
+          ...(item.updated_at ? { updated_at: item.updated_at } : {}),
+          historical_names: item.historical_names ?? [],
+        })),
+        updated_by: actor.uid,
+        updated_at: now,
+        accounts_settings_updated_at: now,
+      }, { merge: true })
+      return
+    }
+
     const pendingUsage = Object.fromEntries(Object.entries(readPaymentMethodUsage(data.pending_payment_method_usage))
       .filter(([, entry]) => entry.expires_at.toMillis() > now.toMillis()))
     if (Object.values(pendingUsage).some(entry => entry.method_id === method.id)) {
@@ -1129,7 +1318,7 @@ export async function deleteFinancialPaymentMethod(methodId: string): Promise<vo
     const managed = readManagedPaymentMethods(data.managed_methods)
       .filter(item => item.id !== method.id)
     const remaining = configured.filter(item => item.id !== method.id)
-    transaction.update(configRef, {
+    transaction.set(configRef, {
       custom_methods: remaining
         .filter(item => !item.is_default && item.is_enabled)
         .map(item => item.name),
@@ -1145,7 +1334,7 @@ export async function deleteFinancialPaymentMethod(methodId: string): Promise<vo
       updated_by: actor.uid,
       updated_at: now,
       accounts_settings_updated_at: now,
-    })
+    }, { merge: true })
   })
 }
 
@@ -1169,6 +1358,111 @@ export async function fetchFinancialSettingsLastUpdated(): Promise<Timestamp | n
     (latest, timestamp) => !latest || timestamp.toMillis() > latest.toMillis() ? timestamp : latest,
     null,
   )
+}
+
+export async function saveFinancialVendor(input: { id?: string; name: string }): Promise<void> {
+  const actor = requireActor()
+  const name = input.name.trim().replace(/\s+/g, ' ')
+  if (!name || name.length > 120) throw new Error('Vendor names must contain 1–120 characters.')
+  const normalizedName = normalizeFinancialVendorName(name)
+  const vendorsCollection = collection(db, 'vendors')
+  const vendorsSnapshot = await getDocs(vendorsCollection)
+  if (vendorsSnapshot.docs.some(item => {
+    const data = item.data()
+    const isInactive = data.is_financial_vendor === true
+      ? data.is_enabled === false
+      : data.financial_vendor_enabled === false
+    return item.id !== input.id && !isInactive &&
+      normalizeFinancialVendorName(financialVendorDisplayName(data, item.id)) === normalizedName
+  })) {
+    throw new Error('A vendor with that name already exists.')
+  }
+
+  const vendorRef = input.id
+    ? doc(db, 'vendors', input.id)
+    : doc(vendorsCollection, `financial_${encodeURIComponent(normalizedName)}`)
+  const settingsRef = doc(db, 'site_config', PAYMENT_METHODS_CONFIG)
+  const now = Timestamp.now()
+  await runTransaction(db, async transaction => {
+    const vendorSnapshot = await transaction.get(vendorRef)
+    if (input.id && !vendorSnapshot.exists()) {
+      throw new Error('This vendor no longer exists.')
+    }
+    if (!input.id && vendorSnapshot.exists() && vendorSnapshot.data().is_financial_vendor !== true) {
+      throw new Error('A vendor with that name already exists.')
+    }
+
+    if (vendorSnapshot.exists()) {
+      const currentData = vendorSnapshot.data()
+      if (currentData.is_financial_vendor === true) {
+        transaction.update(vendorRef, {
+          business_name: name,
+          name,
+          is_enabled: true,
+          updated_by: actor.uid,
+          updated_at: now,
+        })
+      } else {
+        transaction.update(vendorRef, {
+          financial_vendor_name: name,
+          financial_vendor_enabled: true,
+          financial_vendor_updated_by: actor.uid,
+          financial_vendor_updated_at: now,
+        })
+      }
+    } else {
+      transaction.set(vendorRef, {
+        business_name: name,
+        name,
+        is_financial_vendor: true,
+        is_enabled: true,
+        status: 'accounts_custom',
+        created_by: actor.uid,
+        created_by_name: actor.name,
+        created_at: now,
+        updated_by: actor.uid,
+        updated_at: now,
+      })
+    }
+    transaction.set(settingsRef, {
+      updated_by: actor.uid,
+      updated_at: now,
+      accounts_settings_updated_at: now,
+    }, { merge: true })
+  })
+}
+
+export async function deleteFinancialVendor(vendorId: string): Promise<void> {
+  const actor = requireActor()
+  const vendorRef = doc(db, 'vendors', vendorId)
+  const settingsRef = doc(db, 'site_config', PAYMENT_METHODS_CONFIG)
+  const now = Timestamp.now()
+  await runTransaction(db, async transaction => {
+    const vendorSnapshot = await transaction.get(vendorRef)
+    if (!vendorSnapshot.exists()) throw new Error('This vendor no longer exists.')
+    const data = vendorSnapshot.data()
+    const isCustom = data.is_financial_vendor === true
+    const isEnabled = isCustom ? data.is_enabled !== false : data.financial_vendor_enabled !== false
+    if (!isEnabled) {
+      throw new Error('This vendor has already been removed.')
+    }
+    transaction.update(vendorRef, isCustom
+      ? {
+          is_enabled: false,
+          updated_by: actor.uid,
+          updated_at: now,
+        }
+      : {
+          financial_vendor_enabled: false,
+          financial_vendor_updated_by: actor.uid,
+          financial_vendor_updated_at: now,
+        })
+    transaction.set(settingsRef, {
+      updated_by: actor.uid,
+      updated_at: now,
+      accounts_settings_updated_at: now,
+    }, { merge: true })
+  })
 }
 
 export async function createUnpostedFinancialIncome(
@@ -1381,8 +1675,9 @@ export async function createFinancialCategory(nameInput: string, type: 'income' 
   const actor = requireActor()
   const name = nameInput.trim().replace(/\s+/g, ' ')
   if (!name || name.length > 80) throw new Error('Category names must contain 1–80 characters.')
-  const defaults = [...DEFAULT_FINANCIAL_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]
-  if (defaults.some(item => normalizeFinancialCategoryName(item) === normalizeFinancialCategoryName(name))) {
+  const availableCategories = await fetchFinancialCategories()
+  if (availableCategories.some(item => item.is_enabled !== false &&
+    normalizeFinancialCategoryName(item.name) === normalizeFinancialCategoryName(name))) {
     throw new Error('That category is already available.')
   }
   const categories = await getDocs(collection(db, CATEGORIES))
@@ -1437,30 +1732,61 @@ export async function updateFinancialCategory(
   if (!categoryId || !name || name.length > 80 || typeof input.is_enabled !== 'boolean') {
     throw new Error('Enter a category name and status.')
   }
-  const categoryRef = doc(db, CATEGORIES, categoryId)
-  const snapshot = await getDoc(categoryRef)
-  if (!snapshot.exists()) throw new Error('This category no longer exists.')
-  const currentData = snapshot.data()
-  const type = currentData.type === 'income' ? 'income' : currentData.type === 'expense' ? 'expense' : null
-  if (!type) throw new Error('This category has an unsupported type.')
-  const defaults = [...DEFAULT_FINANCIAL_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]
-  if (defaults.some(item => normalizeFinancialCategoryName(item) === normalizeFinancialCategoryName(name))) {
-    throw new Error('That category is already available as a default.')
-  }
-  const categories = await getDocs(collection(db, CATEGORIES))
-  if (categories.docs.some(item =>
-    item.id !== categoryId && item.data().is_enabled !== false &&
-    normalizeFinancialCategoryName(String(item.data().name ?? '')) === normalizeFinancialCategoryName(name))) {
+  const categories = await fetchFinancialCategories()
+  const currentCategory = categories.find(item => item.id === categoryId)
+  if (!currentCategory) throw new Error('This category no longer exists.')
+  if (categories.some(item =>
+    item.id !== categoryId && item.is_enabled !== false &&
+    normalizeFinancialCategoryName(item.name) === normalizeFinancialCategoryName(name))) {
     throw new Error('A category with that name already exists.')
   }
+
   const settingsRef = doc(db, 'site_config', PAYMENT_METHODS_CONFIG)
   const now = Timestamp.now()
+  if (currentCategory.is_default) {
+    await runTransaction(db, async transaction => {
+      const settingsSnapshot = await transaction.get(settingsRef)
+      const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : {}
+      const overrides = readManagedDefaultCategories(settings)
+      const existing = overrides[categoryId]
+      const history = readCategoryHistory(settings)
+      const previousNames = new Set([
+        ...(existing?.historical_names ?? []),
+        currentCategory.name,
+        name,
+      ].filter(Boolean))
+      overrides[categoryId] = {
+        name,
+        is_enabled: input.is_enabled,
+        updated_at: now,
+        historical_names: [...previousNames],
+      }
+      const previousHistory = history[categoryId]?.names ?? []
+      history[categoryId] = {
+        names: [...new Set([...previousHistory, currentCategory.name, name].filter(Boolean))],
+        updated_at: now,
+      }
+      transaction.set(settingsRef, {
+        managed_default_categories: overrides,
+        category_history: history,
+        updated_by: actor.uid,
+        updated_at: now,
+        accounts_settings_updated_at: now,
+      }, { merge: true })
+    })
+    return
+  }
+
+  const categoryRef = doc(db, CATEGORIES, categoryId)
   await runTransaction(db, async transaction => {
     const [current, settingsSnapshot] = await Promise.all([
       transaction.get(categoryRef),
       transaction.get(settingsRef),
     ])
     if (!current.exists()) throw new Error('This category no longer exists.')
+    const currentData = current.data()
+    const type = currentData.type === 'income' ? 'income' : currentData.type === 'expense' ? 'expense' : null
+    if (!type) throw new Error('This category has an unsupported type.')
     const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : {}
     const history = readCategoryHistory(settings)
     const previousNames = history[categoryId]?.names ?? []
@@ -1479,18 +1805,10 @@ export async function updateFinancialCategory(
 }
 
 export async function deleteFinancialCategory(categoryId: string): Promise<void> {
-  requireActor()
-  const categoryRef = doc(db, CATEGORIES, categoryId)
-  const categorySnapshot = await getDoc(categoryRef)
-  if (!categorySnapshot.exists()) throw new Error('This category no longer exists.')
-  const category = categorySnapshot.data()
-  if (category.is_enabled === false) throw new Error('This category has already been deleted.')
-  const defaults = [...DEFAULT_FINANCIAL_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]
-  const name = String(category.name ?? '')
-  if (defaults.some(item => normalizeFinancialCategoryName(item) === normalizeFinancialCategoryName(name))) {
-    throw new Error('Default categories are protected and cannot be deleted.')
-  }
-  await updateFinancialCategory(categoryId, { name, is_enabled: false })
+  const category = (await fetchFinancialCategories()).find(item => item.id === categoryId)
+  if (!category) throw new Error('This category no longer exists.')
+  if (category.is_enabled === false) throw new Error('This category has already been removed.')
+  await updateFinancialCategory(categoryId, { name: category.name, is_enabled: false })
 }
 
 export async function fetchVendorDueTotal(): Promise<number> {

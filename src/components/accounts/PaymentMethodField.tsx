@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AccountsSelect } from '@/components/accounts/AccountsSelect'
 import {
-  DEFAULT_FINANCIAL_PAYMENT_METHODS,
-  fetchFinancialPaymentMethods,
+  fetchFinancialPaymentMethodSettings,
   setFinancialPaymentMethodPendingUse,
 } from '@/lib/accounts'
 
@@ -20,19 +19,18 @@ export function PaymentMethodField({
 }) {
   const methodsQuery = useQuery({
     queryKey: ['accounts', 'payment-methods'],
-    queryFn: fetchFinancialPaymentMethods,
+    queryFn: fetchFinancialPaymentMethodSettings,
   })
   const [usageError, setUsageError] = useState('')
-  const methods = methodsQuery.data ?? []
+  const methods = methodsQuery.data?.filter(method => method.is_enabled).map(method => method.name) ?? []
   const options = [
     ...(value && legacyValue === value && !methods.includes(value)
       ? [{ value, label: `Existing: ${value}` }]
       : []),
     ...methods.map(method => ({ value: method, label: method })),
   ]
-  const selectedCustomMethod = value &&
-    methods.includes(value) &&
-    !DEFAULT_FINANCIAL_PAYMENT_METHODS.includes(value)
+  const selectedCustomMethod = methodsQuery.data?.some(method =>
+    method.name === value && method.is_enabled && !method.is_default)
     ? value
     : ''
 
