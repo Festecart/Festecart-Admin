@@ -115,7 +115,7 @@ export function ExpenseForm({
     ? [...categoryOptions, initialExpense.category_name]
     : categoryOptions
   const canSave = !saving && !isSubmitting.current &&
-    Boolean(hasValidExpenseId && validDate && isValidAmount && hasValidTag && paymentMethod.trim())
+    Boolean(description.trim() && hasValidExpenseId && validDate && isValidAmount && hasValidTag && paymentMethod.trim())
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -124,6 +124,7 @@ export function ExpenseForm({
     setError('')
     try {
       const categoryName = category
+      if (!description.trim()) throw new Error('Enter a description.')
       if (!validDate) throw new Error('Enter a valid date in DD/MM/YYYY format.')
       if (festivalTagIdValue && (!festivalTagName || (!initialExpense && !hasCreatedTag))) {
         throw new Error('Select a created tag or clear the Tag field to continue without one.')
@@ -183,12 +184,12 @@ export function ExpenseForm({
         </div>
         <div className="grid gap-6 sm:grid-cols-2">
           <div className="space-y-4">
-            <label className="block text-sm font-semibold text-slate-700">Description <span className="text-rose-600" aria-hidden="true">**</span>
-              <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
+            <label className="block text-sm font-semibold text-slate-700">Description <span className="text-rose-600" aria-hidden="true">*</span>
+              <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250} required
                 placeholder="What was purchased or paid for?"
                 className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
             </label>
-            <label className="block text-sm font-semibold text-slate-700">Amount (₹) <span className="text-rose-600" aria-hidden="true">**</span>
+            <label className="block text-sm font-semibold text-slate-700">Amount (₹) <span className="text-rose-600" aria-hidden="true">*</span>
               <input type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
                 className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
             </label>
@@ -197,13 +198,13 @@ export function ExpenseForm({
                 options={expenseCategoryOptions.map(item => ({ value: item, label: item }))}
                 onChange={setCategory} placeholder="Select category" />
             </label>
-            <label className="block text-sm font-semibold text-slate-700">Payment Method <span className="text-rose-600" aria-hidden="true">**</span>
+            <label className="block text-sm font-semibold text-slate-700">Payment Method <span className="text-rose-600" aria-hidden="true">*</span>
               <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} required
                 legacyValue={initialExpense?.payment_method} />
             </label>
           </div>
           <div className="space-y-4">
-            <label className="block text-sm font-semibold text-slate-700">Expense Date <span className="text-rose-600" aria-hidden="true">**</span>
+            <label className="block text-sm font-semibold text-slate-700">Expense Date <span className="text-rose-600" aria-hidden="true">*</span>
               <span className="mt-1.5 flex gap-2">
                 <input type="text" inputMode="numeric" autoComplete="off" maxLength={10} value={date}
                   onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required

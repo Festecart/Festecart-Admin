@@ -894,7 +894,7 @@ function assertApprovedFinancialPaymentMethod(method, config, allowEmpty) {
   }
 }
 
-function normalizeIncomeInput(input, allowIncomplete, allowEmptyPaymentMethod = false) {
+function normalizeIncomeInput(input, allowIncomplete) {
   if (!input || typeof input !== 'object') throw new HttpsError('invalid-argument', 'Income details are required.')
   const amount = input.amount_paise == null || input.amount_paise === ''
     ? null
@@ -902,12 +902,9 @@ function normalizeIncomeInput(input, allowIncomplete, allowEmptyPaymentMethod = 
   const transactionDate = input.transaction_date == null || input.transaction_date === ''
     ? null
     : requireDate(input.transaction_date, 'Income date')
-  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, true)
+  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, allowIncomplete)
   if (!allowIncomplete && amount == null) throw new HttpsError('invalid-argument', 'Enter an amount to confirm this income.')
   if (!allowIncomplete && transactionDate == null) throw new HttpsError('invalid-argument', 'Choose an income date to confirm this income.')
-  if (!allowIncomplete && !allowEmptyPaymentMethod && !paymentMethod) {
-    throw new HttpsError('invalid-argument', 'Choose a payment method to confirm this income.')
-  }
   const festivalTag = requireFestivalTag(input.festival_tag)
   const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
   return {
@@ -916,12 +913,12 @@ function normalizeIncomeInput(input, allowIncomplete, allowEmptyPaymentMethod = 
     festival_tag: festivalTag,
     festival_tag_id: festivalTagId,
     category_name: requireText(input.category_name, 'Category', 80, true),
-    description: requireText(input.description, 'Description', 250, true),
+    description: requireText(input.description, 'Description', 250, allowIncomplete),
     payment_method: paymentMethod,
     vendor_name: requireText(input.vendor_name, 'Vendor', 120, true),
     payment_reference: requireText(input.payment_reference, 'Payment reference', 200, true),
     reference_no: requireText(input.reference_no, 'Reference number', 200, true),
-    source_of_income: requireText(input.source_of_income, 'Source of income', 120, true),
+    source_of_income: requireText(input.source_of_income, 'Source of income', 120, allowIncomplete),
   }
 }
 
@@ -943,7 +940,7 @@ function resolveConfiguredFestivalTag(tagId, suppliedName, config) {
 exports.createUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   const actor = await requireAccountsAdmin(request)
   const data = request.data && typeof request.data === 'object' ? request.data : {}
-  const input = normalizeIncomeInput(data.input, false, true)
+  const input = normalizeIncomeInput(data.input, false)
   const idempotencyKey = requireText(data.idempotency_key, 'Income idempotency key', 120, false)
   if (!/^[A-Za-z0-9_-]+$/.test(idempotencyKey)) {
     throw new HttpsError('invalid-argument', 'The income idempotency key is invalid.')
@@ -973,7 +970,7 @@ exports.createUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, 
     }
 
     const paymentConfig = paymentConfigSnapshot.exists ? paymentConfigSnapshot.data() : {}
-    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, true)
+    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, false)
     const tagConfig = tagConfigSnapshot.exists ? tagConfigSnapshot.data() : {}
     const festivalTag = resolveConfiguredFestivalTag(input.festival_tag_id, input.festival_tag, tagConfig)
 
@@ -1024,7 +1021,7 @@ exports.editUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, as
   const data = request.data && typeof request.data === 'object' ? request.data : {}
   const transactionId = requireRecordId(data.transaction_id, 'Income record ID')
   const rawInput = data.input && typeof data.input === 'object' ? data.input : {}
-  const input = normalizeIncomeInput(rawInput, false, true)
+  const input = normalizeIncomeInput(rawInput, false)
   const transactionRef = db.collection('financial_transactions').doc(transactionId)
   const paymentConfigRef = db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)
   const tagConfigRef = db.collection('site_config').doc('financial_festivals')
@@ -1050,7 +1047,7 @@ exports.editUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, as
     }
 
     const paymentConfig = paymentConfigSnapshot.exists ? paymentConfigSnapshot.data() : {}
-    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, true)
+    assertApprovedFinancialPaymentMethod(input.payment_method, paymentConfig, false)
     const tagConfig = tagConfigSnapshot.exists ? tagConfigSnapshot.data() : {}
     const savedTagId = income.festival_tag_id ?? null
     const requestedTagId = rawInput.festival_tag_id ?? null
@@ -1598,16 +1595,6 @@ exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
       linkedExpense.is_full_amount_spending === true &&
       current.is_unallocated_expense_payment === true,
     )
-    const linkedExpenseIdValue = linkedExpense && typeof linkedExpense.expense_id === 'string' &&
-      /^[A-Za-z0-9-]{1,64}$/.test(linkedExpense.expense_id)
-      ? linkedExpense.expense_id
-      : null
-    const linkedExpenseIdRegistryRef = isFullAmountExpense && linkedExpenseIdValue
-      ? db.collection('financial_expense_id_registry').doc(linkedExpenseIdValue.toUpperCase())
-      : null
-    const linkedExpenseIdRegistrySnapshot = linkedExpenseIdRegistryRef
-      ? await transaction.get(linkedExpenseIdRegistryRef)
-      : null
     if (isFullAmountExpense) {
       const linkedTransactions = await transaction.get(
         db.collection('financial_transactions').where('linked_expense_id', '==', current.linked_expense_id),
@@ -1690,16 +1677,6 @@ exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
       transaction.update(openingBalanceAccountRef, openingBalanceUpdate)
     }
     if (isFullAmountExpense && expenseRef) {
-      if (linkedExpenseIdRegistryRef && linkedExpenseIdRegistrySnapshot && !linkedExpenseIdRegistrySnapshot.exists) {
-        transaction.create(linkedExpenseIdRegistryRef, {
-          expense_id: linkedExpenseIdValue,
-          expense_document_id: expenseRef.id,
-          created_by: actor.uid,
-          created_at: now,
-          deleted_at: now,
-          deleted_by: actor.uid,
-        })
-      }
       transaction.delete(expenseRef)
     }
   }).catch(function(error) {
@@ -1755,7 +1732,7 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
   if (expenseId && !/^[A-Za-z0-9-]+$/.test(expenseId)) {
     throw new HttpsError('invalid-argument', 'The Expense ID is invalid.')
   }
-  const description = requireText(input.description, 'Description', 250, true)
+  const description = requireText(input.description, 'Description', 250, false)
   const categoryName = requireText(input.category_name, 'Category', 80, true)
   const vendorId = input.vendor_id == null || input.vendor_id === '' ? null : requireRecordId(input.vendor_id, 'Vendor ID')
   const suppliedVendorName = requireText(input.vendor_name, 'Vendor name', 120, true)
@@ -1770,12 +1747,6 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
   const expenseCollection = db.collection('financial_expenses')
   const expenseRef = expenseCollection.doc()
   const expenseDocumentId = expenseRef.id
-  const expenseIdKey = expenseId.toUpperCase()
-  const expenseIdRef = expenseId ? db.collection('financial_expense_id_registry').doc(expenseIdKey) : null
-  const existingExpenseQueries = expenseId ? [expenseCollection.where('expense_id', '==', expenseId)] : []
-  if (expenseId && expenseIdKey !== expenseId) {
-    existingExpenseQueries.push(expenseCollection.where('expense_id', '==', expenseIdKey))
-  }
   const paymentRef = db.collection('financial_transactions').doc()
   const vendorRef = vendorId ? db.collection('vendors').doc(vendorId) : null
   const tagsRef = db.collection('site_config').doc('financial_festivals')
@@ -1783,16 +1754,11 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
   const now = Timestamp.now()
 
   await db.runTransaction(async function(transaction) {
-    const [expenseIdSnapshot, existingExpenseSnapshots, vendorSnapshot, tagsSnapshot, paymentMethodsSnapshot] = await Promise.all([
-      expenseIdRef ? transaction.get(expenseIdRef) : Promise.resolve(null),
-      Promise.all(existingExpenseQueries.map(existingQuery => transaction.get(existingQuery))),
+    const [vendorSnapshot, tagsSnapshot, paymentMethodsSnapshot] = await Promise.all([
       vendorRef ? transaction.get(vendorRef) : Promise.resolve(null),
       festivalTagId ? transaction.get(tagsRef) : Promise.resolve(null),
       paymentMethod ? transaction.get(paymentMethodsRef) : Promise.resolve(null),
     ])
-    if ((expenseIdSnapshot && expenseIdSnapshot.exists) || existingExpenseSnapshots.some(snapshot => !snapshot.empty)) {
-      throw new HttpsError('already-exists', 'This Expense ID already exists. Please enter a different ID.')
-    }
     if (vendorRef && !vendorSnapshot.exists) throw new HttpsError('not-found', 'The selected vendor no longer exists.')
     if (vendorRef) {
       const vendorData = vendorSnapshot.data()
@@ -1823,14 +1789,6 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
       : ''
     const resolvedTagName = typeof tagName === 'string' ? tagName.trim() : null
     const paymentStatus = 'paid'
-    if (expenseIdRef) {
-      transaction.create(expenseIdRef, {
-        expense_id: expenseId,
-        expense_document_id: expenseRef.id,
-        created_by: actor.uid,
-        created_at: now,
-      })
-    }
     transaction.set(expenseRef, {
       expense_id: expenseId,
       description,
@@ -1901,7 +1859,6 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
       adminAuthorizationSucceeded: true,
       expenseId,
       expenseDocumentId,
-      ...(expenseIdKey ? { expenseIdRegistryPath: `financial_expense_id_registry/${expenseIdKey}` } : {}),
     })
     throw error
   })
@@ -2106,15 +2063,6 @@ exports.deleteFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
     if (!snapshot.exists) throw new HttpsError('not-found', 'The expense no longer exists.')
     const expense = snapshot.data()
     if (!expense || expense.is_deleted === true) throw new HttpsError('failed-precondition', 'This expense has already been deleted.')
-    const storedExpenseId = typeof expense.expense_id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(expense.expense_id)
-      ? expense.expense_id
-      : null
-    const expenseIdRegistryRef = storedExpenseId
-      ? db.collection('financial_expense_id_registry').doc(storedExpenseId.toUpperCase())
-      : null
-    const expenseIdRegistrySnapshot = expenseIdRegistryRef
-      ? await transaction.get(expenseIdRegistryRef)
-      : null
     const linkedSnapshot = await transaction.get(
       db.collection('financial_transactions').where('linked_expense_id', '==', expenseId),
     )
@@ -2144,16 +2092,6 @@ exports.deleteFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
       throw new HttpsError('failed-precondition', 'This expense has too many linked records to delete in one safe operation.')
     }
     await applyAccountDeltas(transaction, deltas, actor, now)
-    if (expenseIdRegistryRef && expenseIdRegistrySnapshot && !expenseIdRegistrySnapshot.exists) {
-      transaction.create(expenseIdRegistryRef, {
-        expense_id: storedExpenseId,
-        expense_document_id: expenseId,
-        created_by: actor.uid,
-        created_at: now,
-        deleted_at: now,
-        deleted_by: actor.uid,
-      })
-    }
     transaction.delete(expenseRef)
     for (const linked of linkedTransactions) {
       transaction.delete(linked.ref)

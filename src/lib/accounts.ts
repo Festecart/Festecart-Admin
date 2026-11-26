@@ -2185,9 +2185,6 @@ export async function createExpense(input: NewExpenseInput): Promise<void> {
     })
   } catch (error) {
     const failure = logExpenseCallableError('createFinancialExpense', error)
-    if (failure.errorCode === 'functions/already-exists' || failure.errorCode === 'already-exists') {
-      throw new Error('This Expense ID already exists. Please enter a different ID.')
-    }
     if (failure.errorCode === 'functions/unauthenticated') {
       throw new Error('Sign in with an admin account before saving an expense.')
     }

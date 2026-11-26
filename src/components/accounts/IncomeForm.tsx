@@ -18,6 +18,14 @@ function currentDateInput(): string {
   return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`
 }
 
+function isValidIncomeAmount(value: string): boolean {
+  const normalized = value.trim()
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return false
+  const [whole, fraction = ''] = normalized.split('.')
+  const amount = Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
+  return Number.isSafeInteger(amount) && amount > 0
+}
+
 function incomeSaveErrorMessage(reason: unknown): string {
   const details = reason && typeof reason === 'object'
     ? reason as { code?: unknown; message?: unknown }
@@ -103,10 +111,15 @@ export function IncomeForm({
     ? initialIncome.festival_tag
     : null
   const validDate = incomeDateToIso(date)
+  const canSave = !saving && !isSubmitting.current &&
+    Boolean(description.trim() && isValidIncomeAmount(amount) && source.trim() && paymentMethod.trim() && validDate)
 
   function collectInput(): NewIncomeInput {
+    if (!description.trim()) throw new Error('Enter a description.')
     const amountPaise = rupeesToPaise(amount)
     if (!validDate) throw new Error('Enter a valid date in DD/MM/YYYY format.')
+    if (!source.trim()) throw new Error('Enter a source of income.')
+    if (!paymentMethod.trim()) throw new Error('Select a payment method.')
     if (tagId && !selectedTag && !preservedTag) throw new Error('Select a saved tag or clear the Tag field to continue.')
     return {
       amount_paise: amountPaise,
@@ -158,20 +171,20 @@ export function IncomeForm({
 
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="space-y-4">
-              <label className="block text-sm font-semibold text-slate-700">Description <span className="text-rose-600" aria-hidden="true">**</span>
-                <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
+              <label className="block text-sm font-semibold text-slate-700">Description <span className="text-rose-600" aria-hidden="true">*</span>
+                <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250} required
                   className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
               </label>
-              <label className="block text-sm font-semibold text-slate-700">Amount (₹) <span className="text-rose-600" aria-hidden="true">**</span>
+              <label className="block text-sm font-semibold text-slate-700">Amount (₹) <span className="text-rose-600" aria-hidden="true">*</span>
                 <input aria-label="Amount (₹)" type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
                   className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
               </label>
-              <label className="block text-sm font-semibold text-slate-700">Source of income <span className="text-rose-600" aria-hidden="true">**</span>
-                <input value={source} onChange={event => setSource(event.target.value)} maxLength={120}
+              <label className="block text-sm font-semibold text-slate-700">Source of income <span className="text-rose-600" aria-hidden="true">*</span>
+                <input value={source} onChange={event => setSource(event.target.value)} maxLength={120} required
                   className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
               </label>
-              <label className="block text-sm font-semibold text-slate-700">Payment Method <span className="text-rose-600" aria-hidden="true">**</span>
-                <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} legacyValue={initialIncome?.payment_method} />
+              <label className="block text-sm font-semibold text-slate-700">Payment Method <span className="text-rose-600" aria-hidden="true">*</span>
+                <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} required legacyValue={initialIncome?.payment_method} />
               </label>
               <label className="block text-sm font-medium text-slate-700">Category (Optional)
                 <AccountsSelect ariaLabel="Income category" value={category}
@@ -180,7 +193,7 @@ export function IncomeForm({
               </label>
             </div>
             <div className="space-y-4">
-              <label className="block text-sm font-semibold text-slate-700">Income Date <span className="text-rose-600" aria-hidden="true">**</span>
+              <label className="block text-sm font-semibold text-slate-700">Income Date <span className="text-rose-600" aria-hidden="true">*</span>
                 <span className="mt-1.5 flex gap-2">
                   <input aria-label="Income Date" type="text" inputMode="numeric" autoComplete="off" maxLength={10}
                     value={date} onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required
@@ -229,7 +242,7 @@ export function IncomeForm({
           {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
           <div className="flex flex-wrap justify-end gap-2 pt-1">
             <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700">Cancel</button>
-            <button type="submit" disabled={saving}
+            <button type="submit" disabled={!canSave}
               className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
               Save Income
             </button>
