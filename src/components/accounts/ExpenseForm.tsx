@@ -1,13 +1,19 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, X } from 'lucide-react'
-import { DEFAULT_FINANCIAL_CATEGORIES } from '@/lib/accounts'
+import { getFinancialCategoryOptions } from '@/lib/accounts'
 import { festivalTagId } from '@/lib/festivalProducts'
+import { AccountsSelect } from '@/components/accounts/AccountsSelect'
 import { PaymentMethodField } from '@/components/accounts/PaymentMethodField'
 import type { EditExpenseInput, FinancialCategory, FinancialExpense, NewExpenseInput, VendorOption } from '@/types/accounts'
 import type { FestivalTag } from '@/types/accounts'
 
 function dateInput(value: FinancialExpense['transaction_date']): string {
   const date = value.toDate()
+  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`
+}
+
+function currentDateInput(): string {
+  const date = new Date()
   return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`
 }
 
@@ -52,7 +58,6 @@ export function ExpenseForm({
   festivalTagsLoading = false,
   festivalTagsError = false,
   initialExpense,
-  onCreateCategory,
   saving,
   onClose,
   onSave,
@@ -64,16 +69,14 @@ export function ExpenseForm({
   festivalTagsLoading?: boolean
   festivalTagsError?: boolean
   initialExpense?: FinancialExpense
-  onCreateCategory: (name: string, type: 'expense') => Promise<void>
   saving: boolean
   onClose: () => void
   onSave: (input: NewExpenseInput) => Promise<void>
   onEditSave?: (input: EditExpenseInput) => Promise<void>
 }) {
   const [amount, setAmount] = useState(initialExpense ? (initialExpense.amount_paise / 100).toFixed(2) : '')
-  const [date, setDate] = useState(initialExpense ? dateInput(initialExpense.transaction_date) : '')
+  const [date, setDate] = useState(initialExpense ? dateInput(initialExpense.transaction_date) : currentDateInput())
   const [category, setCategory] = useState(initialExpense?.category_name ?? '')
-  const [customCategory, setCustomCategory] = useState('')
   const [expenseId, setExpenseId] = useState(initialExpense?.expense_id ?? '')
   const [description, setDescription] = useState(initialExpense?.description ?? '')
   const [festivalTagIdValue, setFestivalTagIdValue] = useState(
@@ -96,18 +99,17 @@ export function ExpenseForm({
   const festivalTagName = availableFestivalTags.find(tag => tag.id === festivalTagIdValue)?.name ?? null
   const hasCreatedTag = !festivalTagsLoading && !festivalTagsError &&
     Boolean(festivalTagIdValue && createdTags.some(tag => tag.id === festivalTagIdValue))
-  const isValidCategory = category !== '__custom' || Boolean(customCategory.trim())
   const isValidAmount = isValidMoneyInput(amount)
   const validDate = dateToIso(date)
   const hasValidTag = !festivalTagIdValue ||
     (Boolean(festivalTagName) && (Boolean(initialExpense) || hasCreatedTag))
   const hasValidExpenseId = Boolean(initialExpense) || !expenseId.trim() || /^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())
-  const categoryOptions = [...new Set([
-    ...DEFAULT_FINANCIAL_CATEGORIES,
-    ...categories.filter(item => item.type === 'expense' && item.is_enabled !== false).map(item => item.name),
-  ])]
+  const categoryOptions = getFinancialCategoryOptions(categories)
+  const expenseCategoryOptions = initialExpense?.category_name && !categoryOptions.includes(initialExpense.category_name)
+    ? [...categoryOptions, initialExpense.category_name]
+    : categoryOptions
   const canSave = !saving && !isSubmitting.current &&
-    Boolean(hasValidExpenseId && validDate && isValidCategory && isValidAmount && hasValidTag &&
+    Boolean(hasValidExpenseId && validDate && isValidAmount && hasValidTag &&
       (!initialExpense || paymentMethod.trim()))
 
   async function submit(event: FormEvent) {
@@ -116,20 +118,16 @@ export function ExpenseForm({
     isSubmitting.current = true
     setError('')
     try {
-      const categoryName = category === '__custom' ? customCategory.trim() : category
+      const categoryName = category
       if (!validDate) throw new Error('Enter a valid date in DD/MM/YYYY format.')
       if (festivalTagIdValue && (!festivalTagName || (!initialExpense && !hasCreatedTag))) {
         throw new Error('Select a created tag or clear the Tag field to continue without one.')
       }
-      if (category === '__custom' && !categoryName) throw new Error('Enter a category name.')
       if (initialExpense && !paymentMethod.trim()) throw new Error('Select a payment method.')
       if (!initialExpense && expenseId.trim() && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())) {
         throw new Error('Enter an Expense ID using only letters, numbers, and hyphens.')
       }
       const amountValue = paise(amount, 'amount')
-      if (category === '__custom') {
-        await onCreateCategory(categoryName, 'expense')
-      }
       if (initialExpense) {
         if (!onEditSave) throw new Error('Expense editing is unavailable.')
         await onEditSave({
@@ -228,20 +226,9 @@ export function ExpenseForm({
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block text-sm font-medium text-slate-700">Category (Optional)
-              <select value={category} onChange={event => setCategory(event.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-                <option value="">No category</option>
-                {initialExpense?.category_name && !categoryOptions.includes(initialExpense.category_name) && (
-                  <option value={initialExpense.category_name}>Existing: {initialExpense.category_name}</option>
-                )}
-                {categoryOptions.map(item => <option key={item}>{item}</option>)}
-                <option value="__custom">Add custom category…</option>
-              </select>
-              {category === '__custom' && (
-                <input aria-label="Custom category" value={customCategory} onChange={event => setCustomCategory(event.target.value)}
-                  placeholder="Enter custom category" required maxLength={80}
-                  className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-              )}
+              <AccountsSelect ariaLabel="Expense category" value={category}
+                options={expenseCategoryOptions.map(item => ({ value: item, label: item }))}
+                onChange={setCategory} placeholder="Select category" />
             </label>
             <label className="block text-sm font-medium text-slate-700">Description (Optional)
               <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}

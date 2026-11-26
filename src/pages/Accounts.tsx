@@ -18,6 +18,7 @@ import { AccountForm } from '@/components/accounts/AccountForm'
 import { ExpenseForm } from '@/components/accounts/ExpenseForm'
 import { IncomeForm } from '@/components/accounts/IncomeForm'
 import { ExpenseReceipts } from '@/components/accounts/ExpenseReceipts'
+import { IncomeReceipts } from '@/components/accounts/IncomeReceipts'
 import { MetricCard } from '@/components/accounts/MetricCard'
 import { TransactionForm } from '@/components/accounts/TransactionForm'
 import { TransactionEditForm } from '@/components/accounts/TransactionEditForm'
@@ -48,6 +49,7 @@ import {
   editUnpostedFinancialIncome,
   deleteUnpostedFinancialIncome,
   formatINR,
+  dateInputTimestamp,
   recordTransaction,
   createUnpostedFinancialIncome,
   PETTY_CASH_TRANSACTION_ACCOUNT_ID,
@@ -64,6 +66,7 @@ import type {
   EditTransactionInput,
   EditExpenseInput,
   FinancialTransaction,
+  UnpostedFinancialIncome,
 } from '@/types/accounts'
 import type { Order } from '@/types'
 
@@ -241,6 +244,35 @@ function transactionPaymentStatus(
   return transaction.type === 'transfer' ? 'Completed' : '—'
 }
 
+function unpostedIncomeTransaction(income: UnpostedFinancialIncome): FinancialTransaction {
+  const transactionDate = dateInputTimestamp(income.transaction_date)
+  return {
+    id: income.id,
+    transaction_id: income.transaction_id,
+    type: 'income',
+    transaction_date: transactionDate,
+    reference_no: income.reference_no,
+    description: income.description,
+    category_name: income.category_name,
+    amount_paise: income.amount_paise,
+    account_id: '',
+    transfer_to_account_id: null,
+    linked_order_id: null,
+    linked_expense_id: null,
+    party_name: income.vendor_name || null,
+    receipt_paths: income.receipt_paths,
+    payment_method: income.payment_method,
+    source_of_income: income.source_of_income,
+    idempotency_key: null,
+    posting_status: 'unposted',
+    festival_tag: income.festival_tag,
+    festival_tag_id: income.festival_tag_id,
+    created_by: '',
+    created_by_name: '',
+    created_at: transactionDate,
+  }
+}
+
 export default function Accounts() {
   const { isAccountsAdmin } = useAuth()
   const [tab, setTab] = useState<Tab>('overview')
@@ -266,10 +298,14 @@ export default function Accounts() {
   const [editingTransaction, setEditingTransaction] = useState<FinancialTransaction | null>(null)
   const [editingExpense, setEditingExpense] = useState<FinancialExpense | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [editingIncome, setEditingIncome] = useState<IncomeHistoryRow | null>(null)
   const [incomeToDelete, setIncomeToDelete] = useState<IncomeHistoryRow | null>(null)
   const [showExpenseForm, setShowExpenseForm] = useState(false)
   const [showIncomeForm, setShowIncomeForm] = useState(false)
+  const [expenseSearch, setExpenseSearch] = useState('')
+  const [expenseFrom, setExpenseFrom] = useState('')
+  const [expenseTo, setExpenseTo] = useState('')
   const [incomeSearch, setIncomeSearch] = useState('')
   const [incomeFrom, setIncomeFrom] = useState('')
   const [incomeTo, setIncomeTo] = useState('')
@@ -309,6 +345,9 @@ export default function Accounts() {
     clearTransactionSuccessTimer()
     clearDeleteSuccessTimer()
   }, [])
+  useEffect(() => {
+    setExpensePage(0)
+  }, [expenseSearch, expenseFrom, expenseTo])
   const dateRange = useMemo(() => dateRangeFor(datePreset, customFrom, customTo), [datePreset, customFrom, customTo])
   const queryClient = useQueryClient()
   const {
@@ -354,7 +393,7 @@ export default function Accounts() {
   const unpostedIncomesQuery = useQuery({
     queryKey: ['accounts', 'unposted-incomes'],
     queryFn: fetchUnpostedFinancialIncomes,
-    enabled: tab === 'income',
+    enabled: tab === 'transactions' || tab === 'income' || tab === 'reports',
   })
   const festivalTagsQuery = useQuery({
     queryKey: ['accounts', 'festival-tags'],
@@ -364,8 +403,24 @@ export default function Accounts() {
   const accounts = accountsQuery.data ?? []
   const transactions = transactionsQuery.data?.pages.flatMap(page => page.items) ?? []
   const expenses = expensesQuery.data ?? []
-  const expensePageCount = Math.ceil(expenses.length / EXPENSES_PER_PAGE)
-  const visibleExpenses = expenses.slice(expensePage * EXPENSES_PER_PAGE, (expensePage + 1) * EXPENSES_PER_PAGE)
+  const normalizedExpenseSearch = expenseSearch.trim().toLocaleLowerCase()
+  const filteredExpenses = expenses.filter(expense => {
+    const date = localDateString(expense.transaction_date.toDate())
+    return (!expenseFrom || date >= expenseFrom) &&
+      (!expenseTo || date <= expenseTo) &&
+      (!normalizedExpenseSearch || [
+        expense.expense_id,
+        expense.category_name,
+        expense.description,
+        expense.festival_tag ?? '',
+        expense.payment_method,
+        expense.vendor_name,
+        expense.payment_reference,
+        expense.reference_no,
+      ].some(value => value.toLocaleLowerCase().includes(normalizedExpenseSearch)))
+  })
+  const expensePageCount = Math.ceil(filteredExpenses.length / EXPENSES_PER_PAGE)
+  const visibleExpenses = filteredExpenses.slice(expensePage * EXPENSES_PER_PAGE, (expensePage + 1) * EXPENSES_PER_PAGE)
   const customerPayments: CustomerPayment[] = customerPaymentsQuery.data ?? []
   const deliveredOrderPayments = useMemo(() => {
     const paymentDetails = new Map<string, Set<string>>()
@@ -412,7 +467,12 @@ export default function Accounts() {
   const festivalTags = festivalTagsQuery.data ?? LEGACY_FINANCIAL_TAGS.map(name => ({ id: festivalTagId(name), name }))
   const displayTag = (tagId: string | null, storedName: string | null) =>
     resolveFestivalTagName(tagId, storedName, festivalTags) ?? '—'
-  const transactionHistory = tab === 'transactions' ? allTransactionsQuery.data ?? transactions : transactions
+  const transactionHistory = tab === 'transactions'
+    ? [
+      ...(allTransactionsQuery.data ?? transactions),
+      ...(unpostedIncomesQuery.data ?? []).map(unpostedIncomeTransaction),
+    ].sort((left, right) => right.transaction_date.toMillis() - left.transaction_date.toMillis())
+    : transactions
   const incomeHistoryRows = useMemo(() => {
     const postedRows = (allTransactionsQuery.data ?? [])
       .filter(item => item.type === 'income')
@@ -515,11 +575,12 @@ export default function Accounts() {
     (item.type === 'expense' && accounts.some(account => account.id === item.account_id && account.type === 'petty_cash'))
   const overviewLedger = reportTransactionsQuery.data ?? []
   const reportExpenses = reportExpensesQuery.data ?? []
+  const incomeReceivedPaise = totalsQuery.data?.income_paise ?? 0
   const expensesPaidPaise = reportExpenses.reduce((total, item) => total + expenseSpendingPaise(item), 0)
   const pettyCashSpentPaise = overviewLedger
     .filter(item => item.type === 'expense' && isPettyCashSpending(item))
     .reduce((total, item) => total + item.amount_paise, 0)
-  const totalSpendingPaise = expensesPaidPaise + pettyCashSpentPaise
+  const totalSpendingPaise = incomeReceivedPaise + expensesPaidPaise + pettyCashSpentPaise
   const normalizedSearch = search.trim().toLocaleLowerCase()
   const filteredTransactions = useMemo(() => {
     return transactionHistory.filter(item => {
@@ -563,7 +624,7 @@ export default function Accounts() {
     mutationFn: ({ input, idempotencyKey }: { input: NewIncomeInput; idempotencyKey: string }) =>
       createUnpostedFinancialIncome(input, idempotencyKey),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts', 'unposted-incomes'] })
+      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
       showTransactionSuccess('Income saved successfully.', 5000)
     },
   })
@@ -571,14 +632,14 @@ export default function Accounts() {
     mutationFn: ({ transactionId, input }: { transactionId: string; input: NewIncomeInput }) =>
       editUnpostedFinancialIncome(transactionId, input),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts', 'unposted-incomes'] })
+      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
       showTransactionSuccess('Income updated successfully.', 5000)
     },
   })
   const deleteIncomeMutation = useMutation({
     mutationFn: (transactionId: string) => deleteUnpostedFinancialIncome(transactionId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts', 'unposted-incomes'] })
+      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
       setIncomeToDelete(null)
       showDeleteSuccess('Income deleted successfully.')
     },
@@ -606,6 +667,7 @@ export default function Accounts() {
   const deleteMutation = useMutation({
     mutationFn: async (target: PendingDelete) => {
       if (target.kind === 'expense') await deleteFinancialExpense(target.record)
+      else if (target.record.posting_status === 'unposted') await deleteUnpostedFinancialIncome(target.record.id)
       else await deleteFinancialTransaction(target.record, target.pettyCashSpending === true)
     },
     onSuccess: async (_result, target) => {
@@ -616,13 +678,18 @@ export default function Accounts() {
           : Promise.resolve(),
       ])
       setPendingDelete(null)
+      setDeleteConfirmation('')
       setDeleteError('')
       showDeleteSuccess(target.kind === 'expense'
         ? 'Expense deleted successfully.'
+        : target.record.type === 'opening_balance'
+          ? 'Opening balance deleted and account balance adjusted.'
+        : target.record.posting_status === 'unposted'
+          ? 'Income deleted successfully.'
         : target.pettyCashSpending ? 'Petty cash spending deleted successfully.' : 'Transaction deleted successfully.')
     },
-    onError: () => {
-      setDeleteError('Unable to delete the transaction. Please try again.')
+    onError: reason => {
+      setDeleteError(reason instanceof Error ? reason.message : 'Unable to delete the transaction. Please try again.')
     },
   })
   const expenseMutation = useMutation({
@@ -661,6 +728,7 @@ export default function Accounts() {
   }
   const requestDelete = (target: PendingDelete) => {
     deleteMutation.reset()
+    setDeleteConfirmation('')
     clearDeleteSuccessTimer()
     setDeleteSuccessMessage('')
     setDeleteError('')
@@ -682,6 +750,10 @@ export default function Accounts() {
   const accountTypeForAction = (action: QuickTransactionAction) =>
     action === 'petty_cash' ? 'petty_cash' as const : undefined
   const pendingDeleteIsPettyCash = pendingDelete?.kind === 'transaction' && pendingDelete.pettyCashSpending === true
+  const pendingDeleteIsUnpostedIncome = pendingDelete?.kind === 'transaction' &&
+    pendingDelete.record.posting_status === 'unposted'
+  const pendingDeleteIsOpeningBalance = pendingDelete?.kind === 'transaction' &&
+    pendingDelete.record.type === 'opening_balance'
   const pendingDeleteIsExpense = pendingDelete?.kind === 'expense' ||
     (pendingDelete?.kind === 'transaction' && pendingDelete.record.type === 'expense' && !pendingDeleteIsPettyCash)
   const pendingDeleteDetails = pendingDelete
@@ -760,7 +832,7 @@ export default function Accounts() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Spending overview</h2>
-              <p className="mt-1 text-sm text-slate-500">Income received, expenses paid, and Petty Cash spending for the selected period.</p>
+              <p className="mt-1 text-sm text-slate-500">Total Spending adds income received, expenses paid, and Petty Cash spending for the selected period.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -781,7 +853,7 @@ export default function Accounts() {
             <MetricCard label="Income Received" value={loadingOrUnavailable(totalsQuery.isPending, totalsQuery.isError, totalsQuery.data?.income_paise)} icon={<ArrowUpRight size={18} />} tone="green" />
             <MetricCard label="Total Expenses Paid" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, expensesPaidPaise)} icon={<ArrowUpRight size={18} />} tone="red" />
             <MetricCard label="Total Petty Cash Spent" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, pettyCashSpentPaise)} icon={<CircleDollarSign size={18} />} tone="amber" />
-            <MetricCard label="Total Spending" value={loadingOrUnavailable(reportTransactionsQuery.isPending || reportExpensesQuery.isPending, reportTransactionsQuery.isError || reportExpensesQuery.isError, totalSpendingPaise)} icon={<ArrowLeftRight size={18} />} tone="blue" />
+            <MetricCard label="Total Spending" value={loadingOrUnavailable(totalsQuery.isPending || reportTransactionsQuery.isPending || reportExpensesQuery.isPending, totalsQuery.isError || reportTransactionsQuery.isError || reportExpensesQuery.isError, totalSpendingPaise)} icon={<ArrowLeftRight size={18} />} tone="blue" />
           </div>
         </section>
       )}
@@ -839,11 +911,24 @@ export default function Accounts() {
               </select>
             </label>
           </div>
-          {allTransactionsQuery.isPending ? <div className="p-8 text-center text-sm text-slate-500">Loading all transactions…</div>
-            : allTransactionsQuery.isError ? <div className="p-8 text-center text-sm text-rose-700">Transaction history is unavailable. See the permission error above.</div>
+          {allTransactionsQuery.isPending || unpostedIncomesQuery.isPending ? <div className="p-8 text-center text-sm text-slate-500">Loading all transactions…</div>
+            : allTransactionsQuery.isError || unpostedIncomesQuery.isError ? <div className="p-8 text-center text-sm text-rose-700">Transaction history is unavailable. See the permission error above.</div>
               : <TransactionTable rows={filteredTransactions} accounts={accounts} festivalTags={festivalTags}
                   paymentStatus={item => transactionPaymentStatus(item, expenses, customerPayments)}
-                  onView={setSelectedTransaction} onEdit={setEditingTransaction}
+                  onView={setSelectedTransaction}
+                  canEdit={item => item.posting_status !== 'unposted' ||
+                    (unpostedIncomesQuery.data ?? []).some(income => income.id === item.id && income.editable)}
+                  onEdit={record => {
+                    if (record.posting_status === 'unposted') {
+                      const income = incomeHistoryRows.find(item => item.id === record.id)
+                      if (income?.editable) {
+                        setShowIncomeForm(false)
+                        setEditingIncome(income)
+                      }
+                    } else {
+                      setEditingTransaction(record)
+                    }
+                  }}
                   onDelete={record => requestDelete({ kind: 'transaction', record })} />}
         </section>
       )}
@@ -860,6 +945,46 @@ export default function Accounts() {
               <Plus size={16} /> Add expense
             </button>
           </div>
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="min-w-[220px] flex-1 text-xs font-medium text-slate-600">Search Expenses
+                <span className="relative mt-1 block">
+                  <Search size={16} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input value={expenseSearch} onChange={event => setExpenseSearch(event.target.value)} placeholder="Search ID, category, description, vendor or reference"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white pl-9 pr-3 text-sm font-normal text-slate-700" />
+                </span>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">From Date
+                <input type="date" value={expenseFrom} max={expenseTo || undefined} onChange={event => setExpenseFrom(event.target.value)}
+                  className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-normal text-slate-700" />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">To Date
+                <input type="date" value={expenseTo} min={expenseFrom || undefined} onChange={event => setExpenseTo(event.target.value)}
+                  className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-normal text-slate-700" />
+              </label>
+              <button type="button" disabled={filteredExpenses.length === 0} onClick={() => downloadReportFile(
+                'accounts-expenses.csv',
+                `\uFEFF${[['Expense ID', 'Date', 'Category', 'Description', 'Tag', 'Amount (INR)', 'Paid (INR)', 'Outstanding (INR)', 'Payment Status', 'Payment Method', 'Vendor', 'Payment Reference', 'Reference Number'], ...filteredExpenses.map(expense => [
+                  expense.expense_id || '—',
+                  expense.transaction_date.toDate().toLocaleDateString('en-GB'),
+                  expense.category_name,
+                  expense.description,
+                  displayTag(expense.festival_tag_id, expense.festival_tag),
+                  (expense.amount_paise / 100).toFixed(2),
+                  (expense.paid_paise / 100).toFixed(2),
+                  (expense.outstanding_paise / 100).toFixed(2),
+                  expense.payment_status,
+                  expense.payment_method,
+                  expense.vendor_name,
+                  expense.payment_reference,
+                  expense.reference_no,
+                ])].map(row => row.map(escapeCsvCell).join(',')).join('\r\n')}`,
+                'text/csv;charset=utf-8',
+              )} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                <Download size={15} /> Export CSV
+              </button>
+            </div>
+          </section>
           {expensesQuery.isPending ? <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Loading expenses…</div>
             : expensesQuery.isError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center text-sm text-rose-700">
               <p>Unable to load expense records. Existing records have not been changed.</p>
@@ -869,6 +994,7 @@ export default function Accounts() {
               </button>
             </div>
               : expenses.length === 0 ? <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">No expenses have been recorded.</div>
+                : filteredExpenses.length === 0 ? <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">No expenses match these filters.</div>
                 : <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <table className="min-w-[1250px] w-full text-left text-sm">
                     <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>
@@ -903,7 +1029,7 @@ export default function Accounts() {
                   </table>
                   {expensePageCount > 1 && (
                     <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm text-slate-600">
-                      <span>Page {expensePage + 1} of {expensePageCount} · {expenses.length} expenses</span>
+                      <span>Page {expensePage + 1} of {expensePageCount} · {filteredExpenses.length} expenses</span>
                       <div className="flex gap-2">
                         <button type="button" disabled={expensePage === 0} onClick={() => setExpensePage(page => page - 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40">Previous</button>
                         <button type="button" disabled={expensePage + 1 >= expensePageCount} onClick={() => setExpensePage(page => page + 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40">Next</button>
@@ -1181,13 +1307,76 @@ export default function Accounts() {
               )}
             </div>
           </div>
-          {reportTransactionsQuery.isPending || reportExpensesQuery.isPending
-            ? <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Preparing spending reports…</div>
-            : reportTransactionsQuery.isError || reportExpensesQuery.isError
-              ? <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">Spending reports could not be loaded. Check the financial transaction and expense collection permissions.</div>
+          {reportTransactionsQuery.isPending || reportExpensesQuery.isPending || unpostedIncomesQuery.isPending
+            ? <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Preparing financial reports…</div>
+            : reportTransactionsQuery.isError || reportExpensesQuery.isError || unpostedIncomesQuery.isError
+              ? <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">Financial reports could not be loaded. Check the financial transaction and expense collection permissions.</div>
               : (() => {
                 const ledger = overviewLedger
                 const expenses = reportExpenses
+                const unpostedIncomeRows = (unpostedIncomesQuery.data ?? []).filter(item =>
+                  (!dateRange.from || item.transaction_date >= dateRange.from) &&
+                  (!dateRange.to || item.transaction_date <= dateRange.to))
+                const incomeEntries = [
+                  ...ledger
+                    .filter(item => item.type === 'income')
+                    .map(item => ({
+                      id: item.id,
+                      transactionId: item.transaction_id,
+                      date: localDateString(item.transaction_date.toDate()),
+                      category: item.category_name || 'Uncategorized',
+                      amount: item.amount_paise,
+                      description: item.description || '—',
+                      tag: displayTag(item.festival_tag_id, item.festival_tag),
+                      paymentMethod: item.payment_method || '—',
+                      vendor: item.party_name || '—',
+                      reference: item.reference_no || '—',
+                      receiptPaths: item.receipt_paths,
+                    })),
+                  ...unpostedIncomeRows.map(item => ({
+                    id: item.id,
+                    transactionId: item.transaction_id,
+                    date: item.transaction_date,
+                    category: item.category_name || 'Uncategorized',
+                    amount: item.amount_paise,
+                    description: item.description || '—',
+                    tag: displayTag(item.festival_tag_id, item.festival_tag),
+                    paymentMethod: item.payment_method || '—',
+                    vendor: item.vendor_name || '—',
+                    reference: item.reference_no || '—',
+                    receiptPaths: item.receipt_paths,
+                  })),
+                ]
+                const incomeDetails = [...incomeEntries].sort((left, right) =>
+                  right.date.localeCompare(left.date) || left.id.localeCompare(right.id))
+                const totalIncome = incomeEntries.reduce((sum, item) => sum + item.amount, 0)
+                const dailyIncome = new Map<string, number>()
+                const monthlyIncome = new Map<string, number>()
+                const categoryIncome = new Map<string, number>()
+                for (const item of incomeEntries) {
+                  const month = item.date.slice(0, 7)
+                  dailyIncome.set(item.date, (dailyIncome.get(item.date) ?? 0) + item.amount)
+                  monthlyIncome.set(month, (monthlyIncome.get(month) ?? 0) + item.amount)
+                  categoryIncome.set(item.category, (categoryIncome.get(item.category) ?? 0) + item.amount)
+                }
+                const dailyIncomeRows = [...dailyIncome.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, amount]) => [
+                  new Date(`${day}T00:00:00`).toLocaleDateString('en-GB'),
+                  formatINR(amount),
+                ])
+                const monthlyIncomeRows = [...monthlyIncome.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, amount]) => {
+                  const [year, monthNumber] = month.split('-').map(Number)
+                  return [
+                    new Date(year, monthNumber - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                    formatINR(amount),
+                  ]
+                })
+                const categoryIncomeRows = [...categoryIncome.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([category, amount]) => [
+                  category,
+                  formatINR(amount),
+                ])
+                const dailyIncomeReportRows = [...dailyIncomeRows, ['Total', formatINR(totalIncome)]]
+                const monthlyIncomeReportRows = [...monthlyIncomeRows, ['Total', formatINR(totalIncome)]]
+                const categoryIncomeReportRows = [...categoryIncomeRows, ['Total', formatINR(totalIncome)]]
                 const pettyCashRows = ledger.filter(item => item.type === 'expense' && isPettyCashSpending(item))
                 const expensesPaid = expenses.reduce((sum, item) => sum + expenseSpendingPaise(item), 0)
                 const pettyCashSpent = pettyCashRows.reduce((sum, item) => sum + item.amount_paise, 0)
@@ -1268,6 +1457,40 @@ export default function Accounts() {
                   ...categoryRows,
                   ['Total', (expensesPaid / 100).toFixed(2), (pettyCashSpent / 100).toFixed(2), (totalSpending / 100).toFixed(2)],
                 ]
+                const incomeReportExportRows = [
+                  ['INCOME SUMMARY'],
+                  ['Total Income Received', (totalIncome / 100).toFixed(2)],
+                  [],
+                  ['DAILY INCOME REPORT'],
+                  ['Date', 'Income Received'],
+                  ...dailyIncomeRows,
+                  ['Total', (totalIncome / 100).toFixed(2)],
+                  [],
+                  ['MONTHLY INCOME REPORT'],
+                  ['Month', 'Income Received'],
+                  ...monthlyIncomeRows,
+                  ['Total', (totalIncome / 100).toFixed(2)],
+                  [],
+                  ['CATEGORY-WISE INCOME REPORT'],
+                  ['Category', 'Income Received'],
+                  ...categoryIncomeRows,
+                  ['Total', (totalIncome / 100).toFixed(2)],
+                  [],
+                  ['INCOME DETAILS'],
+                  ['Income ID', 'Date', 'Category', 'Description', 'Tag', 'Amount (INR)', 'Payment Method', 'Vendor', 'Reference Number', 'Receipts'],
+                  ...incomeDetails.map(item => [
+                    item.transactionId,
+                    item.date,
+                    item.category,
+                    item.description,
+                    item.tag,
+                    (item.amount / 100).toFixed(2),
+                    item.paymentMethod,
+                    item.vendor,
+                    item.reference,
+                    item.receiptPaths.length ? String(item.receiptPaths.length) : '—',
+                  ]),
+                ]
                 const exportCsv = () => downloadReportFile(
                   'accounts-spending-report.csv',
                   `\uFEFF${reportExportRows.map(row => row.map(escapeCsvCell).join(',')).join('\r\n')}`,
@@ -1276,6 +1499,15 @@ export default function Accounts() {
                 const exportExcel = () => {
                   const xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Spending Report"><Table>${reportExportRows.map(row => `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${String(cell ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</Data></Cell>`).join('')}</Row>`).join('')}</Table></Worksheet></Workbook>`
                   downloadReportFile('accounts-spending-report.xml', xml, 'application/vnd.ms-excel;charset=utf-8')
+                }
+                const exportIncomeCsv = () => downloadReportFile(
+                  'accounts-income-report.csv',
+                  `\uFEFF${incomeReportExportRows.map(row => row.map(escapeCsvCell).join(',')).join('\r\n')}`,
+                  'text/csv;charset=utf-8',
+                )
+                const exportIncomeExcel = () => {
+                  const xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Income Report"><Table>${incomeReportExportRows.map(row => `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${String(cell ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</Data></Cell>`).join('')}</Row>`).join('')}</Table></Worksheet></Workbook>`
+                  downloadReportFile('accounts-income-report.xml', xml, 'application/vnd.ms-excel;charset=utf-8')
                 }
                 return (
                   <div className="space-y-5">
@@ -1291,6 +1523,62 @@ export default function Accounts() {
                     <ReportTable title="Daily Spending Report" headers={['Date', 'Expenses Paid', 'Petty Cash Spent', 'Total Spending']} rows={dailyReportRows} />
                     <ReportTable title="Monthly Spending Report" headers={['Month', 'Expenses Paid', 'Petty Cash Spent', 'Total Spending']} rows={monthlyReportRows} />
                     <ReportTable title="Category-wise Spending Report" headers={['Category', 'Expenses Paid', 'Petty Cash Spent', 'Total Spending']} rows={categoryReportRows} />
+                    <section className="space-y-5 border-t border-slate-200 pt-6">
+                      <h3 className="text-lg font-semibold text-slate-900">Income Reports</h3>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <MetricCard label="Total Income Received" value={formatINR(totalIncome)} icon={<ArrowUpRight size={18} />} tone="green" />
+                      </div>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button type="button" onClick={exportIncomeCsv} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700"><Download size={15} /> Export Income CSV</button>
+                        <button type="button" onClick={exportIncomeExcel} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700"><Download size={15} /> Export Income Excel workbook</button>
+                      </div>
+                      <ReportTable title="Daily Income Report" headers={['Date', 'Income Received']} rows={dailyIncomeReportRows} />
+                      <ReportTable title="Monthly Income Report" headers={['Month', 'Income Received']} rows={monthlyIncomeReportRows} />
+                      <ReportTable title="Category-wise Income Report" headers={['Category', 'Income Received']} rows={categoryIncomeReportRows} />
+                      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                        <div className="border-b border-slate-100 px-5 py-4">
+                          <h4 className="font-semibold text-slate-900">Income Details</h4>
+                        </div>
+                        {incomeDetails.length === 0 ? (
+                          <p className="p-8 text-center text-sm text-slate-500">No income records match this period.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="min-w-[1150px] w-full text-left text-sm">
+                              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                                <tr>
+                                  <th className="px-4 py-3">Income ID</th>
+                                  <th className="px-4 py-3">Date</th>
+                                  <th className="px-4 py-3">Category</th>
+                                  <th className="px-4 py-3">Description</th>
+                                  <th className="px-4 py-3">Tag</th>
+                                  <th className="px-4 py-3 text-right">Amount</th>
+                                  <th className="px-4 py-3">Payment Method</th>
+                                  <th className="px-4 py-3">Vendor / Reference / Receipts</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {incomeDetails.map(item => (
+                                  <tr key={item.id}>
+                                    <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-700">{item.transactionId}</td>
+                                    <td className="whitespace-nowrap px-4 py-3">{new Date(`${item.date}T00:00:00`).toLocaleDateString('en-GB')}</td>
+                                    <td className="px-4 py-3">{item.category}</td>
+                                    <td className="px-4 py-3 text-slate-700">{item.description}</td>
+                                    <td className="px-4 py-3 text-slate-700">{item.tag}</td>
+                                    <td className="whitespace-nowrap px-4 py-3 text-right font-medium">{formatINR(item.amount)}</td>
+                                    <td className="px-4 py-3">{item.paymentMethod}</td>
+                                    <td className="px-4 py-3">
+                                      <p>{item.vendor}</p>
+                                      <p className="mt-1 text-xs text-slate-500">Reference: {item.reference}</p>
+                                      <IncomeReceipts transactionId={item.id} receiptPaths={item.receiptPaths} />
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </section>
+                    </section>
                   </div>
                 )
               })()}
@@ -1348,11 +1636,12 @@ export default function Accounts() {
               <dt className="text-slate-500">Amount</dt><dd className="text-right font-semibold">{formatINR(selectedTransaction.amount_paise)}</dd>
               <dt className="text-slate-500">Date</dt><dd className="text-right">{selectedTransaction.transaction_date.toDate().toLocaleDateString('en-IN')}</dd>
               <dt className="text-slate-500">Reference</dt><dd className="break-all text-right">{selectedTransaction.reference_no || '—'}</dd>
-              <dt className="text-slate-500">Account</dt><dd className="text-right">{accounts.find(account => account.id === selectedTransaction.account_id)?.name ?? (selectedTransaction.account_id === PETTY_CASH_TRANSACTION_ACCOUNT_ID ? 'Petty Cash' : selectedTransaction.account_id === UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID ? 'Expense payment' : 'Unknown account')}</dd>
+              <dt className="text-slate-500">Account</dt><dd className="text-right">{accounts.find(account => account.id === selectedTransaction.account_id)?.name ?? (selectedTransaction.posting_status === 'unposted' ? 'Income record' : selectedTransaction.account_id === PETTY_CASH_TRANSACTION_ACCOUNT_ID ? 'Petty Cash' : selectedTransaction.account_id === UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID ? 'Expense payment' : 'Unknown account')}</dd>
               {selectedTransaction.transfer_to_account_id && <><dt className="text-slate-500">Destination</dt><dd className="text-right">{accounts.find(account => account.id === selectedTransaction.transfer_to_account_id)?.name ?? 'Unknown account'}</dd></>}
               <dt className="text-slate-500">Category</dt><dd className="text-right">{selectedTransaction.category_name}</dd>
               <dt className="text-slate-500">Tag</dt><dd className="text-right">{displayTag(selectedTransaction.festival_tag_id, selectedTransaction.festival_tag)}</dd>
               <dt className="text-slate-500">Payment method</dt><dd className="text-right">{selectedTransaction.payment_method || '—'}</dd>
+              {selectedTransaction.type === 'income' && selectedTransaction.source_of_income && <><dt className="text-slate-500">Source of income</dt><dd className="text-right">{selectedTransaction.source_of_income}</dd></>}
               <dt className="text-slate-500">Description</dt><dd className="text-right">{selectedTransaction.description}</dd>
               {selectedTransaction.party_name && <><dt className="text-slate-500">Customer or vendor</dt><dd className="text-right">{selectedTransaction.party_name}</dd></>}
             </dl>
@@ -1365,7 +1654,7 @@ export default function Accounts() {
         <ExpenseForm key={editingExpense?.id ?? 'new-expense'} vendors={vendorsQuery.data ?? []} categories={categoriesQuery.data ?? []}
           festivalTags={festivalTagsQuery.data ?? []} festivalTagsLoading={festivalTagsQuery.isFetching}
           festivalTagsError={festivalTagsQuery.isError} initialExpense={editingExpense ?? undefined}
-          onCreateCategory={(name, type) => categoryMutation.mutateAsync({ name, type })} saving={expenseMutation.isPending || editExpenseMutation.isPending}
+          saving={expenseMutation.isPending || editExpenseMutation.isPending}
           onClose={() => { setShowExpenseForm(false); setEditingExpense(null) }}
           onSave={input => expenseMutation.mutateAsync(input)}
           onEditSave={input => editingExpense
@@ -1379,7 +1668,6 @@ export default function Accounts() {
           festivalTags={festivalTagsQuery.data ?? []}
           initialIncome={editingIncome?.input}
           saving={unpostedIncomeMutation.isPending || editIncomeMutation.isPending}
-          onCreateCategory={(name, type) => categoryMutation.mutateAsync({ name, type })}
           onClose={() => { setShowIncomeForm(false); setEditingIncome(null) }}
           onSave={(input, idempotencyKey) => unpostedIncomeMutation.mutateAsync({ input, idempotencyKey })}
           onUpdate={input => editingIncome
@@ -1422,7 +1710,7 @@ export default function Accounts() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4" role="presentation">
           <section role="alertdialog" aria-modal="true" aria-labelledby="delete-transaction-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl sm:p-6">
             <h2 id="delete-transaction-title" className="text-lg font-semibold text-slate-900">
-              {pendingDeleteIsPettyCash ? 'Delete Petty Cash Spending?' : pendingDeleteIsExpense ? 'Delete Expense?' : 'Delete Transaction?'}
+              {pendingDeleteIsPettyCash ? 'Delete Petty Cash Spending?' : pendingDeleteIsExpense ? 'Delete Expense?' : pendingDeleteIsUnpostedIncome ? 'Delete Income?' : pendingDeleteIsOpeningBalance ? 'Delete Opening Balance?' : 'Delete Transaction?'}
             </h2>
             <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-xl bg-slate-50 p-3 text-sm">
               <dt className="text-slate-500">Transaction ID / Expense ID</dt><dd className="break-all text-right font-medium text-slate-800">{pendingDeleteDetails?.id}</dd>
@@ -1434,13 +1722,23 @@ export default function Accounts() {
             <p className="mt-3 text-sm text-slate-600">
               {pendingDeleteIsExpense
                 ? 'Are you sure you want to delete this expense? This action cannot be undone.'
+                : pendingDeleteIsUnpostedIncome
+                  ? 'Are you sure you want to delete this income record? This action cannot be undone.'
+                : pendingDeleteIsOpeningBalance
+                  ? 'This will subtract the opening amount from the account balance and clear its opening balance. Deletion will be rejected if the balance would become negative. This action cannot be undone.'
                 : 'Are you sure you want to delete this transaction? This action cannot be undone.'}
             </p>
+            <label className="mt-4 block text-sm font-medium text-slate-700">
+              Type YES to confirm
+              <input autoComplete="off" value={deleteConfirmation}
+                onChange={event => setDeleteConfirmation(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+            </label>
             {deleteError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{deleteError}</p>}
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" disabled={deleteMutation.isPending} onClick={() => { setPendingDelete(null); deleteMutation.reset() }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50">Cancel</button>
-              <button type="button" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(pendingDelete)} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
-                {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
+              <button type="button" disabled={deleteMutation.isPending} onClick={() => { setPendingDelete(null); setDeleteConfirmation(''); deleteMutation.reset() }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50">Cancel</button>
+              <button type="button" disabled={deleteMutation.isPending || deleteConfirmation.trim().toLocaleUpperCase() !== 'YES'} onClick={() => deleteMutation.mutate(pendingDelete)} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                {deleteMutation.isPending ? 'Deleting…' : 'Confirm Delete'}
               </button>
             </div>
           </section>

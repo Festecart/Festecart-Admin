@@ -1,9 +1,8 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, FileText, X } from 'lucide-react'
 import {
-  DEFAULT_FINANCIAL_CATEGORIES,
-  DEFAULT_INCOME_CATEGORIES,
   formatINR,
+  getFinancialCategoryOptions,
   PETTY_CASH_TRANSACTION_ACCOUNT_ID,
 } from '@/lib/accounts'
 import type {
@@ -16,9 +15,6 @@ import type {
   FestivalTag,
   NewTransactionInput,
 } from '@/types/accounts'
-
-const EXPENSE_CATEGORIES = DEFAULT_FINANCIAL_CATEGORIES
-const INCOME_CATEGORIES = DEFAULT_INCOME_CATEGORIES
 
 function localDate(): string {
   const now = new Date()
@@ -86,7 +82,7 @@ export function TransactionForm({
   const [description, setDescription] = useState(initialTransaction?.description ?? '')
   const [partyName, setPartyName] = useState(initialTransaction?.party_name ?? '')
   const [festivalTagIdValue, setFestivalTagIdValue] = useState(initialTransaction?.festival_tag_id ?? '')
-  const [category, setCategory] = useState(initialTransaction?.category_name ?? (type === 'income' ? INCOME_CATEGORIES[0] : EXPENSE_CATEGORIES[0]))
+  const [category, setCategory] = useState(initialTransaction?.category_name ?? '')
   const [customCategory, setCustomCategory] = useState('')
   const [accountId, setAccountId] = useState(availableAccounts[0]?.id ?? '')
   const [destinationId, setDestinationId] = useState(availableAccounts.find(item => item.id !== availableAccounts[0]?.id)?.id ?? '')
@@ -94,11 +90,7 @@ export function TransactionForm({
   const [reviewInput, setReviewInput] = useState<NewTransactionInput | null>(null)
   const [error, setError] = useState('')
   const title = initialTransaction ? 'Edit petty cash spending' : actionTitle(type, isPettyCash)
-  const relevantCategories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
-  const categoryOptions = [...new Set([
-    ...relevantCategories,
-    ...financialCategories.filter(item => item.type === type && item.is_enabled !== false).map(item => item.name),
-  ])]
+  const categoryOptions = getFinancialCategoryOptions(financialCategories)
   const chosenCategory = category === '__custom' ? customCategory.trim() : category
   const selectedAccount = availableAccounts.find(account => account.id === accountId)
   const selectedDestination = availableAccounts.find(account => account.id === destinationId)
@@ -226,6 +218,7 @@ export function TransactionForm({
               <label className="block text-sm font-medium text-slate-700 sm:col-span-2">Category
                 <select value={category} onChange={event => setCategory(event.target.value)} required
                   className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
+                  <option value="">Select category</option>
                   {initialTransaction?.category_name && !categoryOptions.includes(initialTransaction.category_name) && (
                     <option value={initialTransaction.category_name}>Existing: {initialTransaction.category_name}</option>
                   )}
@@ -329,6 +322,7 @@ export function TransactionForm({
                 <label className="block text-sm font-medium text-slate-700">Category
                   <select value={category} onChange={event => setCategory(event.target.value)}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
+                    <option value="">Select category</option>
                     {initialTransaction?.category_name && !categoryOptions.includes(initialTransaction.category_name) && (
                       <option value={initialTransaction.category_name}>Existing: {initialTransaction.category_name}</option>
                     )}

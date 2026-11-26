@@ -176,6 +176,53 @@ async function run() {
   const startingBalance = openingBalance + 2000
 
   const token = await signIn(user.email, `Test-${runId}-Password!`)
+  const openingAmount = 10_000
+  const openingAccountRef = db.collection('financial_accounts').doc(`opening-delete-test-${runId}`)
+  const openingTransactionRef = db.collection('financial_transactions').doc(`opening-delete-test-${runId}`)
+  await openingAccountRef.set({
+    opening_balance_paise: openingAmount,
+    balance_paise: openingAmount + 3_000,
+  })
+  await openingTransactionRef.set({
+    transaction_id: `FTX-OPEN-${runId}`,
+    type: 'opening_balance',
+    amount_paise: openingAmount,
+    account_id: openingAccountRef.id,
+    linked_order_id: null,
+    linked_expense_id: null,
+    transaction_date: Timestamp.now(),
+  })
+  await callFunction('deleteFinancialTransaction', token, {
+    transaction_id: openingTransactionRef.id,
+  })
+  const adjustedOpeningAccount = await openingAccountRef.get()
+  assert.equal(adjustedOpeningAccount.data().opening_balance_paise, 0)
+  assert.equal(adjustedOpeningAccount.data().balance_paise, 3_000)
+  assert.equal((await openingTransactionRef.get()).exists, false)
+
+  const negativeOpeningAccountRef = db.collection('financial_accounts').doc(`opening-delete-negative-test-${runId}`)
+  const negativeOpeningTransactionRef = db.collection('financial_transactions').doc(`opening-delete-negative-test-${runId}`)
+  await negativeOpeningAccountRef.set({
+    opening_balance_paise: openingAmount,
+    balance_paise: openingAmount - 1,
+  })
+  await negativeOpeningTransactionRef.set({
+    transaction_id: `FTX-OPEN-NEG-${runId}`,
+    type: 'opening_balance',
+    amount_paise: openingAmount,
+    account_id: negativeOpeningAccountRef.id,
+    linked_order_id: null,
+    linked_expense_id: null,
+    transaction_date: Timestamp.now(),
+  })
+  await expectCallableFailure('deleteFinancialTransaction', token, {
+    transaction_id: negativeOpeningTransactionRef.id,
+  }, 'would become negative')
+  assert.equal((await negativeOpeningAccountRef.get()).data().balance_paise, openingAmount - 1)
+  assert.equal((await negativeOpeningAccountRef.get()).data().opening_balance_paise, openingAmount)
+  assert.equal((await negativeOpeningTransactionRef.get()).exists, true)
+  console.log('PASS opening balance deletion adjusts the account atomically and rejects negative balances.')
+
   const customMethod = 'kavana'
   const methodCases = [
     { method: 'Cash', date: '2026-11-13' },
@@ -367,7 +414,8 @@ async function run() {
   const customExpense = await db.collection('financial_expenses').where('reference_no', '==', `CUSTOM-EXPENSE-${runId}`).get()
   assert.equal(customExpense.size, 1)
   assert.equal(customExpense.docs[0].data().payment_method, customMethod)
-  console.log('PASS the existing expense backend also accepts an approved custom payment method.')
+  assert.equal(customExpense.docs[0].data().amount_paise, 100)
+  console.log('PASS approved custom expense payment methods preserve the saved amount.')
 
   await deleteApp(app)
 }

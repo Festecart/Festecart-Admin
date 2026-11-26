@@ -633,6 +633,62 @@ exports.refreshAccountsAdminClaims = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
   return { accountsAdmin: true }
 })
 
+exports.attachFinancialTransactionReceipt = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
+  const actor = await requireAccountsAdmin(request)
+  const transactionId = requireRecordId(request.data && request.data.transaction_id, 'Income record ID')
+  const storagePath = request.data && typeof request.data.storage_path === 'string'
+    ? request.data.storage_path
+    : ''
+  const pathParts = storagePath.split('/')
+  const validFileName = /^[A-Za-z0-9-]{36}\.(pdf|jpeg|png|webp)$/i.test(pathParts[3] || '')
+  if (
+    pathParts.length !== 4 ||
+    pathParts[0] !== 'financial-receipts' ||
+    pathParts[1] !== actor.uid ||
+    pathParts[2] !== transactionId ||
+    !validFileName
+  ) {
+    throw new HttpsError('invalid-argument', 'The income receipt path is invalid.')
+  }
+  const file = getStorage(firebaseApp).bucket().file(storagePath)
+  const [fileExists] = await file.exists()
+  if (!fileExists) throw new HttpsError('not-found', 'The uploaded income receipt was not found.')
+  const [metadata] = await file.getMetadata()
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+  if (
+    !allowedTypes.includes(metadata.contentType) ||
+    !Number.isSafeInteger(Number(metadata.size)) ||
+    Number(metadata.size) <= 0 ||
+    Number(metadata.size) >= 10 * 1024 * 1024
+  ) {
+    throw new HttpsError('failed-precondition', 'The uploaded income receipt is not a valid file.')
+  }
+
+  const transactionRef = db.collection('financial_transactions').doc(transactionId)
+  const now = Timestamp.now()
+  await db.runTransaction(async function(transaction) {
+    const snapshot = await transaction.get(transactionRef)
+    if (!snapshot.exists) throw new HttpsError('not-found', 'The income record no longer exists.')
+    const current = snapshot.data()
+    if (!current || current.type !== 'income' || current.is_deleted === true) {
+      throw new HttpsError('failed-precondition', 'A receipt can only be attached to an active income record.')
+    }
+    transaction.update(transactionRef, {
+      receipt_paths: FieldValue.arrayUnion(storagePath),
+      updated_by: actor.uid,
+      updated_by_name: actor.name,
+      updated_at: now,
+      audit: FieldValue.arrayUnion({
+        action: 'receipt_attached',
+        storage_path: storagePath,
+        admin_user_id: actor.uid,
+        created_at: now,
+      }),
+    })
+  })
+  return { success: true }
+})
+
 exports.getFinancialReceiptDownloadUrl = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async function(request) {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in with an admin account.')
   const roleSnapshot = await db.collection('user_roles').doc(request.auth.uid).get()
@@ -1063,6 +1119,9 @@ exports.fetchUnpostedFinancialIncomes = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, 
         vendor_name: typeof data.party_name === 'string' ? data.party_name : '',
         reference_no: String(data.reference_no ?? ''),
         source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : '',
+        receipt_paths: Array.isArray(data.receipt_paths)
+          ? data.receipt_paths.filter(function(path) { return typeof path === 'string' })
+          : [],
         posting_status: 'unposted',
       }
     })
@@ -1431,9 +1490,38 @@ exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
     const current = snapshot.data()
     if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'This transaction has already been deleted.')
     transactionType = typeof current.type === 'string' ? current.type : 'unknown'
-    if (current.type === 'opening_balance') throw new HttpsError('failed-precondition', 'Opening balances cannot be deleted as transactions.')
     if (current.posting_status === 'unposted') {
       throw new HttpsError('failed-precondition', 'Unposted income cannot be deleted as a ledger transaction.')
+    }
+    let openingBalanceAccountRef = null
+    let openingBalanceUpdate = null
+    if (current.type === 'opening_balance') {
+      if (current.linked_order_id || current.linked_expense_id) {
+        throw new HttpsError('failed-precondition', 'The opening balance transaction has invalid links.')
+      }
+      const openingAmount = positiveStoredPaise(current.amount_paise, 'opening balance')
+      openingBalanceAccountRef = db.collection('financial_accounts')
+        .doc(requireRecordId(current.account_id, 'Opening balance account'))
+      const accountSnapshot = await transaction.get(openingBalanceAccountRef)
+      if (!accountSnapshot.exists) throw new HttpsError('not-found', 'The opening balance account no longer exists.')
+      const account = accountSnapshot.data()
+      if (!account || !Number.isSafeInteger(account.opening_balance_paise) ||
+        account.opening_balance_paise !== openingAmount) {
+        throw new HttpsError('failed-precondition', 'The account opening balance no longer matches this transaction.')
+      }
+      if (!Number.isSafeInteger(account.balance_paise) || account.balance_paise < 0) {
+        throw new HttpsError('failed-precondition', 'The account has an invalid balance.')
+      }
+      const nextBalance = account.balance_paise - openingAmount
+      if (nextBalance < 0) {
+        throw new HttpsError('failed-precondition', 'The opening balance cannot be removed because the account balance would become negative.')
+      }
+      openingBalanceUpdate = {
+        opening_balance_paise: 0,
+        balance_paise: nextBalance,
+        updated_by: actor.uid,
+        updated_at: now,
+      }
     }
     let isPettyCashSpending = current.is_petty_cash_spending === true
     if (isPettyCashSpending && (current.type !== 'expense' || current.linked_order_id || current.linked_expense_id)) {
@@ -1512,7 +1600,7 @@ exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
     }
 
     const deltas = new Map()
-    if (!isPettyCashSpending) addTransactionPosting(deltas, current, -1)
+    if (!isPettyCashSpending && current.type !== 'opening_balance') addTransactionPosting(deltas, current, -1)
     let orderUpdate = null
     if (linkedOrder) {
       const { total, paid } = orderPaidPaise(linkedOrder)
@@ -1546,8 +1634,10 @@ exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
       }
     }
 
-    if (!isPettyCashSpending) await applyAccountDeltas(transaction, deltas, actor, now)
-    if (current.type === 'expense' || isPettyCashSpending) {
+    if (!isPettyCashSpending && current.type !== 'opening_balance') {
+      await applyAccountDeltas(transaction, deltas, actor, now)
+    }
+    if (current.type === 'expense' || current.type === 'opening_balance' || isPettyCashSpending) {
       transaction.delete(transactionRef)
     } else {
       transaction.update(transactionRef, {
@@ -1569,6 +1659,9 @@ exports.deleteFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, asy
     }
     if (orderUpdate && orderRef) transaction.update(orderRef, { ...orderUpdate, updated_at: now })
     if (expenseUpdate && expenseRef) transaction.update(expenseRef, expenseUpdate)
+    if (openingBalanceAccountRef && openingBalanceUpdate) {
+      transaction.update(openingBalanceAccountRef, openingBalanceUpdate)
+    }
     if (isFullAmountExpense && expenseRef) {
       if (linkedExpenseIdRegistryRef && linkedExpenseIdRegistrySnapshot && !linkedExpenseIdRegistrySnapshot.exists) {
         transaction.create(linkedExpenseIdRegistryRef, {

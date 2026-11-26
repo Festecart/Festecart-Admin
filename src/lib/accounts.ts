@@ -875,6 +875,22 @@ function normalizeFinancialCategoryName(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
 }
 
+export function getFinancialCategoryOptions(categories: FinancialCategory[]): string[] {
+  const names = [
+    ...DEFAULT_FINANCIAL_CATEGORIES,
+    ...DEFAULT_INCOME_CATEGORIES,
+    ...categories
+      .filter(category => category.is_enabled !== false)
+      .map(category => category.name),
+  ]
+  const uniqueNames = new Map<string, string>()
+  for (const name of names) {
+    const normalized = normalizeFinancialCategoryName(name)
+    if (normalized && !uniqueNames.has(normalized)) uniqueNames.set(normalized, name.trim())
+  }
+  return [...uniqueNames.values()]
+}
+
 function readCategoryHistory(data: DocumentData | undefined): Record<string, { names: string[]; updated_at?: Timestamp }> {
   const raw = data?.category_history
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
@@ -1230,6 +1246,9 @@ export async function fetchUnpostedFinancialIncomes(): Promise<UnpostedFinancial
           vendor_name: typeof data.party_name === 'string' ? data.party_name : '',
           reference_no: typeof data.reference_no === 'string' ? data.reference_no : '',
           source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : '',
+          receipt_paths: Array.isArray(data.receipt_paths)
+            ? data.receipt_paths.filter((path): path is string => typeof path === 'string')
+            : [],
           posting_status: 'unposted',
           editable: (data.account_id == null || data.account_id === '') &&
             data.linked_order_id == null &&
@@ -1307,6 +1326,37 @@ export async function uploadExpenseReceipt(expenseId: string, file: File): Promi
   }
 }
 
+export async function uploadFinancialTransactionReceipt(transactionId: string, file: File): Promise<void> {
+  const actor = requireActor()
+  await refreshAccountsAdminClaims()
+  if (!transactionId || transactionId.includes('/') || transactionId.length > 200) {
+    throw new Error('The income record could not be identified.')
+  }
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+  if (!allowedTypes.includes(file.type)) throw new Error('Attach a PDF, JPEG, PNG, or WebP receipt.')
+  if (file.size <= 0 || file.size >= 10 * 1024 * 1024) throw new Error('Receipt files must be smaller than 10 MB.')
+  const extension = file.type === 'application/pdf' ? 'pdf' : file.type.split('/')[1]
+  const path = `financial-receipts/${actor.uid}/${transactionId}/${crypto.randomUUID()}.${extension}`
+  const fileRef = storageRef(storage, path)
+  await uploadBytes(fileRef, file, { contentType: file.type })
+
+  try {
+    const attachReceipt = httpsCallable<
+      { transaction_id: string; storage_path: string },
+      { success: boolean }
+    >(getFunctions(app, ACCOUNTS_FUNCTION_REGION), 'attachFinancialTransactionReceipt')
+    await attachReceipt({ transaction_id: transactionId, storage_path: path })
+  } catch (error) {
+    try {
+      await deleteObject(fileRef)
+    } catch (cleanupError) {
+      const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : 'unknown cleanup error'
+      throw new Error(`Receipt metadata could not be saved and the uploaded file could not be removed: ${cleanupMessage}`)
+    }
+    throw error
+  }
+}
+
 export async function getExpenseReceiptUrl(path: string): Promise<string> {
   const getReceiptUrl = httpsCallable<{ path: string }, { url: string }>(
     getFunctions(app, 'us-central1'),
@@ -1325,22 +1375,22 @@ export async function getTransactionReceiptUrl(path: string): Promise<string> {
   return result.data.url
 }
 
-export async function createFinancialCategory(nameInput: string, type: 'income' | 'expense'): Promise<void> {
+export async function createFinancialCategory(nameInput: string, type: 'income' | 'expense' = 'expense'): Promise<void> {
   const actor = requireActor()
   const name = nameInput.trim().replace(/\s+/g, ' ')
   if (!name || name.length > 80) throw new Error('Category names must contain 1–80 characters.')
-  const defaults = type === 'income' ? DEFAULT_INCOME_CATEGORIES : DEFAULT_FINANCIAL_CATEGORIES
+  const defaults = [...DEFAULT_FINANCIAL_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]
   if (defaults.some(item => normalizeFinancialCategoryName(item) === normalizeFinancialCategoryName(name))) {
     throw new Error('That category is already available.')
   }
-  const categories = await getDocs(query(collection(db, CATEGORIES), where('type', '==', type)))
+  const categories = await getDocs(collection(db, CATEGORIES))
   const matches = categories.docs.filter(item =>
     normalizeFinancialCategoryName(String(item.data().name ?? '')) === normalizeFinancialCategoryName(name))
   const activeMatch = matches.find(item => item.data().is_enabled !== false)
   if (activeMatch) {
     throw new Error('A category with that name already exists.')
   }
-  const categoryRef = doc(db, CATEGORIES, matches[0]?.id ?? `${type}_${encodeURIComponent(name.toLocaleLowerCase())}`)
+  const categoryRef = doc(db, CATEGORIES, matches[0]?.id ?? `shared_${encodeURIComponent(name.toLocaleLowerCase())}`)
   const settingsRef = doc(db, 'site_config', PAYMENT_METHODS_CONFIG)
   const now = Timestamp.now()
   await runTransaction(db, async transaction => {
@@ -1391,11 +1441,11 @@ export async function updateFinancialCategory(
   const currentData = snapshot.data()
   const type = currentData.type === 'income' ? 'income' : currentData.type === 'expense' ? 'expense' : null
   if (!type) throw new Error('This category has an unsupported type.')
-  const defaults = type === 'income' ? DEFAULT_INCOME_CATEGORIES : DEFAULT_FINANCIAL_CATEGORIES
+  const defaults = [...DEFAULT_FINANCIAL_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]
   if (defaults.some(item => normalizeFinancialCategoryName(item) === normalizeFinancialCategoryName(name))) {
     throw new Error('That category is already available as a default.')
   }
-  const categories = await getDocs(query(collection(db, CATEGORIES), where('type', '==', type)))
+  const categories = await getDocs(collection(db, CATEGORIES))
   if (categories.docs.some(item =>
     item.id !== categoryId && item.data().is_enabled !== false &&
     normalizeFinancialCategoryName(String(item.data().name ?? '')) === normalizeFinancialCategoryName(name))) {
@@ -1433,7 +1483,7 @@ export async function deleteFinancialCategory(categoryId: string): Promise<void>
   if (!categorySnapshot.exists()) throw new Error('This category no longer exists.')
   const category = categorySnapshot.data()
   if (category.is_enabled === false) throw new Error('This category has already been deleted.')
-  const defaults = category.type === 'income' ? DEFAULT_INCOME_CATEGORIES : DEFAULT_FINANCIAL_CATEGORIES
+  const defaults = [...DEFAULT_FINANCIAL_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES]
   const name = String(category.name ?? '')
   if (defaults.some(item => normalizeFinancialCategoryName(item) === normalizeFinancialCategoryName(name))) {
     throw new Error('Default categories are protected and cannot be deleted.')
@@ -1514,9 +1564,16 @@ export async function fetchCustomerReceivables(): Promise<CustomerReceivable[]> 
 }
 
 export async function fetchAccountTotals(range: AccountDateRange = {}): Promise<AccountTotals> {
-  const transactions = await fetchReportTransactions(range)
+  const [transactions, unpostedIncomes] = await Promise.all([
+    fetchReportTransactions(range),
+    fetchUnpostedFinancialIncomes(),
+  ])
+  const incomesInRange = unpostedIncomes.filter(item =>
+    (!range.from || item.transaction_date >= range.from) &&
+    (!range.to || item.transaction_date <= range.to))
   return {
-    income_paise: transactions.filter(item => item.type === 'income').reduce((total, item) => total + item.amount_paise, 0),
+    income_paise: transactions.filter(item => item.type === 'income').reduce((total, item) => total + item.amount_paise, 0) +
+      incomesInRange.reduce((total, item) => total + item.amount_paise, 0),
     expense_paise: transactions.filter(item => item.type === 'expense').reduce((total, item) => total + item.amount_paise, 0),
   }
 }

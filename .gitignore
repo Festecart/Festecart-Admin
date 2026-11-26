@@ -11,6 +11,7 @@ dist-ssr/
 # Environment — commit .env (no secrets inside), but never commit .env.local
 .env.local
 .env.*.local
+.env.emulator
 functions/.env
 scripts/serviceAccountKey.json
 

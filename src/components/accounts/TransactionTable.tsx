@@ -17,6 +17,7 @@ export function TransactionTable({
   onView,
   onEdit,
   onDelete,
+  canEdit,
   paymentStatus,
   showTag = true,
   simple = false,
@@ -28,6 +29,7 @@ export function TransactionTable({
   onView?: (transaction: FinancialTransaction) => void
   onEdit?: (transaction: FinancialTransaction) => void
   onDelete?: (transaction: FinancialTransaction) => void
+  canEdit?: (transaction: FinancialTransaction) => boolean
   paymentStatus?: (transaction: FinancialTransaction) => string
   showTag?: boolean
   simple?: boolean
@@ -37,6 +39,8 @@ export function TransactionTable({
     ? 'Petty Cash'
     : id === UNALLOCATED_EXPENSE_PAYMENT_ACCOUNT_ID
       ? 'Expense payment'
+      : !id
+        ? 'Income record'
       : accounts.find(account => account.id === id)?.name ?? 'Unknown account'
 
   if (!rows.length) {
@@ -79,6 +83,7 @@ export function TransactionTable({
             const Icon = item.type === 'income' ? ArrowDownLeft : item.type === 'transfer' ? ArrowLeftRight : ArrowUpRight
             const tone = item.type === 'income' ? 'text-emerald-700 bg-emerald-50' : item.type === 'transfer' ? 'text-blue-700 bg-blue-50' : 'text-rose-700 bg-rose-50'
             const account = accounts.find(row => row.id === item.account_id)
+            const canEditItem = canEdit?.(item) ?? item.posting_status !== 'unposted'
             return (
               <tr key={item.id} className="hover:bg-slate-50/80">
                 {simple ? <>
@@ -136,10 +141,10 @@ export function TransactionTable({
                   <td className="whitespace-nowrap px-4 py-3.5 text-right">
                     <div className="inline-flex items-center gap-1">
                       {onView && <button type="button" onClick={() => onView(item)} aria-label={`View ${item.transaction_id}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"><Eye size={15} /></button>}
-                      {onEdit && item.type !== 'opening_balance' && (
+                      {onEdit && canEditItem && item.type !== 'opening_balance' && (
                         <button type="button" onClick={() => onEdit(item)} aria-label={`Edit ${item.transaction_id}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"><Pencil size={15} /></button>
                       )}
-                      {onDelete && item.type !== 'opening_balance' && (
+                      {onDelete && (
                         <button type="button" onClick={() => onDelete(item)} aria-label={`Delete ${item.transaction_id}`} className="rounded-lg p-2 text-rose-600 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} /></button>
                       )}
                     </div>

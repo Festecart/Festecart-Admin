@@ -148,7 +148,6 @@ export function AccountsSettings() {
   })
   const [methodName, setMethodName] = useState('')
   const [categoryName, setCategoryName] = useState('')
-  const [categoryType, setCategoryType] = useState<'expense' | 'income'>('expense')
   const [editingMethod, setEditingMethod] = useState<FinancialPaymentMethod | null>(null)
   const [editingCategory, setEditingCategory] = useState<FinancialCategory | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SettingsDeleteTarget | null>(null)
@@ -168,12 +167,11 @@ export function AccountsSettings() {
     ...DEFAULT_FINANCIAL_CATEGORIES.map(name => ({ name, type: 'expense' as const })),
     ...DEFAULT_INCOME_CATEGORIES.map(name => ({ name, type: 'income' as const })),
   ]
+  const defaultCategoryNames = new Set(defaultCategories.map(item =>
+    item.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()))
   const customCategories = categories.filter(category =>
     category.is_enabled !== false &&
-    !defaultCategories.some(item =>
-      item.type === category.type &&
-      item.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase() ===
-        category.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()))
+    !defaultCategoryNames.has(category.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()))
 
   async function refreshSettings() {
     await Promise.all([
@@ -214,7 +212,7 @@ export function AccountsSettings() {
   async function saveCategory(event: FormEvent) {
     event.preventDefault()
     await perform(async () => {
-      await createFinancialCategory(categoryName, categoryType)
+      await createFinancialCategory(categoryName)
       setCategoryName('')
     }, 'Category added successfully.')
   }
@@ -345,7 +343,7 @@ export function AccountsSettings() {
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <PanelHeader
               title="Categories"
-              subtitle="Create and manage categories used in income and expense forms."
+              subtitle="Custom categories added here are available in both income and expense forms."
               icon={<Tag size={18} />}
               tone="purple"
             />
@@ -355,12 +353,6 @@ export function AccountsSettings() {
                 <div className="flex flex-wrap gap-2">
                   <input id="settings-category-name" value={categoryName} onChange={event => setCategoryName(event.target.value)}
                     placeholder="Enter custom category" maxLength={80} required className={inputClass} />
-                  <select aria-label="Category type" value={categoryType}
-                    onChange={event => setCategoryType(event.target.value as 'expense' | 'income')}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700">
-                    <option value="expense">Expense</option>
-                    <option value="income">Income</option>
-                  </select>
                   <button type="submit" disabled={saving || !categoryName.trim()}
                     className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50">
                     <Plus size={15} /> Save
@@ -374,7 +366,7 @@ export function AccountsSettings() {
                     <thead className="bg-slate-50">
                       <tr className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
                         <th className="w-[38%] px-3 py-3">Category Name</th>
-                        <th className="w-[28%] px-3 py-3">Type</th>
+                        <th className="w-[28%] px-3 py-3">Available in</th>
                         <th className="w-[20%] px-3 py-3">Updated</th>
                         <th className="w-[14%] px-3 py-3 text-right">Actions</th>
                       </tr>
@@ -587,7 +579,9 @@ function CategoryRow({
       </td>
       <td className="px-3 py-3">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-medium text-slate-500">{category.type === 'income' ? 'Income' : 'Expense'}</span>
+          <span className="text-[11px] font-medium text-slate-500">
+            {isDefault ? category.type === 'income' ? 'Income' : 'Expense' : 'Income & Expense'}
+          </span>
           <TypeBadge kind={isDefault ? 'default' : 'custom'}>{isDefault ? 'Default' : 'Custom'}</TypeBadge>
         </div>
       </td>

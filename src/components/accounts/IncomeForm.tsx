@@ -1,7 +1,8 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, X } from 'lucide-react'
-import { DEFAULT_INCOME_CATEGORIES, rupeesToPaise } from '@/lib/accounts'
+import { getFinancialCategoryOptions, rupeesToPaise } from '@/lib/accounts'
 import { incomeDateToIso, isoToIncomeDate } from '@/lib/incomeDate'
+import { AccountsSelect } from '@/components/accounts/AccountsSelect'
 import { PaymentMethodField } from '@/components/accounts/PaymentMethodField'
 import type {
   FinancialCategory,
@@ -10,6 +11,11 @@ import type {
 } from '@/types/accounts'
 
 const PRESERVED_INCOME_TAG = '__preserved_income_tag__'
+
+function currentDateInput(): string {
+  const date = new Date()
+  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`
+}
 
 function incomeSaveErrorMessage(reason: unknown): string {
   const details = reason && typeof reason === 'object'
@@ -43,7 +49,6 @@ export function IncomeForm({
   festivalTags,
   saving,
   initialIncome,
-  onCreateCategory,
   onClose,
   onSave,
   onUpdate,
@@ -52,23 +57,20 @@ export function IncomeForm({
   festivalTags: FestivalTag[]
   saving: boolean
   initialIncome?: NewIncomeInput
-  onCreateCategory: (name: string, type: 'income') => Promise<void>
   onClose: () => void
   onSave: (input: NewIncomeInput, idempotencyKey: string) => Promise<void>
   onUpdate?: (input: NewIncomeInput) => Promise<void>
 }) {
-  const availableCategories = [...new Set([
-    ...DEFAULT_INCOME_CATEGORIES,
-    ...categories.filter(item => item.type === 'income' && item.is_enabled !== false).map(item => item.name).filter(Boolean),
-  ])]
+  const availableCategories = getFinancialCategoryOptions(categories)
   const initialCategory = initialIncome?.category_name ?? ''
-  const initialCategoryIsCustom = Boolean(initialCategory && !availableCategories.includes(initialCategory))
+  const categoryOptions = initialCategory && !availableCategories.includes(initialCategory)
+    ? [...availableCategories, initialCategory]
+    : availableCategories
   const initialTagId = initialIncome?.festival_tag_id ?? (initialIncome?.festival_tag ? PRESERVED_INCOME_TAG : '')
   const [amount, setAmount] = useState(initialIncome ? (initialIncome.amount_paise / 100).toFixed(2) : '')
-  const [date, setDate] = useState(initialIncome ? isoToIncomeDate(initialIncome.transaction_date) : '')
+  const [date, setDate] = useState(initialIncome ? isoToIncomeDate(initialIncome.transaction_date) : currentDateInput())
   const [tagId, setTagId] = useState(initialTagId)
-  const [category, setCategory] = useState(initialCategoryIsCustom ? '__custom' : initialCategory)
-  const [customCategory, setCustomCategory] = useState(initialCategoryIsCustom ? initialCategory : '')
+  const [category, setCategory] = useState(initialCategory)
   const [description, setDescription] = useState(initialIncome?.description ?? '')
   const [paymentMethod, setPaymentMethod] = useState(initialIncome?.payment_method ?? '')
   const [vendor, setVendor] = useState(initialIncome?.vendor_name ?? '')
@@ -86,20 +88,18 @@ export function IncomeForm({
       : initialIncome.festival_tag_id === tagId)
     ? initialIncome.festival_tag
     : null
-  const chosenCategory = category === '__custom' ? customCategory.trim() : category.trim()
   const validDate = incomeDateToIso(date)
 
   function collectInput(): NewIncomeInput {
     const amountPaise = rupeesToPaise(amount)
     if (!validDate) throw new Error('Enter a valid date in DD/MM/YYYY format.')
-    if (category === '__custom' && !chosenCategory) throw new Error('Enter a custom category or choose another category.')
     if (tagId && !selectedTag && !preservedTag) throw new Error('Select a saved tag or clear the Tag field to continue.')
     return {
       amount_paise: amountPaise,
       transaction_date: validDate,
       festival_tag: selectedTag?.name ?? preservedTag ?? null,
       festival_tag_id: tagId === PRESERVED_INCOME_TAG ? null : tagId || null,
-      category_name: chosenCategory,
+      category_name: category.trim(),
       description: description.trim(),
       payment_method: paymentMethod.trim(),
       vendor_name: vendor.trim(),
@@ -115,9 +115,6 @@ export function IncomeForm({
     setError('')
     try {
       const input = collectInput()
-      if (category === '__custom' && chosenCategory !== initialIncome?.category_name) {
-        await onCreateCategory(chosenCategory, 'income')
-      }
       if (initialIncome) {
         if (!onUpdate) throw new Error('Income editing is unavailable. Refresh and try again.')
         await onUpdate(input)
@@ -185,17 +182,9 @@ export function IncomeForm({
               </select>
             </label>
             <label className="block text-sm font-medium text-slate-700">Category (Optional)
-              <select value={category} onChange={event => setCategory(event.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-                <option value="">No category</option>
-                {availableCategories.map(item => <option key={item} value={item}>{item}</option>)}
-                <option value="__custom">Add Custom Category</option>
-              </select>
-              {category === '__custom' && (
-                <input aria-label="Custom category" value={customCategory} onChange={event => setCustomCategory(event.target.value)}
-                  placeholder="Enter custom category" maxLength={80}
-                  className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-              )}
+              <AccountsSelect ariaLabel="Income category" value={category}
+                options={categoryOptions.map(item => ({ value: item, label: item }))}
+                onChange={setCategory} placeholder="Select category" />
             </label>
             <label className="block text-sm font-medium text-slate-700">Description (Optional)
               <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
