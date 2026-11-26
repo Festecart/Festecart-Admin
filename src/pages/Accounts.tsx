@@ -4,6 +4,7 @@ import {
   ArrowLeftRight,
   ArrowUpRight,
   CalendarDays,
+  Check,
   CircleDollarSign,
   CircleAlert,
   Download,
@@ -12,6 +13,7 @@ import {
   Search,
   Trash2,
   Pencil,
+  X,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AccountForm } from '@/components/accounts/AccountForm'
@@ -104,9 +106,18 @@ type IncomeHistoryRow = {
   tag: string
   description: string
   vendor: string
+  paymentReference: string
   reference: string
+  receiptPaths: string[]
   editable: boolean
   input: NewIncomeInput
+}
+
+type IncomeRecordEditDraft = {
+  id: string
+  vendor: string
+  paymentReference: string
+  reference: string
 }
 
 function isDisplayableExpenseId(value: string | null | undefined): value is string {
@@ -260,6 +271,7 @@ function unpostedIncomeTransaction(income: UnpostedFinancialIncome): FinancialTr
     linked_order_id: null,
     linked_expense_id: null,
     party_name: income.vendor_name || null,
+    payment_reference: income.payment_reference,
     receipt_paths: income.receipt_paths,
     payment_method: income.payment_method,
     source_of_income: income.source_of_income,
@@ -298,8 +310,9 @@ export default function Accounts() {
   const [editingTransaction, setEditingTransaction] = useState<FinancialTransaction | null>(null)
   const [editingExpense, setEditingExpense] = useState<FinancialExpense | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
-  const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [editingIncome, setEditingIncome] = useState<IncomeHistoryRow | null>(null)
+  const [incomeRecordEdit, setIncomeRecordEdit] = useState<IncomeRecordEditDraft | null>(null)
+  const [incomeRecordEditError, setIncomeRecordEditError] = useState('')
   const [incomeToDelete, setIncomeToDelete] = useState<IncomeHistoryRow | null>(null)
   const [showExpenseForm, setShowExpenseForm] = useState(false)
   const [showIncomeForm, setShowIncomeForm] = useState(false)
@@ -487,6 +500,7 @@ export default function Accounts() {
           description: item.description,
           payment_method: item.payment_method,
           vendor_name: item.party_name ?? '',
+          payment_reference: item.payment_reference ?? '',
           reference_no: item.reference_no,
           source_of_income: item.source_of_income ?? '',
         }
@@ -502,7 +516,9 @@ export default function Accounts() {
           tag: displayTag(item.festival_tag_id, item.festival_tag),
           description: item.description || '—',
           vendor: item.party_name || '—',
+          paymentReference: item.payment_reference || '—',
           reference: item.reference_no || '—',
+          receiptPaths: item.receipt_paths,
           editable: false,
           input,
         }
@@ -518,6 +534,7 @@ export default function Accounts() {
           description: item.description,
           payment_method: item.payment_method,
           vendor_name: item.vendor_name,
+          payment_reference: item.payment_reference,
           reference_no: item.reference_no,
           source_of_income: item.source_of_income,
         }
@@ -533,7 +550,9 @@ export default function Accounts() {
           tag: displayTag(item.festival_tag_id, item.festival_tag),
           description: item.description || '—',
           vendor: item.vendor_name || '—',
+          paymentReference: item.payment_reference || '—',
           reference: item.reference_no || '—',
+          receiptPaths: item.receipt_paths,
           editable: item.editable,
           input,
         }
@@ -636,6 +655,34 @@ export default function Accounts() {
       showTransactionSuccess('Income updated successfully.', 5000)
     },
   })
+  function startIncomeRecordEdit(id: string, input: NewIncomeInput) {
+    setIncomeRecordEdit({
+      id,
+      vendor: input.vendor_name,
+      paymentReference: input.payment_reference ?? '',
+      reference: input.reference_no,
+    })
+    setIncomeRecordEditError('')
+  }
+  async function saveIncomeRecordEdit(id: string, input: NewIncomeInput) {
+    const draft = incomeRecordEdit
+    if (!draft || draft.id !== id) return
+    setIncomeRecordEditError('')
+    try {
+      await editIncomeMutation.mutateAsync({
+        transactionId: id,
+        input: {
+          ...input,
+          vendor_name: draft.vendor.trim(),
+          payment_reference: draft.paymentReference.trim(),
+          reference_no: draft.reference.trim(),
+        },
+      })
+      setIncomeRecordEdit(null)
+    } catch (reason) {
+      setIncomeRecordEditError(reason instanceof Error ? reason.message : 'Income details could not be saved.')
+    }
+  }
   const deleteIncomeMutation = useMutation({
     mutationFn: (transactionId: string) => deleteUnpostedFinancialIncome(transactionId),
     onSuccess: async () => {
@@ -670,15 +717,12 @@ export default function Accounts() {
       else if (target.record.posting_status === 'unposted') await deleteUnpostedFinancialIncome(target.record.id)
       else await deleteFinancialTransaction(target.record, target.pettyCashSpending === true)
     },
-    onSuccess: async (_result, target) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
-        target.kind === 'transaction' && target.record.linked_order_id
-          ? queryClient.invalidateQueries({ queryKey: ['orders'] })
-          : Promise.resolve(),
-      ])
+    onSuccess: (_result, target) => {
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      if (target.kind === 'transaction' && target.record.linked_order_id) {
+        void queryClient.invalidateQueries({ queryKey: ['orders'] })
+      }
       setPendingDelete(null)
-      setDeleteConfirmation('')
       setDeleteError('')
       showDeleteSuccess(target.kind === 'expense'
         ? 'Expense deleted successfully.'
@@ -728,7 +772,6 @@ export default function Accounts() {
   }
   const requestDelete = (target: PendingDelete) => {
     deleteMutation.reset()
-    setDeleteConfirmation('')
     clearDeleteSuccessTimer()
     setDeleteSuccessMessage('')
     setDeleteError('')
@@ -998,21 +1041,21 @@ export default function Accounts() {
                 : <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <table className="min-w-[1250px] w-full text-left text-sm">
                     <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>
-                      <th className="px-4 py-3">Expense ID</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Description</th>
-                      <th className="px-4 py-3">Tag</th><th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Payment Status</th><th className="px-4 py-3">Payment Method</th>
+                      <th className="px-4 py-3">Description</th><th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Payment Status</th><th className="px-4 py-3">Payment Method</th>
+                      <th className="px-4 py-3">Category</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Tag</th><th className="px-4 py-3">Expense ID</th>
                       <th className="px-4 py-3">Vendor / Reference / Receipts</th><th className="px-4 py-3">Actions</th>
                     </tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {visibleExpenses.map(expense => (
                         <tr key={expense.id}>
-                          <td className="px-4 py-3 whitespace-nowrap font-medium text-slate-700">{isDisplayableExpenseId(expense.expense_id) ? expense.expense_id : '—'}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">{expense.transaction_date.toDate().toLocaleDateString('en-GB')}</td>
-                          <td className="px-4 py-3">{expense.category_name}</td>
                           <td className="px-4 py-3 text-slate-700">{expense.description || '—'}</td>
-                          <td className="px-4 py-3 text-slate-700">{displayTag(expense.festival_tag_id, expense.festival_tag)}</td>
                           <td className="px-4 py-3 text-right font-medium">{formatINR(expense.amount_paise)}</td>
                           <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${expense.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-700' : expense.payment_status === 'partially_paid' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{expense.payment_status === 'paid' ? 'Fully Paid' : expense.payment_status === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}</span></td>
                           <td className="px-4 py-3 capitalize">{expense.payment_method || '—'}</td>
+                          <td className="px-4 py-3">{expense.category_name || '—'}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">{expense.transaction_date.toDate().toLocaleDateString('en-GB')}</td>
+                          <td className="px-4 py-3 text-slate-700">{displayTag(expense.festival_tag_id, expense.festival_tag)}</td>
+                          <td className="px-4 py-3 whitespace-nowrap font-medium text-slate-700">{isDisplayableExpenseId(expense.expense_id) ? expense.expense_id : '—'}</td>
                           <td className="px-4 py-3">
                             <p>{expense.vendor_name || '—'}</p>
                             <p className="mt-1 text-xs text-slate-500">Payment ref: {expense.payment_reference || '—'}</p>
@@ -1072,7 +1115,7 @@ export default function Accounts() {
               </label>
               <button type="button" onClick={() => downloadReportFile(
                 'accounts-income.csv',
-                `\uFEFF${[['Income Date', 'Amount (INR)', 'Payment Method', 'Source of Income', 'Category', 'Tag', 'Description', 'Vendor', 'Reference Number'], ...filteredIncomeRows.map(item => [
+                `\uFEFF${[['Income Date', 'Amount (INR)', 'Payment Method', 'Source of Income', 'Category', 'Tag', 'Description', 'Vendor', 'Payment Reference', 'Reference Number'], ...filteredIncomeRows.map(item => [
                   item.dateLabel,
                   (item.amount / 100).toFixed(2),
                   item.paymentMethod,
@@ -1081,6 +1124,7 @@ export default function Accounts() {
                   item.tag,
                   item.description,
                   item.vendor,
+                  item.paymentReference,
                   item.reference,
                 ])].map(row => row.map(escapeCsvCell).join(',')).join('\r\n')}`,
                 'text/csv;charset=utf-8',
@@ -1097,27 +1141,75 @@ export default function Accounts() {
               : filteredIncomeRows.length === 0
                 ? <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">No income records match these filters.</div>
                 : <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <table className="min-w-[1350px] w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr>
-                      <th className="px-4 py-3">Income Date</th><th className="px-4 py-3 text-right">Amount</th>
-                      <th className="px-4 py-3">Payment Method</th><th className="px-4 py-3">Source of Income</th>
-                      <th className="px-4 py-3">Category</th><th className="px-4 py-3">Tag</th>
-                      <th className="px-4 py-3">Description</th><th className="px-4 py-3">Vendor</th>
-                      <th className="px-4 py-3">Reference Number</th><th className="px-4 py-3">Actions</th>
+                  <table className="w-full min-w-[1080px] table-fixed text-left text-sm">
+                    <thead className="bg-slate-50 text-[11px] uppercase tracking-normal text-slate-500"><tr>
+                      <th className="px-3 py-3">Description</th><th className="whitespace-nowrap py-3 pl-3 pr-5 text-right">Amount</th>
+                      <th className="px-3 py-3">Source of Income</th><th className="py-3 pl-5 pr-3">Payment Method</th>
+                      <th className="px-3 py-3">Category</th><th className="whitespace-nowrap px-3 py-3">Date</th>
+                      <th className="px-3 py-3">Tag</th><th className="px-3 py-3">Vendor / Reference / Receipts</th>
+                      <th className="px-3 py-3">Actions</th>
                     </tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredIncomeRows.map(item => (
                         <tr key={item.key}>
-                          <td className="whitespace-nowrap px-4 py-3">{item.dateLabel}</td>
-                          <td className="px-4 py-3 text-right font-medium">{formatINR(item.amount)}</td>
-                          <td className="px-4 py-3">{item.paymentMethod}</td>
-                          <td className="px-4 py-3">{item.source}</td>
-                          <td className="px-4 py-3">{item.category}</td>
-                          <td className="px-4 py-3">{item.tag}</td>
-                          <td className="px-4 py-3 text-slate-700">{item.description}</td>
-                          <td className="px-4 py-3">{item.vendor}</td>
-                          <td className="px-4 py-3">{item.reference}</td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2 text-slate-700">{item.description}</td>
+                          <td className="whitespace-nowrap py-2 pl-3 pr-5 text-right font-medium">{formatINR(item.amount)}</td>
+                          <td className="px-3 py-2">{item.source}</td>
+                          <td className="py-2 pl-5 pr-3">{item.paymentMethod}</td>
+                          <td className="px-3 py-2">{item.category}</td>
+                          <td className="whitespace-nowrap px-3 py-2">{item.dateLabel}</td>
+                          <td className="px-3 py-2">{item.tag}</td>
+                          <td className="px-3 py-2">
+                            {incomeRecordEdit?.id === item.id ? (
+                              <div className="space-y-1">
+                                <input aria-label="Income vendor" value={incomeRecordEdit.vendor}
+                                  onChange={event => setIncomeRecordEdit(current => current ? { ...current, vendor: event.target.value } : current)}
+                                  maxLength={120} placeholder="Vendor"
+                                  className="w-full rounded-lg border border-slate-300 px-2 py-0.5 text-xs" />
+                                <input aria-label="Income payment reference" value={incomeRecordEdit.paymentReference}
+                                  onChange={event => setIncomeRecordEdit(current => current ? { ...current, paymentReference: event.target.value } : current)}
+                                  maxLength={200} placeholder="Payment ref"
+                                  className="w-full rounded-lg border border-slate-300 px-2 py-0.5 text-xs" />
+                                <input aria-label="Income reference number" value={incomeRecordEdit.reference}
+                                  onChange={event => setIncomeRecordEdit(current => current ? { ...current, reference: event.target.value } : current)}
+                                  maxLength={200} placeholder="Reference"
+                                  className="w-full rounded-lg border border-slate-300 px-2 py-0.5 text-xs" />
+                                <div className="flex items-center gap-1">
+                                  <button type="button" disabled={editIncomeMutation.isPending}
+                                    onClick={() => void saveIncomeRecordEdit(item.id, item.input)}
+                                    aria-label="Save income record details"
+                                    className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
+                                    <Check size={15} />
+                                  </button>
+                                  <button type="button" onClick={() => { setIncomeRecordEdit(null); setIncomeRecordEditError('') }}
+                                    aria-label="Cancel income record edit"
+                                    className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">
+                                    <X size={15} />
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <p className="leading-tight">
+                                  {item.vendor}
+                                  {item.editable && (
+                                    <button type="button" onClick={() => startIncomeRecordEdit(item.id, item.input)}
+                                      aria-label="Edit income record details"
+                                      className="ml-1 inline-flex rounded-lg p-1 align-middle text-slate-500 hover:bg-slate-100">
+                                      <Pencil size={14} />
+                                    </button>
+                                  )}
+                                </p>
+                                <p className="mt-0.5 text-xs leading-tight text-slate-500">Payment ref: {item.paymentReference}</p>
+                                <p className="mt-0.5 text-xs leading-tight text-slate-500">Reference: {item.reference}</p>
+                              </>
+                            )}
+                            <IncomeReceipts transactionId={item.id} receiptPaths={item.receiptPaths} />
+                            {incomeRecordEditError && incomeRecordEdit?.id === item.id && (
+                              <p role="alert" className="mt-1 max-w-[220px] text-xs text-rose-700">{incomeRecordEditError}</p>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
                             <div className="flex items-center gap-1">
                               <button type="button" disabled={!item.editable || editIncomeMutation.isPending}
                                 onClick={() => { setShowIncomeForm(false); setEditingIncome(item) }}
@@ -1330,8 +1422,11 @@ export default function Accounts() {
                       tag: displayTag(item.festival_tag_id, item.festival_tag),
                       paymentMethod: item.payment_method || '—',
                       vendor: item.party_name || '—',
+                      paymentReference: item.payment_reference || '—',
                       reference: item.reference_no || '—',
                       receiptPaths: item.receipt_paths,
+                      editable: false,
+                      input: null,
                     })),
                   ...unpostedIncomeRows.map(item => ({
                     id: item.id,
@@ -1343,8 +1438,23 @@ export default function Accounts() {
                     tag: displayTag(item.festival_tag_id, item.festival_tag),
                     paymentMethod: item.payment_method || '—',
                     vendor: item.vendor_name || '—',
+                    paymentReference: item.payment_reference || '—',
                     reference: item.reference_no || '—',
                     receiptPaths: item.receipt_paths,
+                    editable: item.editable,
+                    input: {
+                      amount_paise: item.amount_paise,
+                      transaction_date: item.transaction_date,
+                      festival_tag: item.festival_tag,
+                      festival_tag_id: item.festival_tag_id,
+                      category_name: item.category_name,
+                      description: item.description,
+                      payment_method: item.payment_method,
+                      vendor_name: item.vendor_name,
+                      payment_reference: item.payment_reference,
+                      reference_no: item.reference_no,
+                      source_of_income: item.source_of_income,
+                    } satisfies NewIncomeInput,
                   })),
                 ]
                 const incomeDetails = [...incomeEntries].sort((left, right) =>
@@ -1477,7 +1587,7 @@ export default function Accounts() {
                   ['Total', (totalIncome / 100).toFixed(2)],
                   [],
                   ['INCOME DETAILS'],
-                  ['Income ID', 'Date', 'Category', 'Description', 'Tag', 'Amount (INR)', 'Payment Method', 'Vendor', 'Reference Number', 'Receipts'],
+                  ['Income ID', 'Date', 'Category', 'Description', 'Tag', 'Amount (INR)', 'Payment Method', 'Vendor', 'Payment Reference', 'Reference Number', 'Receipts'],
                   ...incomeDetails.map(item => [
                     item.transactionId,
                     item.date,
@@ -1487,6 +1597,7 @@ export default function Accounts() {
                     (item.amount / 100).toFixed(2),
                     item.paymentMethod,
                     item.vendor,
+                    item.paymentReference,
                     item.reference,
                     item.receiptPaths.length ? String(item.receiptPaths.length) : '—',
                   ]),
@@ -1567,8 +1678,48 @@ export default function Accounts() {
                                     <td className="whitespace-nowrap px-4 py-3 text-right font-medium">{formatINR(item.amount)}</td>
                                     <td className="px-4 py-3">{item.paymentMethod}</td>
                                     <td className="px-4 py-3">
-                                      <p>{item.vendor}</p>
-                                      <p className="mt-1 text-xs text-slate-500">Reference: {item.reference}</p>
+                                      {incomeRecordEdit?.id === item.id && item.input ? (
+                                        <div className="space-y-1.5">
+                                          <input aria-label="Income vendor" value={incomeRecordEdit.vendor}
+                                            onChange={event => setIncomeRecordEdit(current => current ? { ...current, vendor: event.target.value } : current)}
+                                            maxLength={120} placeholder="Vendor"
+                                            className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+                                          <input aria-label="Income payment reference" value={incomeRecordEdit.paymentReference}
+                                            onChange={event => setIncomeRecordEdit(current => current ? { ...current, paymentReference: event.target.value } : current)}
+                                            maxLength={200} placeholder="Payment ref"
+                                            className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+                                          <input aria-label="Income reference number" value={incomeRecordEdit.reference}
+                                            onChange={event => setIncomeRecordEdit(current => current ? { ...current, reference: event.target.value } : current)}
+                                            maxLength={200} placeholder="Reference"
+                                            className="w-full rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+                                          <div className="flex items-center gap-1">
+                                            <button type="button" disabled={editIncomeMutation.isPending}
+                                              onClick={() => void saveIncomeRecordEdit(item.id, item.input!)}
+                                              aria-label="Save income report details"
+                                              className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
+                                              <Check size={15} />
+                                            </button>
+                                            <button type="button" onClick={() => { setIncomeRecordEdit(null); setIncomeRecordEditError('') }}
+                                              aria-label="Cancel income report edit"
+                                              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">
+                                              <X size={15} />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <p>{item.vendor}</p>
+                                          <p className="mt-1 text-xs text-slate-500">Payment ref: {item.paymentReference}</p>
+                                          <p className="mt-1 text-xs text-slate-500">Reference: {item.reference}</p>
+                                          {item.editable && item.input && (
+                                            <button type="button" onClick={() => startIncomeRecordEdit(item.id, item.input!)}
+                                              aria-label="Edit income report details"
+                                              className="mt-1 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">
+                                              <Pencil size={14} />
+                                            </button>
+                                          )}
+                                        </>
+                                      )}
                                       <IncomeReceipts transactionId={item.id} receiptPaths={item.receiptPaths} />
                                     </td>
                                   </tr>
@@ -1576,6 +1727,9 @@ export default function Accounts() {
                               </tbody>
                             </table>
                           </div>
+                        )}
+                        {incomeRecordEditError && (
+                          <p role="alert" className="border-t border-rose-100 px-5 py-3 text-sm text-rose-700">{incomeRecordEditError}</p>
                         )}
                       </section>
                     </section>
@@ -1728,16 +1882,10 @@ export default function Accounts() {
                   ? 'This will subtract the opening amount from the account balance and clear its opening balance. Deletion will be rejected if the balance would become negative. This action cannot be undone.'
                 : 'Are you sure you want to delete this transaction? This action cannot be undone.'}
             </p>
-            <label className="mt-4 block text-sm font-medium text-slate-700">
-              Type YES to confirm
-              <input autoComplete="off" value={deleteConfirmation}
-                onChange={event => setDeleteConfirmation(event.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            </label>
             {deleteError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{deleteError}</p>}
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" disabled={deleteMutation.isPending} onClick={() => { setPendingDelete(null); setDeleteConfirmation(''); deleteMutation.reset() }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50">Cancel</button>
-              <button type="button" disabled={deleteMutation.isPending || deleteConfirmation.trim().toLocaleUpperCase() !== 'YES'} onClick={() => deleteMutation.mutate(pendingDelete)} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+              <button type="button" disabled={deleteMutation.isPending} onClick={() => { setPendingDelete(null); deleteMutation.reset() }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50">Cancel</button>
+              <button type="button" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(pendingDelete)} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
                 {deleteMutation.isPending ? 'Deleting…' : 'Confirm Delete'}
               </button>
             </div>

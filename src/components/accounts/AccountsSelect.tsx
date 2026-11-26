@@ -34,8 +34,7 @@ export function AccountsSelect({
           position="popper"
           side="bottom"
           sideOffset={4}
-          avoidCollisions={false}
-          className="z-[70] max-h-60 w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+          className="z-[70] max-h-[70vh] w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
         >
           <Select.ScrollUpButton className="flex items-center justify-center py-1 text-slate-500">
             <ChevronUp size={14} />

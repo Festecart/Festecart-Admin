@@ -34,6 +34,7 @@ export interface FinancialTransaction {
   linked_order_id: string | null
   linked_expense_id: string | null
   party_name: string | null
+  payment_reference?: string
   receipt_paths: string[]
   payment_method: string
   source_of_income?: string | null
@@ -57,6 +58,7 @@ export interface NewIncomeInput {
   description: string
   payment_method: string
   vendor_name: string
+  payment_reference?: string
   reference_no: string
   source_of_income: string
 }
@@ -72,6 +74,7 @@ export interface UnpostedFinancialIncome {
   description: string
   payment_method: string
   vendor_name: string
+  payment_reference: string
   reference_no: string
   source_of_income: string
   receipt_paths: string[]

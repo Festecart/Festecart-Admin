@@ -24,8 +24,8 @@ export function IncomeReceipts({
   }
 
   return (
-    <div className="min-w-[155px] space-y-1.5">
-      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+    <div className="min-w-0 space-y-1">
+      <label className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-lg border border-slate-300 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-50">
         <Upload size={13} /> {uploadMutation.isPending ? 'Uploading…' : 'Attach receipt'}
         <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp"
           disabled={uploadMutation.isPending} onChange={chooseFile} className="sr-only" />

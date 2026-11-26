@@ -84,12 +84,18 @@ export function ExpenseForm({
   )
   const [vendorId, setVendorId] = useState(initialExpense?.vendor_id ?? '')
   const paymentReference = initialExpense?.payment_reference ?? ''
-  const [reference, setReference] = useState(initialExpense?.reference_no ?? '')
+  const reference = initialExpense?.reference_no ?? ''
   const [paymentMethod, setPaymentMethod] = useState(initialExpense?.payment_method ?? '')
   const [error, setError] = useState('')
   const isSubmitting = useRef(false)
   const datePickerRef = useRef<HTMLInputElement>(null)
   const vendor = vendors.find(item => item.id === vendorId)
+  const vendorOptions = [
+    ...(initialExpense?.vendor_id && !vendors.some(item => item.id === initialExpense.vendor_id)
+      ? [{ value: initialExpense.vendor_id, label: initialExpense.vendor_name || initialExpense.vendor_id }]
+      : []),
+    ...vendors.map(item => ({ value: item.id, label: item.name })),
+  ]
   const createdTags = festivalTags.filter(tag => tag.is_custom)
   const existingTagId = initialExpense?.festival_tag_id ?? (initialExpense?.festival_tag ? festivalTagId(initialExpense.festival_tag) : '')
   const existingTag = existingTagId ? festivalTags.find(tag => tag.id === existingTagId) : undefined
@@ -109,8 +115,7 @@ export function ExpenseForm({
     ? [...categoryOptions, initialExpense.category_name]
     : categoryOptions
   const canSave = !saving && !isSubmitting.current &&
-    Boolean(hasValidExpenseId && validDate && isValidAmount && hasValidTag &&
-      (!initialExpense || paymentMethod.trim()))
+    Boolean(hasValidExpenseId && validDate && isValidAmount && hasValidTag && paymentMethod.trim())
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -123,7 +128,7 @@ export function ExpenseForm({
       if (festivalTagIdValue && (!festivalTagName || (!initialExpense && !hasCreatedTag))) {
         throw new Error('Select a created tag or clear the Tag field to continue without one.')
       }
-      if (initialExpense && !paymentMethod.trim()) throw new Error('Select a payment method.')
+      if (!paymentMethod.trim()) throw new Error('Select a payment method.')
       if (!initialExpense && expenseId.trim() && !/^[A-Za-z0-9-]{1,64}$/.test(expenseId.trim())) {
         throw new Error('Enter an Expense ID using only letters, numbers, and hyphens.')
       }
@@ -131,7 +136,7 @@ export function ExpenseForm({
       if (initialExpense) {
         if (!onEditSave) throw new Error('Expense editing is unavailable.')
         await onEditSave({
-          description,
+          description: description.trim(),
           category_name: categoryName,
           vendor_id: vendorId || null,
           vendor_name: vendor?.name ?? (vendorId === initialExpense.vendor_id ? initialExpense.vendor_name : ''),
@@ -146,7 +151,7 @@ export function ExpenseForm({
       } else {
         await onSave({
           expense_id: expenseId.trim(),
-          description,
+          description: description.trim(),
           category_name: categoryName,
           vendor_id: vendorId || null,
           vendor_name: vendor?.name ?? '',
@@ -176,15 +181,29 @@ export function ExpenseForm({
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
         </div>
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">Expense ID (Optional) / Cash / UPI / Bank / Ref Number
-              <input type="text" value={expenseId} onChange={event => setExpenseId(event.target.value)}
-                placeholder="Enter Expense ID" maxLength={64} pattern="[A-Za-z0-9-]{1,64}" title="Use only letters, numbers, and hyphens."
-                readOnly={Boolean(initialExpense)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal text-slate-700 read-only:bg-slate-50" />
+        <div className="grid gap-6 sm:grid-cols-2">
+          <div className="space-y-4">
+            <label className="block text-sm font-semibold text-slate-700">Description <span className="text-rose-600" aria-hidden="true">**</span>
+              <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
+                placeholder="What was purchased or paid for?"
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
             </label>
-            <label className="block text-sm font-medium text-slate-700">Expense Date
+            <label className="block text-sm font-semibold text-slate-700">Amount (₹) <span className="text-rose-600" aria-hidden="true">**</span>
+              <input type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
+                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+            </label>
+            <label className="block text-sm font-medium text-slate-700">Category
+              <AccountsSelect ariaLabel="Expense category" value={category}
+                options={expenseCategoryOptions.map(item => ({ value: item, label: item }))}
+                onChange={setCategory} placeholder="Select category" />
+            </label>
+            <label className="block text-sm font-semibold text-slate-700">Payment Method <span className="text-rose-600" aria-hidden="true">**</span>
+              <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} required
+                legacyValue={initialExpense?.payment_method} />
+            </label>
+          </div>
+          <div className="space-y-4">
+            <label className="block text-sm font-semibold text-slate-700">Expense Date <span className="text-rose-600" aria-hidden="true">**</span>
               <span className="mt-1.5 flex gap-2">
                 <input type="text" inputMode="numeric" autoComplete="off" maxLength={10} value={date}
                   onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required
@@ -208,13 +227,7 @@ export function ExpenseForm({
               </span>
               {date && !validDate && <span role="alert" className="mt-1 block text-xs text-rose-700">Enter a real date in DD/MM/YYYY format.</span>}
             </label>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">Amount (₹)
-              <input type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Tag (Optional)
+            <label className="block text-sm font-medium text-slate-700">Tag
               <select value={festivalTagIdValue} onChange={event => setFestivalTagIdValue(event.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
                 <option value="">{festivalTagsLoading ? 'Loading tags…' : 'No tag'}</option>
@@ -223,37 +236,17 @@ export function ExpenseForm({
               {festivalTagsLoading && <span role="status" className="mt-1.5 block text-xs text-slate-500">Loading tags…</span>}
               {festivalTagsError && <span role="alert" className="mt-1.5 block text-xs text-rose-700">Saved tags could not be loaded. You can continue without a tag.</span>}
             </label>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">Category (Optional)
-              <AccountsSelect ariaLabel="Expense category" value={category}
-                options={expenseCategoryOptions.map(item => ({ value: item, label: item }))}
-                onChange={setCategory} placeholder="Select category" />
+            <label className="block text-sm font-medium text-slate-700">Expense ID / Cash / UPI / Bank / Reference Number
+              <input type="text" value={expenseId} onChange={event => setExpenseId(event.target.value)}
+                placeholder="Enter Expense ID" maxLength={64} pattern="[A-Za-z0-9-]{1,64}" title="Use only letters, numbers, and hyphens."
+                readOnly={Boolean(initialExpense)}
+                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal text-slate-700 read-only:bg-slate-50" />
             </label>
-            <label className="block text-sm font-medium text-slate-700">Description (Optional)
-              <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
-                placeholder="What was purchased or paid for?"
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+            <label className="block text-sm font-medium text-slate-700">Vendor
+              <AccountsSelect ariaLabel="Vendor" value={vendorId} options={vendorOptions}
+                onChange={setVendorId} placeholder="No linked vendor" />
             </label>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">{initialExpense ? 'Payment Method' : 'Payment Method (Optional)'}
-              <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} required={Boolean(initialExpense)}
-                legacyValue={initialExpense?.payment_method} />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Vendor (Optional)
-              <select value={vendorId} onChange={event => setVendorId(event.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-                <option value="">No linked vendor</option>
-                {initialExpense?.vendor_id && !vendors.some(item => item.id === initialExpense.vendor_id) && <option value={initialExpense.vendor_id}>{initialExpense.vendor_name || initialExpense.vendor_id}</option>}
-                {vendors.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-          </div>
-          <label className="block text-sm font-medium text-slate-700">Reference Number (Optional)
-            <input value={reference} onChange={event => setReference(event.target.value)} maxLength={200}
-              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-          </label>
         </div>
         {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">

@@ -899,6 +899,7 @@ function normalizeIncomeInput(input, allowIncomplete, allowEmptyPaymentMethod = 
     description: requireText(input.description, 'Description', 250, true),
     payment_method: paymentMethod,
     vendor_name: requireText(input.vendor_name, 'Vendor', 120, true),
+    payment_reference: requireText(input.payment_reference, 'Payment reference', 200, true),
     reference_no: requireText(input.reference_no, 'Reference number', 200, true),
     source_of_income: requireText(input.source_of_income, 'Source of income', 120, true),
   }
@@ -970,6 +971,7 @@ exports.createUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, 
       linked_order_id: null,
       linked_expense_id: null,
       party_name: input.vendor_name || null,
+      payment_reference: input.payment_reference,
       source_of_income: input.source_of_income || null,
       payment_method: input.payment_method,
       festival_tag: festivalTag,
@@ -1039,6 +1041,9 @@ exports.editUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, as
       ? income.festival_tag
       : resolveConfiguredFestivalTag(input.festival_tag_id, input.festival_tag, tagConfig)
     const festivalTagId = preserveExistingTag ? savedTagId : input.festival_tag_id
+    const paymentReference = Object.prototype.hasOwnProperty.call(rawInput, 'payment_reference')
+      ? input.payment_reference
+      : (typeof income.payment_reference === 'string' ? income.payment_reference : '')
     transaction.update(transactionRef, {
       transaction_date: input.transaction_date,
       reference_no: input.reference_no,
@@ -1046,6 +1051,7 @@ exports.editUnpostedFinancialIncome = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, as
       category_name: input.category_name,
       amount_paise: input.amount_paise,
       party_name: input.vendor_name || null,
+      payment_reference: paymentReference,
       source_of_income: input.source_of_income || null,
       payment_method: input.payment_method,
       festival_tag: festivalTag,
@@ -1117,6 +1123,7 @@ exports.fetchUnpostedFinancialIncomes = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, 
         description: String(data.description ?? ''),
         payment_method: String(data.payment_method ?? ''),
         vendor_name: typeof data.party_name === 'string' ? data.party_name : '',
+        payment_reference: typeof data.payment_reference === 'string' ? data.payment_reference : '',
         reference_no: String(data.reference_no ?? ''),
         source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : '',
         receipt_paths: Array.isArray(data.receipt_paths)
@@ -1305,7 +1312,7 @@ exports.editFinancialTransaction = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async
       throw new HttpsError('failed-precondition', 'Unposted income must be posted from Income History before it can be edited.')
     }
 
-    const description = requireText(input.description, 'Description', 250, false)
+    const description = requireText(input.description, 'Description', 250, true)
     const categoryName = requireText(input.category_name, 'Category', 80, false)
     const amount = requirePaise(input.amount_paise, 'Amount', false)
     const date = requireDate(input.transaction_date, 'Transaction date')
@@ -1736,7 +1743,7 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
   const reference = requireText(input.reference_no, 'Reference', 200, true)
   const date = requireDate(input.transaction_date, 'Expense date')
   const amount = requirePaise(input.amount_paise, 'Expense amount', false)
-  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, true)
+  const paymentMethod = requireText(input.payment_method, 'Payment method', 80, false)
   const festivalTag = requireFestivalTag(input.festival_tag)
   const festivalTagId = requireFestivalTagId(input.festival_tag_id, festivalTag)
 
@@ -1770,7 +1777,7 @@ exports.createFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async f
     assertApprovedFinancialPaymentMethod(
       paymentMethod,
       paymentMethodsSnapshot && paymentMethodsSnapshot.exists ? paymentMethodsSnapshot.data() : {},
-      true,
+      false,
     )
     const tagsData = tagsSnapshot && tagsSnapshot.exists ? tagsSnapshot.data() : {}
     const tagName = festivalTagId
@@ -1877,13 +1884,16 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
   if (!input || typeof input !== 'object') throw new HttpsError('invalid-argument', 'Expense details are required.')
   const expenseRef = db.collection('financial_expenses').doc(expenseId)
   const now = Timestamp.now()
+  let editPhase = 'starting transaction'
 
   await db.runTransaction(async function(transaction) {
+    editPhase = 'reading expense'
     const snapshot = await transaction.get(expenseRef)
     if (!snapshot.exists) throw new HttpsError('not-found', 'The expense no longer exists.')
     const current = snapshot.data()
     if (!current || current.is_deleted === true) throw new HttpsError('failed-precondition', 'Deleted expenses cannot be edited.')
-    const description = requireText(input.description, 'Description', 250, true)
+    editPhase = 'validating expense changes'
+    const description = requireText(input.description, 'Description', 250, false)
     const categoryName = requireText(input.category_name, 'Category', 80, true)
     const vendorId = input.vendor_id == null || input.vendor_id === '' ? null : requireRecordId(input.vendor_id, 'Vendor ID')
     const vendorName = requireText(input.vendor_name, 'Vendor name', 120, true)
@@ -1902,6 +1912,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
     const outstanding = amount - paid
     const paymentStatus = expensePaymentStatus(paid, amount)
     const linkedQuery = db.collection('financial_transactions').where('linked_expense_id', '==', expenseId)
+    editPhase = 'reading linked payments'
     const [linkedSnapshot, paymentMethodsSnapshot] = await Promise.all([
       transaction.get(linkedQuery),
       paymentMethod ? transaction.get(db.collection('site_config').doc(FINANCIAL_PAYMENT_METHODS_CONFIG_ID)) : Promise.resolve(null),
@@ -1922,6 +1933,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
       throw new HttpsError('failed-precondition', 'The linked spending record is inconsistent; ask an administrator to review this expense.')
     }
 
+    editPhase = 'writing expense and audit history'
     transaction.update(expenseRef, {
       description,
       category_name: categoryName,
@@ -1945,8 +1957,8 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
         admin_user_id: actor.uid,
         created_at: now,
         previous: {
-          description: current.description,
-          category_name: current.category_name,
+          description: current.description ?? '',
+          category_name: current.category_name ?? '',
           vendor_id: current.vendor_id ?? null,
           vendor_name: current.vendor_name ?? '',
           payment_reference: current.payment_reference ?? '',
@@ -1974,6 +1986,7 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
     })
     for (const linked of linkedSnapshot.docs) {
       if (linked.data().is_deleted === true) continue
+      editPhase = 'writing linked spending transaction'
       transaction.update(linked.ref, {
         description,
         category_name: categoryName,
@@ -1997,6 +2010,35 @@ exports.editFinancialExpense = onCall({ cors: ACCOUNTS_CORS_ORIGINS }, async fun
         }),
       })
     }
+  }).catch(function(error) {
+    const errorCode = error && (typeof error.code === 'string' || typeof error.code === 'number')
+      ? error.code
+      : 'unknown'
+    const errorMessage = error && typeof error.message === 'string'
+      ? error.message
+      : String(error)
+    console.error('[accounts] editFinancialExpense failed', {
+      errorCode,
+      errorMessage,
+      errorStack: error && typeof error.stack === 'string' ? error.stack : 'unavailable',
+      editPhase,
+      functionName: 'editFinancialExpense',
+      operation: 'editFinancialExpense',
+      collectionPath: 'financial_expenses',
+      firebaseProjectId: process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'unknown',
+      functionRegion: FUNCTION_REGION,
+      firestoreDatabaseId: 'festecart',
+      isAuthenticated: Boolean(request.auth),
+      adminAuthorizationSucceeded: true,
+      expenseId,
+      expenseDocumentPath: `financial_expenses/${expenseId}`,
+      error,
+    })
+    if (error instanceof HttpsError && error.code !== 'internal') throw error
+    throw new HttpsError(
+      'internal',
+      `Expense edit failed during ${editPhase}. Check the function logs for the underlying error.`,
+    )
   })
   return { success: true }
 })

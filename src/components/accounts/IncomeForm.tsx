@@ -142,69 +142,73 @@ export function IncomeForm({
             <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-slate-700">Amount (₹)
-              <input aria-label="Amount (₹)" type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Income Date
-              <span className="mt-1.5 flex gap-2">
-                <input aria-label="Income Date" type="text" inputMode="numeric" autoComplete="off" maxLength={10}
-                  value={date} onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required
-                  aria-invalid={Boolean(date && !validDate)}
-                  className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-                <span className="relative grid w-12 shrink-0 place-items-center">
-                  <button type="button" aria-label="Open income date calendar"
-                    onClick={() => {
-                      const picker = datePickerRef.current
-                      if (!picker) return
-                      if (typeof picker.showPicker === 'function') picker.showPicker()
-                      else picker.click()
-                    }}
-                    className="grid h-full w-full place-items-center rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50">
-                    <CalendarDays size={18} aria-hidden="true" />
-                  </button>
-                  <input ref={datePickerRef} type="date" aria-label="Choose income date from calendar" value={validDate}
-                    onChange={event => setDate(isoToIncomeDate(event.target.value))}
-                    tabIndex={-1} className="pointer-events-none absolute h-px w-px opacity-0" />
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="space-y-4">
+              <label className="block text-sm font-semibold text-slate-700">Description <span className="text-rose-600" aria-hidden="true">**</span>
+                <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+              </label>
+              <label className="block text-sm font-semibold text-slate-700">Amount (₹) <span className="text-rose-600" aria-hidden="true">**</span>
+                <input aria-label="Amount (₹)" type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} required
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+              </label>
+              <label className="block text-sm font-semibold text-slate-700">Source of income <span className="text-rose-600" aria-hidden="true">**</span>
+                <input value={source} onChange={event => setSource(event.target.value)} maxLength={120}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+              </label>
+              <label className="block text-sm font-semibold text-slate-700">Payment Method <span className="text-rose-600" aria-hidden="true">**</span>
+                <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} legacyValue={initialIncome?.payment_method} />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">Category (Optional)
+                <AccountsSelect ariaLabel="Income category" value={category}
+                  options={categoryOptions.map(item => ({ value: item, label: item }))}
+                  onChange={setCategory} placeholder="Select category" />
+              </label>
+            </div>
+            <div className="space-y-4">
+              <label className="block text-sm font-semibold text-slate-700">Income Date <span className="text-rose-600" aria-hidden="true">**</span>
+                <span className="mt-1.5 flex gap-2">
+                  <input aria-label="Income Date" type="text" inputMode="numeric" autoComplete="off" maxLength={10}
+                    value={date} onChange={event => setDate(event.target.value)} placeholder="DD/MM/YYYY" required
+                    aria-invalid={Boolean(date && !validDate)}
+                    className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+                  <span className="relative grid w-12 shrink-0 place-items-center">
+                    <button type="button" aria-label="Open income date calendar"
+                      onClick={() => {
+                        const picker = datePickerRef.current
+                        if (!picker) return
+                        if (typeof picker.showPicker === 'function') picker.showPicker()
+                        else picker.click()
+                      }}
+                      className="grid h-full w-full place-items-center rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50">
+                      <CalendarDays size={18} aria-hidden="true" />
+                    </button>
+                    <input ref={datePickerRef} type="date" aria-label="Choose income date from calendar" value={validDate}
+                      onChange={event => setDate(isoToIncomeDate(event.target.value))}
+                      tabIndex={-1} className="pointer-events-none absolute h-px w-px opacity-0" />
+                  </span>
                 </span>
-              </span>
-              {date && !validDate && <span role="alert" className="mt-1 block text-xs text-rose-700">Enter a real date in DD/MM/YYYY format.</span>}
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Tag (Optional)
-              <select value={tagId} onChange={event => setTagId(event.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
-                <option value="">No tag</option>
-                {tagId && !selectedTag && preservedTag && (
-                  <option value={tagId}>Existing: {preservedTag}</option>
-                )}
-                {selectedTags.map(tag => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-              </select>
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Category (Optional)
-              <AccountsSelect ariaLabel="Income category" value={category}
-                options={categoryOptions.map(item => ({ value: item, label: item }))}
-                onChange={setCategory} placeholder="Select category" />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Description (Optional)
-              <input value={description} onChange={event => setDescription(event.target.value)} maxLength={250}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Payment Method (Optional)
-              <PaymentMethodField value={paymentMethod} onChange={setPaymentMethod} legacyValue={initialIncome?.payment_method} />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Vendor (Optional)
-              <input value={vendor} onChange={event => setVendor(event.target.value)} maxLength={120}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Reference Number (Optional)
-              <input value={reference} onChange={event => setReference(event.target.value)} maxLength={200}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">Source of income (Optional)
-              <input value={source} onChange={event => setSource(event.target.value)} maxLength={120}
-                className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
-            </label>
+                {date && !validDate && <span role="alert" className="mt-1 block text-xs text-rose-700">Enter a real date in DD/MM/YYYY format.</span>}
+              </label>
+              <label className="block text-sm font-medium text-slate-700">Tag
+                <select value={tagId} onChange={event => setTagId(event.target.value)}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-normal">
+                  <option value="">No tag</option>
+                  {tagId && !selectedTag && preservedTag && (
+                    <option value={tagId}>Existing: {preservedTag}</option>
+                  )}
+                  {selectedTags.map(tag => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-sm font-medium text-slate-700">Vendor
+                <input value={vendor} onChange={event => setVendor(event.target.value)} maxLength={120}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">Reference Number
+                <input value={reference} onChange={event => setReference(event.target.value)} maxLength={200}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-normal" />
+              </label>
+            </div>
           </div>
 
           {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}

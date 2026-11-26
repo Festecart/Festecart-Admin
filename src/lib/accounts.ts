@@ -156,6 +156,7 @@ function readTransaction(id: string, data: DocumentData): FinancialTransaction {
     linked_order_id: (data.linked_order_id as string | null) ?? null,
     linked_expense_id: (data.linked_expense_id as string | null) ?? null,
     party_name: (data.party_name as string | null) ?? null,
+    payment_reference: typeof data.payment_reference === 'string' ? data.payment_reference : '',
     receipt_paths: Array.isArray(data.receipt_paths) ? data.receipt_paths.filter((path): path is string => typeof path === 'string') : [],
     payment_method: String(data.payment_method ?? ''),
     source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : null,
@@ -1244,6 +1245,7 @@ export async function fetchUnpostedFinancialIncomes(): Promise<UnpostedFinancial
           description: typeof data.description === 'string' ? data.description : '',
           payment_method: typeof data.payment_method === 'string' ? data.payment_method : '',
           vendor_name: typeof data.party_name === 'string' ? data.party_name : '',
+          payment_reference: typeof data.payment_reference === 'string' ? data.payment_reference : '',
           reference_no: typeof data.reference_no === 'string' ? data.reference_no : '',
           source_of_income: typeof data.source_of_income === 'string' ? data.source_of_income : '',
           receipt_paths: Array.isArray(data.receipt_paths)

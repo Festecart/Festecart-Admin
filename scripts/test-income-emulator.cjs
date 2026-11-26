@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const { initializeApp, deleteApp } = require('firebase-admin/app')
 const { getAuth } = require('firebase-admin/auth')
-const { getFirestore, Timestamp } = require('firebase-admin/firestore')
+const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore')
 
 const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT
 const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST
@@ -395,27 +395,63 @@ async function run() {
   }, 'saved custom payment method')
   console.log('PASS backend rejects payment methods that are not default or saved in Accounts configuration.')
 
-  await callFunction('createFinancialExpense', token, {
-    input: {
-      expense_id: '',
-      description: 'Expense custom payment validation',
-      category_name: 'Tea',
-      vendor_id: null,
-      vendor_name: '',
-      payment_reference: '',
-      reference_no: `CUSTOM-EXPENSE-${runId}`,
-      transaction_date: '2026-03-01',
-      amount_paise: 100,
-      payment_method: customMethod,
-      festival_tag: null,
-      festival_tag_id: null,
-    },
-  })
+  const customExpenseInput = {
+    expense_id: '',
+    description: 'Expense custom payment validation',
+    category_name: 'Tea',
+    vendor_id: null,
+    vendor_name: '',
+    payment_reference: '',
+    reference_no: `CUSTOM-EXPENSE-${runId}`,
+    transaction_date: '2026-03-01',
+    amount_paise: 100,
+    payment_method: customMethod,
+    festival_tag: null,
+    festival_tag_id: null,
+  }
+  await expectCallableFailure('createFinancialExpense', token, {
+    input: { ...customExpenseInput, description: '' },
+  }, 'Description must contain')
+  await expectCallableFailure('createFinancialExpense', token, {
+    input: { ...customExpenseInput, payment_method: '' },
+  }, 'Payment method must contain')
+  await callFunction('createFinancialExpense', token, { input: customExpenseInput })
   const customExpense = await db.collection('financial_expenses').where('reference_no', '==', `CUSTOM-EXPENSE-${runId}`).get()
   assert.equal(customExpense.size, 1)
   assert.equal(customExpense.docs[0].data().payment_method, customMethod)
   assert.equal(customExpense.docs[0].data().amount_paise, 100)
   console.log('PASS approved custom expense payment methods preserve the saved amount.')
+
+  const customExpenseDocument = customExpense.docs[0]
+  await customExpenseDocument.ref.update({
+    description: FieldValue.delete(),
+    category_name: FieldValue.delete(),
+  })
+  await callFunction('editFinancialExpense', token, {
+    expense_id: customExpenseDocument.id,
+    input: {
+      description: 'Edited expense custom payment validation',
+      category_name: 'Tea',
+      vendor_id: null,
+      vendor_name: '',
+      payment_reference: '',
+      reference_no: `CUSTOM-EXPENSE-${runId}`,
+      transaction_date: '2026-03-02',
+      amount_paise: 250,
+      payment_method: customMethod,
+      festival_tag: null,
+      festival_tag_id: null,
+    },
+  })
+  const editedExpense = await customExpenseDocument.ref.get()
+  assert.equal(editedExpense.data().description, 'Edited expense custom payment validation')
+  assert.equal(editedExpense.data().amount_paise, 250)
+  const linkedExpenseTransactions = await db.collection('financial_transactions')
+    .where('linked_expense_id', '==', customExpenseDocument.id)
+    .get()
+  assert.equal(linkedExpenseTransactions.size, 1)
+  assert.equal(linkedExpenseTransactions.docs[0].data().amount_paise, 250)
+  console.log('PASS editing a full-amount expense updates its linked spending transaction.')
 
   await deleteApp(app)
 }
