@@ -149,7 +149,6 @@ export interface FinancialCategory {
 
 export interface AccountTotals {
   income_paise: number
-  added_income_paise: number
   expense_paise: number
 }
 

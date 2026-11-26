@@ -1571,11 +1571,9 @@ export async function fetchAccountTotals(range: AccountDateRange = {}): Promise<
   const incomesInRange = unpostedIncomes.filter(item =>
     (!range.from || item.transaction_date >= range.from) &&
     (!range.to || item.transaction_date <= range.to))
-  const addedIncomePaise = incomesInRange.reduce((total, item) => total + item.amount_paise, 0)
   return {
     income_paise: transactions.filter(item => item.type === 'income').reduce((total, item) => total + item.amount_paise, 0) +
-      addedIncomePaise,
-    added_income_paise: addedIncomePaise,
+      incomesInRange.reduce((total, item) => total + item.amount_paise, 0),
     expense_paise: transactions.filter(item => item.type === 'expense').reduce((total, item) => total + item.amount_paise, 0),
   }
 }
