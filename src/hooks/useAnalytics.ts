@@ -294,9 +294,11 @@ function recordMatchesTag(
   tagId: string,
   tagName: string,
 ): boolean {
-  const recordTagId = record.festival_tag_id ??
-    (record.festival_tag ? festivalTagId(record.festival_tag) : null)
-  return recordTagId === tagId || normalizedTagName(record.festival_tag) === normalizedTagName(tagName)
+  if (record.festival_tag_id === tagId) return true
+  const nameMatches = normalizedTagName(record.festival_tag) === normalizedTagName(tagName)
+  if (!nameMatches) return false
+  return !record.festival_tag_id ||
+    record.festival_tag_id === (record.festival_tag ? festivalTagId(record.festival_tag) : null)
 }
 
 export function useFestivalTagAnalytics(
@@ -377,15 +379,19 @@ export function useFestivalTagAnalytics(
           (income.transaction_date >= fromDate && income.transaction_date <= toDate)) &&
         recordMatchesTag(income, tagId, tagName),
       )
-      const totalExpensesPaise = expenses.reduce(
+      const totalExpensesPaise = matchingExpenses.reduce(
         (total, expense) => total + expenseSpendingPaise(expense),
         0,
       )
-      const totalIncome = matchingTransactions.reduce(
-        (total, transaction) => total + transaction.amount_paise / 100,
-        0,
-      ) + matchingUnpostedIncomes.reduce(
-        (total, income) => total + income.amount_paise / 100,
+      const matchingIncomesById = new Map<string, number>()
+      for (const transaction of matchingTransactions) {
+        matchingIncomesById.set(transaction.id, transaction.amount_paise)
+      }
+      for (const income of matchingUnpostedIncomes) {
+        matchingIncomesById.set(income.id, income.amount_paise)
+      }
+      const totalIncomePaise = [...matchingIncomesById.values()].reduce(
+        (total, amountPaise) => total + amountPaise,
         0,
       )
 
@@ -396,10 +402,10 @@ export function useFestivalTagAnalytics(
         totalOrders: matchingOrders.length,
         deliveredOrders: deliveredOrders.length,
         matchingExpenseCount: matchingExpenses.length,
-        matchingIncomeCount: matchingTransactions.length + matchingUnpostedIncomes.length,
+        matchingIncomeCount: matchingIncomesById.size,
         deliveredSales,
         expenses: totalExpensesPaise / 100,
-        income: totalIncome,
+        income: totalIncomePaise / 100,
         unitsSold,
         productsSold: productSales.size,
         productSales: [...productSales.values()].sort((left, right) => right.sales - left.sales),

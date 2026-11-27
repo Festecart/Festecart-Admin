@@ -260,9 +260,17 @@ export function dateInputTimestamp(value: string): Timestamp {
 }
 
 function localDateInputValue(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const value = (type: string) => parts.find(part => part.type === type)?.value ?? ''
+  const year = value('year')
+  const month = value('month')
+  const day = value('day')
+  if (!year || !month || !day) throw new Error('The income date could not be formatted in Indian local time.')
   return `${year}-${month}-${day}`
 }
 
@@ -430,7 +438,9 @@ export async function fetchReportTransactions(range: AccountDateRange): Promise<
   const baseQuery = query(collection(db, TRANSACTIONS), ...rangeConstraints(range), orderBy('transaction_date', 'desc'))
   const documents = await fetchAllPages(baseQuery)
   return documents
-    .filter(item => item.data().is_deleted !== true && item.data().posting_status !== 'unposted')
+    .filter(item => item.data().is_deleted !== true &&
+      item.data().posting_status !== 'unposted' &&
+      item.data().posting_status !== 'draft')
     .map(item => readTransaction(item.id, item.data()))
 }
 
@@ -1584,7 +1594,9 @@ export async function fetchUnpostedFinancialIncomes(): Promise<UnpostedFinancial
       where('posting_status', '==', 'unposted'),
     ))
     return snapshot.docs
-      .filter(item => item.data().type === 'income' && item.data().is_deleted !== true)
+      .filter(item => item.data().type === 'income' &&
+        item.data().posting_status === 'unposted' &&
+        item.data().is_deleted !== true)
       .map<UnpostedFinancialIncome>(item => {
         const data = item.data()
         if (!(data.transaction_date instanceof Timestamp) ||

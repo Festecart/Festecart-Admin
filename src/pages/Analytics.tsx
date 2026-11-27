@@ -682,7 +682,7 @@ function FestivalTagAnalyticsSection({
             <KPI label="Total Orders" value={data.totalOrders} icon={ShoppingBag} color={C.blue} />
             <KPI label="Delivered Orders" value={data.deliveredOrders} icon={Truck} color={C.green} />
             <KPI label="Delivered Sales" value={fmtINR(data.deliveredSales)} icon={IndianRupee} color={C.indigo} />
-            <KPI label="Total Expenses Paid" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
+            <KPI label="Expenses" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
             <KPI label="Income" value={fmtINR(data.income)} icon={IndianRupee} color={C.green} />
             <KPI label="Sales Less Expenses" value={fmtINR(salesLessExpenses)} icon={TrendingUp} color={salesLessExpenses >= 0 ? C.green : C.red} />
             <KPI label="Units Sold" value={data.unitsSold} icon={Package} color={C.orange} />
@@ -699,7 +699,7 @@ function FestivalTagAnalyticsSection({
                   <Tooltip content={<AnaTooltip currency />} />
                   <Legend />
                   <Bar dataKey="sales" name="Sales" fill={C.blue} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="expenses" name="Total Expenses Paid" fill={C.red} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="expenses" name="Expenses" fill={C.red} radius={[4, 4, 0, 0]} />
                   <Bar dataKey="income" name="Income" fill={C.green} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>

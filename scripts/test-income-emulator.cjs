@@ -128,6 +128,26 @@ function incomeInput(overrides = {}) {
   }
 }
 
+async function taggedIncomeTotal(tagId) {
+  const snapshot = await db.collection('financial_transactions').where('type', '==', 'income').get()
+  const amountsById = new Map()
+  for (const item of snapshot.docs) {
+    const data = item.data()
+    if (data.is_deleted === true || data.posting_status === 'draft' || data.festival_tag_id !== tagId) continue
+    amountsById.set(item.id, data.amount_paise)
+  }
+  return [...amountsById.values()].reduce((total, amount) => total + amount, 0)
+}
+
+async function taggedExpenseSpendingTotal(tagId) {
+  const snapshot = await db.collection('financial_expenses').get()
+  return snapshot.docs.reduce((total, item) => {
+    const expense = item.data()
+    if (expense.is_deleted === true || expense.festival_tag_id !== tagId) return total
+    return total + (expense.is_full_amount_spending === true ? expense.amount_paise : expense.paid_paise)
+  }, 0)
+}
+
 async function run() {
   await assertIncomeCallableCors()
   console.log('PASS the Accounts Income callable allows the configured admin.festecart.org origin.')
@@ -229,7 +249,6 @@ async function run() {
     { method: 'UPI', date: '2026-11-24' },
     { method: 'Bank Transfer', date: '2026-11-20' },
     { method: customMethod, date: '2026-11-18' },
-    { method: '', date: '2026-11-16' },
   ]
   const savedIncomes = []
   for (const [index, { method, date }] of methodCases.entries()) {
@@ -264,13 +283,17 @@ async function run() {
     input: savedIncomes[0].input,
     idempotency_key: savedIncomes[0].idempotencyKey,
   })
+  await expectCallableFailure('createUnpostedFinancialIncome', token, {
+    input: incomeInput({ payment_method: '', reference_no: `EMPTY-METHOD-${runId}` }),
+    idempotency_key: `empty-method-${runId}`,
+  }, 'Payment method must contain')
   const unpostedResult = await callFunction('fetchUnpostedFinancialIncomes', token, {})
   const runUnpostedItems = unpostedResult.items.filter(item => item.id.includes(runId))
-  assert.equal(runUnpostedItems.length, 5)
+  assert.equal(runUnpostedItems.length, 4)
   assert.ok(runUnpostedItems.every(item => item.posting_status === 'unposted'))
   const queryResults = await queryUnpostedIncome(token)
   const runQueryResults = queryResults.filter(item => item.name.includes(runId))
-  assert.equal(runQueryResults.length, 5, 'An admin must be able to query reference income with Firestore rules.')
+  assert.equal(runQueryResults.length, 4, 'An admin must be able to query reference income with Firestore rules.')
   assert.ok(runQueryResults.every(item => item.fields.posting_status.stringValue === 'unposted'))
   const nonAdmin = await auth.createUser({
     email: `income-non-admin-${runId}@example.test`,
@@ -282,11 +305,11 @@ async function run() {
     error => error.code === 'PERMISSION_DENIED',
     'Firestore rules must deny the unposted income query to non-admin users.',
   )
-  assert.equal(await countAllIncomeRecords(), 6)
+  assert.equal(await countAllIncomeRecords(), 5)
   assert.equal((await accountRef.get()).data().balance_paise, startingBalance)
   assert.equal(await countIncomeTransactions(), 1, 'Reference income must not be included in posted transaction totals.')
   console.log('PASS admins can query reference income; non-admins are denied by Firestore rules.')
-  console.log('PASS Cash, UPI, Bank Transfer, kavana and no payment method save without changing account balances.')
+  console.log('PASS Cash, UPI, Bank Transfer and kavana save without changing account balances; empty methods are rejected.')
 
   const editableIncome = savedIncomes[0]
   const updatedInput = incomeInput({
@@ -294,7 +317,7 @@ async function run() {
     transaction_date: '2026-03-02',
     category_name: '',
     description: 'Updated emulator income test',
-    payment_method: '',
+    payment_method: 'Cash',
     vendor_name: '',
     reference_no: `UPDATED-${runId}`,
     source_of_income: 'Updated reference source',
@@ -306,11 +329,11 @@ async function run() {
   const updatedIncome = await editableIncome.incomeRef.get()
   assert.equal(updatedIncome.data().amount_paise, updatedInput.amount_paise)
   assert.equal(updatedIncome.data().transaction_date.toDate().toISOString().slice(0, 10), updatedInput.transaction_date)
-  assert.equal(updatedIncome.data().payment_method, '')
+  assert.equal(updatedIncome.data().payment_method, 'Cash')
   assert.equal(updatedIncome.data().description, updatedInput.description)
   assert.equal(updatedIncome.data().source_of_income, updatedInput.source_of_income)
   assert.equal(updatedIncome.data().posting_status, 'unposted')
-  assert.equal(await countAllIncomeRecords(), 6, 'Editing must update the original record rather than create another.')
+  assert.equal(await countAllIncomeRecords(), 5, 'Editing must update the original record rather than create another.')
   assert.equal((await accountRef.get()).data().balance_paise, startingBalance)
   assert.equal(await countIncomeTransactions(), 1)
   await expectCallableFailure('editUnpostedFinancialIncome', token, {
@@ -376,7 +399,7 @@ async function run() {
     }, testCase.message)
   }
   assert.equal((await accountRef.get()).data().balance_paise, startingBalance)
-  assert.equal(await countAllIncomeRecords(), 6)
+  assert.equal(await countAllIncomeRecords(), 5)
   assert.equal(await countIncomeTransactions(), 1, 'Incomplete income must not create a transaction.')
   console.log('PASS missing fields and invalid calendar dates are rejected without posting.')
 
@@ -386,13 +409,13 @@ async function run() {
   }, 'already used')
   assert.equal((await accountRef.get()).data().balance_paise, startingBalance)
   assert.equal(await countIncomeTransactions(), 1)
-  assert.equal(await countAllIncomeRecords(), 6)
+  assert.equal(await countAllIncomeRecords(), 5)
   console.log('PASS an existing customer-payment reference cannot be saved as duplicate income.')
 
   await expectCallableFailure('createUnpostedFinancialIncome', token, {
     input: incomeInput({ payment_method: 'Unapproved test method', reference_no: `UNAPPROVED-${runId}` }),
     idempotency_key: `unapproved-${runId}`,
-  }, 'saved custom payment method')
+  }, 'Choose an available payment method.')
   console.log('PASS backend rejects payment methods that are not default or saved in Accounts configuration.')
 
   const customExpenseInput = {
@@ -452,6 +475,112 @@ async function run() {
   assert.equal(linkedExpenseTransactions.size, 1)
   assert.equal(linkedExpenseTransactions.docs[0].data().amount_paise, 250)
   console.log('PASS editing a full-amount expense updates its linked spending transaction.')
+
+  const tagA = { id: `test-tag-a-${runId}`, name: `Emulator tag A ${runId}` }
+  const tagB = { id: `test-tag-b-${runId}`, name: `Emulator tag B ${runId}` }
+  const tagConfigRef = db.collection('site_config').doc('financial_festivals')
+  const existingTagConfig = (await tagConfigRef.get()).data() || {}
+  await tagConfigRef.set({
+    ...existingTagConfig,
+    tag_names: { ...(existingTagConfig.tag_names || {}), [tagA.id]: tagA.name, [tagB.id]: tagB.name },
+    custom_tags: { ...(existingTagConfig.custom_tags || {}), [tagA.id]: tagA.name, [tagB.id]: tagB.name },
+  }, { merge: true })
+
+  const taggedIncomeKey = `tagged-income-${runId}`
+  const taggedIncomeRef = db.collection('financial_transactions').doc(`income_${taggedIncomeKey}`)
+  const taggedIncomeInput = incomeInput({
+    amount_paise: 4200,
+    festival_tag: tagA.name,
+    festival_tag_id: tagA.id,
+    reference_no: `TAGGED-INCOME-${runId}`,
+  })
+  await callFunction('createUnpostedFinancialIncome', token, {
+    input: taggedIncomeInput,
+    idempotency_key: taggedIncomeKey,
+  })
+  const savedTaggedIncome = await taggedIncomeRef.get()
+  assert.equal(savedTaggedIncome.data().festival_tag_id, tagA.id)
+  assert.equal(savedTaggedIncome.data().festival_tag, tagA.name)
+  assert.equal(savedTaggedIncome.data().posting_status, 'unposted')
+  assert.equal(await taggedIncomeTotal(tagA.id), taggedIncomeInput.amount_paise)
+  const listedUnpostedIncomes = await callFunction('fetchUnpostedFinancialIncomes', token, {})
+  assert.ok(listedUnpostedIncomes.items.some(item =>
+    item.id === taggedIncomeRef.id && item.festival_tag_id === tagA.id,
+  ))
+
+  const draftIncomeRef = db.collection('financial_transactions').doc(`draft-income-${runId}`)
+  await draftIncomeRef.set({
+    transaction_id: `FTX-DRAFT-${runId}`,
+    type: 'income',
+    posting_status: 'draft',
+    transaction_date: Timestamp.fromDate(new Date('2026-03-01T00:00:00.000Z')),
+    amount_paise: 9900,
+    festival_tag: tagA.name,
+    festival_tag_id: tagA.id,
+    is_deleted: false,
+    created_by: user.uid,
+    created_at: Timestamp.now(),
+  })
+  assert.equal(await taggedIncomeTotal(tagA.id), taggedIncomeInput.amount_paise, 'Draft income must not be included.')
+
+  const reassignedIncomeInput = incomeInput({
+    amount_paise: 5600,
+    festival_tag: tagB.name,
+    festival_tag_id: tagB.id,
+    reference_no: `TAGGED-INCOME-EDITED-${runId}`,
+  })
+  await callFunction('editUnpostedFinancialIncome', token, {
+    transaction_id: taggedIncomeRef.id,
+    input: reassignedIncomeInput,
+  })
+  const reassignedIncome = await taggedIncomeRef.get()
+  assert.equal(reassignedIncome.data().festival_tag_id, tagB.id)
+  assert.equal(await taggedIncomeTotal(tagA.id), 0, 'Reassigned income must leave the previous tag total.')
+  assert.equal(await taggedIncomeTotal(tagB.id), reassignedIncomeInput.amount_paise)
+  await callFunction('deleteUnpostedFinancialIncome', token, { transaction_id: taggedIncomeRef.id })
+  assert.equal((await taggedIncomeRef.get()).data().is_deleted, true)
+  assert.equal(await taggedIncomeTotal(tagB.id), 0, 'Deleted income must not be included.')
+  console.log('PASS custom-tag unposted income creation, ID persistence, reassignment, draft exclusion and deletion.')
+
+  const taggedExpenseInput = {
+    ...customExpenseInput,
+    description: 'Custom tag expense test',
+    reference_no: `TAGGED-EXPENSE-${runId}`,
+    amount_paise: 2400,
+    festival_tag: tagA.name,
+    festival_tag_id: tagA.id,
+  }
+  const createdTaggedExpense = await callFunction('createFinancialExpense', token, {
+    input: taggedExpenseInput,
+  })
+  const taggedExpenseRef = db.collection('financial_expenses').doc(createdTaggedExpense.expense_document_id)
+  const savedTaggedExpense = await taggedExpenseRef.get()
+  assert.equal(savedTaggedExpense.data().festival_tag_id, tagA.id)
+  assert.equal(await taggedExpenseSpendingTotal(tagA.id), taggedExpenseInput.amount_paise)
+
+  const reassignedExpenseInput = {
+    ...taggedExpenseInput,
+    description: 'Reassigned custom tag expense test',
+    amount_paise: 3600,
+    festival_tag: tagB.name,
+    festival_tag_id: tagB.id,
+  }
+  await callFunction('editFinancialExpense', token, {
+    expense_id: taggedExpenseRef.id,
+    input: reassignedExpenseInput,
+  })
+  assert.equal((await taggedExpenseRef.get()).data().festival_tag_id, tagB.id)
+  assert.equal(await taggedExpenseSpendingTotal(tagA.id), 0, 'Reassigned expense must leave the previous tag total.')
+  assert.equal(await taggedExpenseSpendingTotal(tagB.id), reassignedExpenseInput.amount_paise)
+  const reassignedExpensePayments = await db.collection('financial_transactions')
+    .where('linked_expense_id', '==', taggedExpenseRef.id)
+    .get()
+  assert.ok(reassignedExpensePayments.docs.every(item => item.data().festival_tag_id === tagB.id))
+
+  await callFunction('deleteFinancialExpense', token, { expense_id: taggedExpenseRef.id })
+  assert.equal((await taggedExpenseRef.get()).exists, false)
+  assert.equal(await taggedExpenseSpendingTotal(tagB.id), 0, 'Deleted expense must not be included.')
+  console.log('PASS custom-tag expense creation, ID persistence, linked payment reassignment and deletion without duplicate totals.')
 
   await deleteApp(app)
 }
