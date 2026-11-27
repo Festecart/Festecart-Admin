@@ -1,6 +1,7 @@
 export interface DateRange {
   from: Date;
   to: Date;
+  allTime?: boolean;
 }
 
 export interface RevenueByDay {

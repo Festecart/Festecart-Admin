@@ -189,12 +189,13 @@ function exportCSV(data: AnalyticsData, range: DateRange) {
 
 // ── Date range ────────────────────────────────────────────────────
 
-type Preset = 'today' | '7d' | '30d' | '90d' | 'month' | 'last_month' | 'custom'
+type Preset = 'all' | 'today' | '7d' | '30d' | '90d' | 'month' | 'last_month' | 'custom'
 
 function getRange(preset: Preset): DateRange {
   const now   = new Date()
   const start = (d: Date) => { d.setHours(0, 0, 0, 0); return d }
   const end   = (d: Date) => { d.setHours(23, 59, 59, 999); return d }
+  if (preset === 'all')        { return { from: new Date(0), to: end(new Date()), allTime: true } }
   if (preset === 'today')      { return { from: start(new Date()), to: end(new Date()) } }
   if (preset === '7d')         { const f = start(new Date()); f.setDate(f.getDate() - 6); return { from: f, to: end(new Date()) } }
   if (preset === '30d')        { const f = start(new Date()); f.setDate(f.getDate() - 29); return { from: f, to: end(new Date()) } }
@@ -205,6 +206,7 @@ function getRange(preset: Preset): DateRange {
 }
 
 const PRESETS: { value: Preset; label: string }[] = [
+  { value: 'all',        label: 'All Time'    },
   { value: 'today',      label: 'Today'      },
   { value: '7d',         label: '7D'         },
   { value: '30d',        label: '30D'        },
@@ -680,7 +682,7 @@ function FestivalTagAnalyticsSection({
             <KPI label="Total Orders" value={data.totalOrders} icon={ShoppingBag} color={C.blue} />
             <KPI label="Delivered Orders" value={data.deliveredOrders} icon={Truck} color={C.green} />
             <KPI label="Delivered Sales" value={fmtINR(data.deliveredSales)} icon={IndianRupee} color={C.indigo} />
-            <KPI label="Expenses" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
+            <KPI label="Total Expenses Paid" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
             <KPI label="Income" value={fmtINR(data.income)} icon={IndianRupee} color={C.green} />
             <KPI label="Sales Less Expenses" value={fmtINR(salesLessExpenses)} icon={TrendingUp} color={salesLessExpenses >= 0 ? C.green : C.red} />
             <KPI label="Units Sold" value={data.unitsSold} icon={Package} color={C.orange} />
@@ -697,7 +699,7 @@ function FestivalTagAnalyticsSection({
                   <Tooltip content={<AnaTooltip currency />} />
                   <Legend />
                   <Bar dataKey="sales" name="Sales" fill={C.blue} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="expenses" name="Expenses" fill={C.red} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="expenses" name="Total Expenses Paid" fill={C.red} radius={[4, 4, 0, 0]} />
                   <Bar dataKey="income" name="Income" fill={C.green} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -738,7 +740,7 @@ function FestivalTagAnalyticsSection({
 
 export default function Analytics() {
   const queryClient = useQueryClient()
-  const [preset,     setPreset]     = useState<Preset>('30d')
+  const [preset,     setPreset]     = useState<Preset>('all')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo,   setCustomTo]   = useState('')
   const [selectedTagId, setSelectedTagId] = useState('all')

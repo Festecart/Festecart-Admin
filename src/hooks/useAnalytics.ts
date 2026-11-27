@@ -313,6 +313,7 @@ export function useFestivalTagAnalytics(
       tagName,
       range.from.toISOString(),
       range.to.toISOString(),
+      range.allTime === true,
       [...productIds].sort(),
     ],
     enabled: Boolean(tagId && tagId !== 'all'),
@@ -329,8 +330,8 @@ export function useFestivalTagAnalytics(
           where('created_at', '<=', Timestamp.fromDate(range.to)),
           orderBy('created_at', 'desc'),
         )),
-        fetchReportExpenses({ from: fromDate, to: toDate }),
-        fetchReportTransactions({ from: fromDate, to: toDate }),
+        fetchReportExpenses(range.allTime ? {} : { from: fromDate, to: toDate }),
+        fetchReportTransactions(range.allTime ? {} : { from: fromDate, to: toDate }),
         fetchUnpostedFinancialIncomes(),
         fetchFestivalProductsByIds([...productIdSet]),
       ])
@@ -372,11 +373,11 @@ export function useFestivalTagAnalytics(
         transaction.type === 'income' && recordMatchesTag(transaction, tagId, tagName),
       )
       const matchingUnpostedIncomes = unpostedIncomes.filter(income =>
-        income.transaction_date >= fromDate &&
-        income.transaction_date <= toDate &&
+        (range.allTime === true ||
+          (income.transaction_date >= fromDate && income.transaction_date <= toDate)) &&
         recordMatchesTag(income, tagId, tagName),
       )
-      const totalExpensesPaise = matchingExpenses.reduce(
+      const totalExpensesPaise = expenses.reduce(
         (total, expense) => total + expenseSpendingPaise(expense),
         0,
       )
