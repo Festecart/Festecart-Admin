@@ -8,12 +8,20 @@ dist/
 dist-ssr/
 *.local
 
-# Environment — commit .env (no secrets inside), but never commit .env.local
+# Environment
+# Commit .env only if it contains no secrets
 .env.local
 .env.*.local
+.env.local.*
 .env.emulator
+.env.emulator.example
 functions/.env
 scripts/serviceAccountKey.json
+
+# Firebase cache
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
 
 # Editor
 .vscode/*
