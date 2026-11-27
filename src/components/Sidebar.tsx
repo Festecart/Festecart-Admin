@@ -104,7 +104,7 @@ function Sub({
 
 export function Sidebar({ onLogout, showAccounts, accountsOnly }: SidebarProps) {
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col min-h-screen shrink-0">
+    <aside className="app-sidebar w-64 bg-gray-900 text-white flex flex-col shrink-0">
 
       {/* Logo */}
       <div className="px-6 py-5 border-b border-gray-700">

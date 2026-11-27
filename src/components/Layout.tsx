@@ -8,8 +8,8 @@ export function Layout() {
 
   if (isAffiliate) {
     return (
-      <div className="flex h-screen overflow-hidden bg-gray-50">
-        <aside className="flex w-64 shrink-0 flex-col bg-gray-950 text-white">
+      <div className="app-shell flex bg-gray-50">
+        <aside className="app-sidebar flex w-64 shrink-0 flex-col bg-gray-950 text-white">
           <div className="border-b border-white/10 px-6 py-5">
             <p className="text-sm font-bold">Festecart</p>
             <p className="mt-1 text-xs text-gray-400">Affiliate portal</p>
@@ -38,7 +38,7 @@ export function Layout() {
             </button>
           </div>
         </aside>
-        <main className="flex-1 overflow-y-auto bg-gray-50">
+        <main className="min-w-0 flex-1 bg-gray-50">
           <Outlet />
         </main>
       </div>
@@ -46,9 +46,9 @@ export function Layout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="app-shell flex bg-gray-50">
       <Sidebar onLogout={logout} showAccounts={isAccountsAdmin} accountsOnly={!isAdmin && isAccountsAdmin} />
-      <main className="admin-content h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-gray-50">
+      <main className="admin-content min-w-0 flex-1 bg-gray-50">
         <Outlet />
       </main>
     </div>
