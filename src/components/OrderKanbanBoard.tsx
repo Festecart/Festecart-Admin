@@ -18,6 +18,7 @@ const ORDER_STATUSES: OrderStatus[] = [
   'cancelled',
   'completed',
 ]
+const ORDER_DRAG_DATA_TYPE = 'application/x-festecart-order-id'
 
 function customerName(order: Order): string {
   return order.guest_name?.trim() || order.shipping_address?.name?.trim() || 'Guest customer'
@@ -33,6 +34,7 @@ export function OrderKanbanBoard({ orders }: { orders: Order[] }) {
   const [dragOverStatus, setDragOverStatus] = useState<OrderStatus | null>(null)
   const [pendingOrderIds, setPendingOrderIds] = useState<Set<string>>(() => new Set())
   const [optimisticStatuses, setOptimisticStatuses] = useState<Map<string, OrderStatus>>(() => new Map())
+  const [pendingMove, setPendingMove] = useState<{ orderId: string; status: OrderStatus } | null>(null)
   const [updateError, setUpdateError] = useState('')
   const [horizontalScroll, setHorizontalScroll] = useState({ position: 0, max: 0 })
 
@@ -139,13 +141,13 @@ export function OrderKanbanBoard({ orders }: { orders: Order[] }) {
 
     setUpdateError('')
     setPendingOrderIds(current => new Set(current).add(orderId))
-    setOptimisticStatuses(current => new Map(current).set(orderId, status))
     try {
       await updateStatus.mutateAsync({
         orderId,
         currentStatus,
         status,
       })
+      setOptimisticStatuses(current => new Map(current).set(orderId, status))
     } catch (error) {
       setOptimisticStatuses(current => {
         const next = new Map(current)
@@ -165,13 +167,35 @@ export function OrderKanbanBoard({ orders }: { orders: Order[] }) {
     }
   }
 
+  const startOrderDrag = (event: DragEvent, orderId: string) => {
+    event.dataTransfer.setData(ORDER_DRAG_DATA_TYPE, orderId)
+    event.dataTransfer.setData('text/plain', orderId)
+    event.dataTransfer.effectAllowed = 'move'
+    draggedOrderIdRef.current = orderId
+  }
+
   const handleDrop = (event: DragEvent, status: OrderStatus) => {
     event.preventDefault()
-    const orderId = event.dataTransfer.getData('text/plain') || draggedOrderIdRef.current
+    const orderId =
+      event.dataTransfer.getData(ORDER_DRAG_DATA_TYPE) ||
+      event.dataTransfer.getData('text/plain') ||
+      draggedOrderIdRef.current
     draggedOrderIdRef.current = null
     dragOverStatusRef.current = null
     setDragOverStatus(null)
-    if (orderId) void changeOrderStatus(orderId, status)
+    if (!orderId) return
+
+    const order = orders.find(item => item.id === orderId)
+    const currentStatus = optimisticStatuses.get(orderId) ?? order?.status
+    if (!order || !currentStatus || currentStatus === status || pendingOrderIds.has(orderId)) return
+
+    setPendingMove({ orderId, status })
+  }
+
+  const confirmMove = () => {
+    if (!pendingMove) return
+    void changeOrderStatus(pendingMove.orderId, pendingMove.status)
+    setPendingMove(null)
   }
 
   return (
@@ -253,14 +277,14 @@ export function OrderKanbanBoard({ orders }: { orders: Order[] }) {
                 >
                   {statusOrders.map(order => {
                     const isPending = pendingOrderIds.has(order.id)
+                    const canDrag =
+                      !isPending && order.status !== 'delivered' && order.status !== 'cancelled'
                     return (
                       <article
                         key={order.id}
-                        draggable={!isPending}
-                        onDragStart={event => {
-                          event.dataTransfer.setData('text/plain', order.id)
-                          event.dataTransfer.effectAllowed = 'move'
-                          draggedOrderIdRef.current = order.id
+                        draggable={canDrag}
+                        onDragStartCapture={event => {
+                          startOrderDrag(event, order.id)
                           event.currentTarget.classList.add('opacity-40')
                         }}
                         onDragEnd={event => {
@@ -270,23 +294,32 @@ export function OrderKanbanBoard({ orders }: { orders: Order[] }) {
                           setDragOverStatus(null)
                         }}
                         className={`rounded-lg border border-gray-200 bg-white p-3 shadow-sm ${
-                          isPending ? 'cursor-not-allowed opacity-60' : 'cursor-grab active:cursor-grabbing'
+                          isPending
+                            ? 'cursor-not-allowed opacity-60'
+                            : canDrag
+                              ? 'cursor-grab active:cursor-grabbing'
+                              : ''
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <Link
                             to={`/orders/${order.id}`}
+                            draggable={false}
                             className="text-sm font-semibold text-red-600 hover:text-red-700 hover:underline"
                           >
                             {order.order_number}
                           </Link>
-                          <span
-                            data-order-drag-handle
-                            title={`Drag ${order.order_number} to another status`}
-                            className="text-gray-400"
-                          >
-                            <GripVertical size={16} aria-hidden="true" />
-                          </span>
+                          {canDrag && (
+                            <span
+                              data-order-drag-handle
+                              draggable
+                              title={`Drag ${order.order_number} to another status`}
+                              aria-label={`Drag order ${order.order_number} to another status`}
+                              className="inline-flex cursor-grab rounded bg-gray-100 p-1 text-gray-600 hover:bg-red-50 hover:text-red-600 active:cursor-grabbing"
+                            >
+                              <GripVertical size={16} aria-hidden="true" />
+                            </span>
+                          )}
                         </div>
                         <p className="mt-1 truncate text-sm font-medium text-gray-800">{customerName(order)}</p>
                         <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-500">
@@ -357,6 +390,51 @@ export function OrderKanbanBoard({ orders }: { orders: Order[] }) {
           </span>
         </div>
       )}
+      {pendingMove && (() => {
+        const order = orders.find(item => item.id === pendingMove.orderId)
+        if (!order) return null
+
+        const destination = pendingMove.status
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, character => character.toUpperCase())
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="confirm-order-move-title"
+              className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl"
+            >
+              <div>
+                <h2 id="confirm-order-move-title" className="text-lg font-semibold text-gray-900">
+                  Confirm Order Status Change
+                </h2>
+                <p className="mt-2 text-sm text-gray-600">
+                  Move order <span className="font-semibold text-gray-900">{order.order_number}</span> to{' '}
+                  <span className="font-semibold text-gray-900">{destination}</span>?
+                </p>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPendingMove(null)}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmMove}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+                >
+                  Confirm Move
+                </button>
+              </div>
+            </section>
+          </div>
+        )
+      })()}
     </div>
   )
 }

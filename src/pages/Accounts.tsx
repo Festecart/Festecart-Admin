@@ -48,6 +48,7 @@ import {
   fetchReportExpenses,
   fetchReportTransactions,
   fetchUnpostedFinancialIncomes,
+  expenseSpendingPaise,
   editUnpostedFinancialIncome,
   deleteUnpostedFinancialIncome,
   formatINR,
@@ -94,10 +95,6 @@ function isTab(value: string | undefined): value is Tab {
   return value === 'overview' || value === 'transactions' || value === 'expenses' ||
     value === 'income' || value === 'receivables' || value === 'petty_cash' ||
     value === 'reports' || value === 'tags' || value === 'settings'
-}
-
-function expenseSpendingPaise(expense: FinancialExpense): number {
-  return expense.is_full_amount_spending ? expense.amount_paise : expense.paid_paise
 }
 
 type PendingDelete =
@@ -391,6 +388,8 @@ export default function Accounts() {
   }, [expenseSearch, expenseFrom, expenseTo])
   const dateRange = useMemo(() => dateRangeFor(datePreset, customFrom, customTo), [datePreset, customFrom, customTo])
   const queryClient = useQueryClient()
+  const invalidateTagAnalytics = () =>
+    queryClient.invalidateQueries({ queryKey: ['analytics', 'festival-tag'] })
   const {
     accounts: accountsQuery,
     totals: totalsQuery,
@@ -660,7 +659,10 @@ export default function Accounts() {
   const transactionMutation = useMutation({
     mutationFn: ({ input, receipt }: { input: NewTransactionInput; receipt?: File }) => recordTransaction(input, receipt),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
+      ])
       if (quickTransactionAction === 'petty_cash') {
         showTransactionSuccess('Petty cash spending saved successfully.')
       }
@@ -671,7 +673,10 @@ export default function Accounts() {
     mutationFn: ({ input, idempotencyKey }: { input: NewIncomeInput; idempotencyKey: string }) =>
       createUnpostedFinancialIncome(input, idempotencyKey),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
+      ])
       showTransactionSuccess('Income saved successfully.', 5000)
     },
   })
@@ -679,7 +684,10 @@ export default function Accounts() {
     mutationFn: ({ transactionId, input }: { transactionId: string; input: NewIncomeInput }) =>
       editUnpostedFinancialIncome(transactionId, input),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
+      ])
       showTransactionSuccess('Income updated successfully.', 5000)
     },
   })
@@ -714,7 +722,10 @@ export default function Accounts() {
   const deleteIncomeMutation = useMutation({
     mutationFn: (transactionId: string) => deleteUnpostedFinancialIncome(transactionId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
+      ])
       setIncomeToDelete(null)
       showDeleteSuccess('Income deleted successfully.')
     },
@@ -724,6 +735,7 @@ export default function Accounts() {
     onSuccess: async (_result, variables) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
         variables.transaction.linked_order_id
           ? queryClient.invalidateQueries({ queryKey: ['orders'] })
           : Promise.resolve(),
@@ -733,10 +745,13 @@ export default function Accounts() {
   })
   const editExpenseMutation = useMutation({
     mutationFn: ({ expense, input }: { expense: FinancialExpense; input: EditExpenseInput }) => editFinancialExpense(expense, input),
-    onSuccess: () => {
+    onSuccess: async () => {
       setEditingExpense(null)
       showTransactionSuccess('Expense updated successfully.', 5000)
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
+      ])
     },
   })
   const deleteMutation = useMutation({
@@ -745,8 +760,11 @@ export default function Accounts() {
       else if (target.record.posting_status === 'unposted') await deleteUnpostedFinancialIncome(target.record.id)
       else await deleteFinancialTransaction(target.record, target.pettyCashSpending === true)
     },
-    onSuccess: (_result, target) => {
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+    onSuccess: async (_result, target) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
+      ])
       if (target.kind === 'transaction' && target.record.linked_order_id) {
         void queryClient.invalidateQueries({ queryKey: ['orders'] })
       }
@@ -766,10 +784,13 @@ export default function Accounts() {
   })
   const expenseMutation = useMutation({
     mutationFn: (input: NewExpenseInput) => createExpense(input),
-    onSuccess: () => {
+    onSuccess: async () => {
       setShowExpenseForm(false)
       showTransactionSuccess('Expense saved successfully.')
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+        invalidateTagAnalytics(),
+      ])
     },
   })
   const categoryMutation = useMutation({

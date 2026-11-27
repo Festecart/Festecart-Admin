@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -655,7 +655,7 @@ function FestivalTagAnalyticsSection({
   range: DateRange
   productIds: readonly string[]
 }) {
-  const { data, isLoading, error, refetch } = useFestivalTagAnalytics(range, tagId, productIds)
+  const { data, isLoading, error, refetch } = useFestivalTagAnalytics(range, tagId, tagName, productIds)
   const salesLessExpenses = (data?.deliveredSales ?? 0) - (data?.expenses ?? 0)
 
   return (
@@ -668,67 +668,66 @@ function FestivalTagAnalyticsSection({
         </div>
       ) : data && (
         <>
-          {data.totalOrders === 0 && data.matchingExpenseCount === 0 ? (
+          {data.totalOrders === 0 && data.matchingExpenseCount === 0 && data.matchingIncomeCount === 0 && (
             <div className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-600">
               No matching data for this tag and date range
               {data.linkedProductCount === 0 && (
                 <p className="mt-1 text-xs text-gray-500">This tag has no linked Admin Products.</p>
               )}
             </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <KPI label="Total Orders" value={data.totalOrders} icon={ShoppingBag} color={C.blue} />
-                <KPI label="Delivered Orders" value={data.deliveredOrders} icon={Truck} color={C.green} />
-                <KPI label="Delivered Sales" value={fmtINR(data.deliveredSales)} icon={IndianRupee} color={C.indigo} />
-                <KPI label="Expenses" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
-                <KPI label="Sales Less Expenses" value={fmtINR(salesLessExpenses)} icon={TrendingUp} color={salesLessExpenses >= 0 ? C.green : C.red} />
-                <KPI label="Units Sold" value={data.unitsSold} icon={Package} color={C.orange} />
-                <KPI label="Products Sold" value={data.productsSold} icon={BarChart2} color={C.purple} />
-              </div>
-
-              <div className="grid grid-cols-1 gap-4">
-                <ChartCard title="Sales vs Expenses">
-                  <ResponsiveContainer width="100%" height={280}>
-                    <BarChart data={[{ name: 'Selected Tag', sales: data.deliveredSales, expenses: data.expenses }]} margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} tickFormatter={fmtCompact} tickLine={false} axisLine={false} width={60} />
-                      <Tooltip content={<AnaTooltip currency />} />
-                      <Legend />
-                      <Bar dataKey="sales" name="Delivered Sales" fill={C.green} radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="expenses" name="Expenses" fill={C.red} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartCard>
-
-                <ChartCard title="Product-wise Sales Summary">
-                  {data.productSales.length === 0 ? <Empty msg="No delivered products for this tag and date range." /> : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
-                            <th className="py-2 pr-3 font-medium">Product Name</th>
-                            <th className="py-2 px-3 text-right font-medium">Quantity Sold</th>
-                            <th className="py-2 pl-3 text-right font-medium">Sales Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.productSales.map(product => (
-                            <tr key={product.productId} className="border-b border-gray-50 last:border-0">
-                              <td className="py-2 pr-3 text-gray-700">{product.name}</td>
-                              <td className="py-2 px-3 text-right text-gray-600">{product.quantity.toLocaleString('en-IN')}</td>
-                              <td className="py-2 pl-3 text-right font-semibold text-gray-900">{fmtINR(product.sales)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </ChartCard>
-              </div>
-            </>
           )}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <KPI label="Total Orders" value={data.totalOrders} icon={ShoppingBag} color={C.blue} />
+            <KPI label="Delivered Orders" value={data.deliveredOrders} icon={Truck} color={C.green} />
+            <KPI label="Delivered Sales" value={fmtINR(data.deliveredSales)} icon={IndianRupee} color={C.indigo} />
+            <KPI label="Expenses" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
+            <KPI label="Income" value={fmtINR(data.income)} icon={IndianRupee} color={C.green} />
+            <KPI label="Sales Less Expenses" value={fmtINR(salesLessExpenses)} icon={TrendingUp} color={salesLessExpenses >= 0 ? C.green : C.red} />
+            <KPI label="Units Sold" value={data.unitsSold} icon={Package} color={C.orange} />
+            <KPI label="Products Sold" value={data.productsSold} icon={BarChart2} color={C.purple} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4">
+            <ChartCard title="Sales, Expenses & Income">
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={[{ name: 'Selected Tag', sales: data.deliveredSales, expenses: data.expenses, income: data.income }]} margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} tickFormatter={fmtCompact} tickLine={false} axisLine={false} width={60} />
+                  <Tooltip content={<AnaTooltip currency />} />
+                  <Legend />
+                  <Bar dataKey="sales" name="Sales" fill={C.blue} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="expenses" name="Expenses" fill={C.red} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="income" name="Income" fill={C.green} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            <ChartCard title="Product-wise Sales Summary">
+              {data.productSales.length === 0 ? <Empty msg="No delivered products for this tag and date range." /> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
+                        <th className="py-2 pr-3 font-medium">Product Name</th>
+                        <th className="py-2 px-3 text-right font-medium">Quantity Sold</th>
+                        <th className="py-2 pl-3 text-right font-medium">Sales Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.productSales.map(product => (
+                        <tr key={product.productId} className="border-b border-gray-50 last:border-0">
+                          <td className="py-2 pr-3 text-gray-700">{product.name}</td>
+                          <td className="py-2 px-3 text-right text-gray-600">{product.quantity.toLocaleString('en-IN')}</td>
+                          <td className="py-2 pl-3 text-right font-semibold text-gray-900">{fmtINR(product.sales)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </ChartCard>
+          </div>
         </>
       )}
     </section>
@@ -738,6 +737,7 @@ function FestivalTagAnalyticsSection({
 // ── Main page ─────────────────────────────────────────────────────
 
 export default function Analytics() {
+  const queryClient = useQueryClient()
   const [preset,     setPreset]     = useState<Preset>('30d')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo,   setCustomTo]   = useState('')
@@ -746,6 +746,7 @@ export default function Analytics() {
   const tagsQuery = useQuery({
     queryKey: ['accounts', 'festival-tags'],
     queryFn: fetchFestivalTags,
+    refetchOnMount: 'always',
   })
   const selectionsQuery = useQuery({
     queryKey: ['accounts', 'festival-product-selections'],
@@ -782,13 +783,6 @@ export default function Analytics() {
     }
     return getRange(preset)
   }, [preset, customFrom, customTo])
-  const tagAnalyticsRange = useMemo(
-    (): DateRange => selectedTagId === 'all'
-      ? range
-      : { from: new Date(0), to: new Date() },
-    [selectedTagId, range],
-  )
-
   const { data, isLoading, error, refetch } = useAnalytics(range)
   const selectedTag = analyticsTags.find(tag => tag.id === selectedTagId)
   const productIds = selectedTag ? linkedProductSelections[selectedTag.id] ?? [] : []
@@ -806,7 +800,9 @@ export default function Analytics() {
         <div>
           <div className="flex items-center gap-2">
             <BarChart2 size={20} className="text-gray-700" />
-            <h1 className="text-xl font-bold text-gray-900">Analytics</h1>
+            <h1 className="text-xl font-bold text-gray-900">
+              {selectedTag ? `${selectedTag.name} Analytics` : 'Analytics'}
+            </h1>
           </div>
           <p className="text-xs text-gray-500 mt-0.5">Revenue, orders, customers &amp; regional performance</p>
         </div>
@@ -817,7 +813,17 @@ export default function Analytics() {
               <Download size={13} /> Export CSV
             </button>
           )}
-          <button onClick={() => refetch()} disabled={isLoading}
+          <button
+            onClick={() => {
+              const requests: Promise<unknown>[] = [refetch()]
+              if (selectedTagId !== 'all') {
+                requests.push(queryClient.invalidateQueries({
+                  queryKey: ['analytics', 'festival-tag', selectedTagId],
+                }))
+              }
+              void Promise.all(requests)
+            }}
+            disabled={isLoading}
             className="flex items-center gap-1.5 text-xs border border-gray-300 text-gray-600 px-3 py-2 rounded-lg hover:bg-white transition-colors">
             <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
             Refresh
@@ -828,24 +834,20 @@ export default function Analytics() {
       {/* ── Date range ── */}
       <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
         <div className="flex flex-wrap gap-1.5 items-center">
-          {selectedTagId === 'all' && (
-            <>
-              {PRESETS.map(p => (
-                <button key={p.value} onClick={() => setPreset(p.value)}
-                  className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${preset === p.value ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                  {p.label}
-                </button>
-              ))}
-              {preset === 'custom' && (
-                <div className="flex items-center gap-1.5 ml-1">
-                  <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
-                    className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
-                  <span className="text-gray-400 text-xs">–</span>
-                  <input type="date" value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
-                    className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
-                </div>
-              )}
-            </>
+          {PRESETS.map(p => (
+            <button key={p.value} onClick={() => setPreset(p.value)}
+              className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${preset === p.value ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+              {p.label}
+            </button>
+          ))}
+          {preset === 'custom' && (
+            <div className="flex items-center gap-1.5 ml-1">
+              <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
+              <span className="text-gray-400 text-xs">–</span>
+              <input type="date" value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
+                className="px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-900" />
+            </div>
           )}
           <details className="relative">
             <summary
@@ -858,7 +860,7 @@ export default function Analytics() {
               {selectedTagId === 'all' ? 'Tags' : selectedTag?.name ?? 'Tags'} <ChevronDown size={13} aria-hidden="true" />
             </summary>
             <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-md border border-gray-200 bg-white p-1 shadow-lg">
-              {analyticsTags.filter(tag => !tag.is_custom).map(tag => (
+              {analyticsTags.filter(tag => tag.is_custom && tag.is_enabled !== false).map(tag => (
                 <button key={tag.id} type="button" onClick={e => {
                   setSelectedTagId(tag.id)
                   e.currentTarget.closest('details')?.removeAttribute('open')
@@ -887,7 +889,7 @@ export default function Analytics() {
           <FestivalTagAnalyticsSection
             tagId={selectedTag.id}
             tagName={selectedTag.name}
-            range={tagAnalyticsRange}
+            range={range}
             productIds={productIds}
           />
         ) : null
