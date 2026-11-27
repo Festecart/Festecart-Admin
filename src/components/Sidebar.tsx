@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   ShoppingBag,
@@ -26,16 +26,22 @@ function NavGroup({
   icon: Icon,
   label,
   basePath,
+  openWhenActive = false,
   children,
 }: {
   icon: React.ElementType
   label: string
   basePath: string
+  openWhenActive?: boolean
   children: React.ReactNode
 }) {
   const location = useLocation()
   const isActive = location.pathname.startsWith(basePath)
   const [open, setOpen] = useState(isActive)
+
+  useEffect(() => {
+    if (openWhenActive && isActive) setOpen(true)
+  }, [isActive, location.pathname, openWhenActive])
 
   return (
     <div>
@@ -72,13 +78,16 @@ function NavGroup({
 function Sub({
   to,
   label,
+  end = false,
 }: {
   to: string
   label: string
+  end?: boolean
 }) {
   return (
     <NavLink
       to={to}
+      end={end}
       className={({ isActive }) =>
         cn(
           'block px-3 py-2 rounded-lg text-sm transition-colors',
@@ -222,21 +231,25 @@ export function Sidebar({ onLogout, showAccounts, accountsOnly }: SidebarProps) 
           </>
         )}
 
-        {/* Accounts */}
-        {showAccounts && <NavLink
-          to="/accounts"
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-              isActive
-                ? 'bg-red-600 text-white'
-                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-            )
-          }
-        >
-          <Wallet size={18} />
-          Accounts
-        </NavLink>}
+        {/* Accounts Group */}
+        {showAccounts && (
+          <NavGroup
+            icon={Wallet}
+            label="Accounts"
+            basePath="/accounts"
+            openWhenActive
+          >
+            <Sub to="/accounts" label="Overview" end />
+            <Sub to="/accounts/transactions" label="Transaction History" />
+            <Sub to="/accounts/expenses" label="Expenses" />
+            <Sub to="/accounts/income" label="Income" />
+            <Sub to="/accounts/petty_cash" label="Petty Cash" />
+            <Sub to="/accounts/receivables" label="Customer Payments" />
+            <Sub to="/accounts/tags" label="Tags" />
+            <Sub to="/accounts/reports" label="Reports" />
+            <Sub to="/accounts/settings" label="Settings" />
+          </NavGroup>
+        )}
 
       </nav>
 

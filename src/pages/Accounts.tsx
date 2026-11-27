@@ -15,7 +15,7 @@ import {
   Pencil,
   X,
 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { AccountForm } from '@/components/accounts/AccountForm'
 import { ExpenseForm } from '@/components/accounts/ExpenseForm'
 import { IncomeForm } from '@/components/accounts/IncomeForm'
@@ -75,8 +75,26 @@ import type { Order } from '@/types'
 type Tab = 'overview' | 'transactions' | 'expenses' | 'income' | 'receivables' | 'petty_cash' | 'reports' | 'tags' | 'settings'
 type QuickTransactionAction = 'income' | 'expense' | 'transfer' | 'petty_cash'
 
+const TAB_TITLES: Record<Tab, string> = {
+  overview: 'Overview',
+  transactions: 'Transaction History',
+  expenses: 'Expenses',
+  income: 'Income',
+  receivables: 'Customer Payments',
+  petty_cash: 'Petty Cash',
+  reports: 'Reports',
+  tags: 'Tags',
+  settings: 'Settings',
+}
+
 type DatePreset = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'all'
 const EXPENSES_PER_PAGE = 50
+
+function isTab(value: string | undefined): value is Tab {
+  return value === 'overview' || value === 'transactions' || value === 'expenses' ||
+    value === 'income' || value === 'receivables' || value === 'petty_cash' ||
+    value === 'reports' || value === 'tags' || value === 'settings'
+}
 
 function expenseSpendingPaise(expense: FinancialExpense): number {
   return expense.is_full_amount_spending ? expense.amount_paise : expense.paid_paise
@@ -231,6 +249,15 @@ function ReportTable({ title, headers, rows }: { title: string; headers: string[
   )
 }
 
+function CompactCount({ label, value }: { label: string; value: string | number }) {
+  return (
+    <p className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600"
+      aria-live="polite">
+      {label}: {value}
+    </p>
+  )
+}
+
 function loadingOrUnavailable(pending: boolean, failed: boolean, value: number | undefined): string {
   if (failed) return 'Unavailable'
   if (pending || value === undefined) return 'Loading…'
@@ -287,7 +314,8 @@ function unpostedIncomeTransaction(income: UnpostedFinancialIncome): FinancialTr
 
 export default function Accounts() {
   const { isAccountsAdmin } = useAuth()
-  const [tab, setTab] = useState<Tab>('overview')
+  const { section } = useParams<{ section?: string }>()
+  const tab: Tab = isTab(section) ? section : 'overview'
   const [search, setSearch] = useState('')
   const [transactionFrom, setTransactionFrom] = useState('')
   const [transactionTo, setTransactionTo] = useState('')
@@ -806,11 +834,7 @@ export default function Accounts() {
   return (
     <div className="mx-auto max-w-[1500px] space-y-6 p-4 sm:p-6 lg:p-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">Finance workspace</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Accounts</h1>
-          <p className="mt-1.5 max-w-2xl text-sm text-slate-500">See what came in, what went out, and how much is available.</p>
-        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{TAB_TITLES[tab]}</h1>
         <button type="button" onClick={() => void queryClient.invalidateQueries({ queryKey: ['accounts'] })}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
           <RefreshCw size={15} /> Refresh
@@ -850,26 +874,6 @@ export default function Accounts() {
           </div>
         </div>
       )}
-      <nav className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Accounts sections">
-        {([
-          ['overview', 'Overview'],
-          ['transactions', 'Transaction History'],
-          ['expenses', 'Expenses'],
-          ['income', 'Income'],
-          ['receivables', 'Customer Payments'],
-          ['petty_cash', 'Petty Cash'],
-          ['reports', 'Reports'],
-          ['tags', 'Tags'],
-          ['settings', 'Settings'],
-        ] as const).map(([id, label]) => (
-          id === 'settings' && !isAccountsAdmin ? null :
-          <button key={id} type="button" onClick={() => setTab(id)}
-            className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:px-4 sm:py-2.5 ${tab === id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-            {label}
-          </button>
-        ))}
-      </nav>
-
       {tab === 'overview' && (
         <section className="space-y-5">
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -954,6 +958,14 @@ export default function Accounts() {
               </select>
             </label>
           </div>
+          <div className="flex justify-end px-5 pt-3">
+            <CompactCount label="Total Transactions"
+              value={allTransactionsQuery.isPending || unpostedIncomesQuery.isPending
+                ? 'Loading…'
+                : allTransactionsQuery.isError || unpostedIncomesQuery.isError
+                  ? 'Unavailable'
+                  : filteredTransactions.length} />
+          </div>
           {allTransactionsQuery.isPending || unpostedIncomesQuery.isPending ? <div className="p-8 text-center text-sm text-slate-500">Loading all transactions…</div>
             : allTransactionsQuery.isError || unpostedIncomesQuery.isError ? <div className="p-8 text-center text-sm text-rose-700">Transaction history is unavailable. See the permission error above.</div>
               : <TransactionTable rows={filteredTransactions} accounts={accounts} festivalTags={festivalTags}
@@ -1028,6 +1040,10 @@ export default function Accounts() {
               </button>
             </div>
           </section>
+          <div className="flex justify-end">
+            <CompactCount label="Total Expenses"
+              value={expensesQuery.isPending ? 'Loading…' : expensesQuery.isError ? 'Unavailable' : filteredExpenses.length} />
+          </div>
           {expensesQuery.isPending ? <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Loading expenses…</div>
             : expensesQuery.isError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center text-sm text-rose-700">
               <p>Unable to load expense records. Existing records have not been changed.</p>
@@ -1133,6 +1149,14 @@ export default function Accounts() {
               </button>
             </div>
           </section>
+          <div className="flex justify-end">
+            <CompactCount label="Total Income"
+              value={allTransactionsQuery.isPending || unpostedIncomesQuery.isPending
+                ? 'Loading…'
+                : allTransactionsQuery.isError || unpostedIncomesQuery.isError
+                  ? 'Unavailable'
+                  : filteredIncomeRows.length} />
+          </div>
 
           {allTransactionsQuery.isPending || unpostedIncomesQuery.isPending
             ? <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Loading income history…</div>
@@ -1314,13 +1338,18 @@ export default function Accounts() {
               .reduce((total, item) => total + item.amount_paise, 0)
             return (
               <>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <MetricCard label="Total Petty Cash Spent" value={pettyCashTransactionsQuery.isPending ? 'Loading…' : pettyCashTransactionsQuery.isError ? 'Unavailable' : formatINR(totalSpent)} icon={<ArrowUpRight size={18} />} tone="red" />
-                  <MetricCard label="Total Spending Transactions" value={pettyCashTransactionsQuery.isPending ? 'Loading…' : pettyCashTransactionsQuery.isError ? 'Unavailable' : String(pettyRows.length)} icon={<CircleDollarSign size={18} />} tone="blue" />
                   <MetricCard label="This Month's Spending" value={pettyCashTransactionsQuery.isPending ? 'Loading…' : pettyCashTransactionsQuery.isError ? 'Unavailable' : formatINR(monthSpent)} icon={<CalendarDays size={18} />} tone="amber" />
                 </div>
                 <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-100 px-5 py-4"><h3 className="font-semibold text-slate-900">Spending history</h3></div>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                    <h3 className="font-semibold text-slate-900">Spending history</h3>
+                    <CompactCount label="Total Petty Cash Entries"
+                      value={pettyCashTransactionsQuery.isPending
+                        ? 'Loading…'
+                        : pettyCashTransactionsQuery.isError ? 'Unavailable' : pettyRows.length} />
+                  </div>
                   {pettyCashTransactionsQuery.isPending ? <div className="p-8 text-center text-sm text-slate-500">Loading petty cash spending…</div>
                     : pettyCashTransactionsQuery.isError ? <div className="p-8 text-center text-sm text-rose-700">Petty cash spending is unavailable.</div>
                       : <TransactionTable rows={pettyRows} accounts={accounts} festivalTags={festivalTags} pettyCash

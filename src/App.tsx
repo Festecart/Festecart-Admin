@@ -234,7 +234,7 @@ export default function App() {
             </Route>
 
             <Route element={<AccountsOnlyRoute />}>
-              <Route path="accounts" element={<Accounts />} />
+              <Route path="accounts/:section?" element={<Accounts />} />
             </Route>
 
           </Route>

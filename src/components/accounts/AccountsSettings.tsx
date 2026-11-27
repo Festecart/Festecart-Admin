@@ -94,16 +94,6 @@ function PanelHeader({
   )
 }
 
-function RowIcon({ kind }: { kind: 'payment' | 'category' | 'vendor' }) {
-  return (
-    <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${
-      kind === 'payment' || kind === 'vendor' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'
-    }`}>
-      {kind === 'payment' ? <CreditCard size={15} /> : kind === 'vendor' ? <Store size={15} /> : <Tag size={15} />}
-    </span>
-  )
-}
-
 function ActionIconButton({
   label,
   tone,
@@ -329,13 +319,12 @@ export function AccountsSettings() {
 
               <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[440px] table-fixed text-left">
+                  <table className="w-full min-w-[360px] table-fixed text-left">
                     <thead className="bg-slate-50">
                       <tr className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
-                        <th className="w-[35%] px-3 py-3">Method Name</th>
-                        <th className="w-[21%] px-3 py-3">Type</th>
-                        <th className="w-[21%] px-3 py-3">Updated</th>
-                        <th className="w-[23%] px-3 py-3 text-right">Actions</th>
+                        <th className="w-[50%] px-3 py-3">Name</th>
+                        <th className="w-[25%] px-3 py-3">Type</th>
+                        <th className="w-[25%] px-3 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -406,13 +395,12 @@ export function AccountsSettings() {
 
               <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[440px] table-fixed text-left">
+                  <table className="w-full min-w-[360px] table-fixed text-left">
                     <thead className="bg-slate-50">
                       <tr className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
-                        <th className="w-[34%] px-3 py-3">Category Name</th>
-                        <th className="w-[24%] px-3 py-3">Available in</th>
-                        <th className="w-[19%] px-3 py-3">Updated</th>
-                        <th className="w-[23%] px-3 py-3 text-right">Actions</th>
+                        <th className="w-[50%] px-3 py-3">Name</th>
+                        <th className="w-[25%] px-3 py-3">Type</th>
+                        <th className="w-[25%] px-3 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -492,13 +480,12 @@ export function AccountsSettings() {
 
               <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[440px] table-fixed text-left">
+                  <table className="w-full min-w-[360px] table-fixed text-left">
                     <thead className="bg-slate-50">
                       <tr className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
-                        <th className="w-[35%] px-3 py-3">Vendor Name</th>
-                        <th className="w-[21%] px-3 py-3">Type</th>
-                        <th className="w-[21%] px-3 py-3">Updated</th>
-                        <th className="w-[23%] px-3 py-3 text-right">Actions</th>
+                        <th className="w-[50%] px-3 py-3">Name</th>
+                        <th className="w-[25%] px-3 py-3">Type</th>
+                        <th className="w-[25%] px-3 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -663,8 +650,7 @@ function PaymentMethodRow({
   return (
     <tr className="group">
       <td className="px-3 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <RowIcon kind="payment" />
+        <div className="flex min-w-0 items-center">
           {editing
             ? <input autoFocus aria-label={`Edit ${method.name}`} value={editName}
                 onChange={event => onEditName?.(event.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-400" />
@@ -677,7 +663,6 @@ function PaymentMethodRow({
           {!method.is_enabled && <span className="text-[11px] text-slate-400">Removed</span>}
         </div>
       </td>
-      <td className="px-3 py-3 text-xs text-slate-500">{formatUpdated(method.updated_at)}</td>
       <td className="px-3 py-3">
         <div className="flex justify-end gap-1">
           {editing ? (
@@ -730,8 +715,7 @@ function CategoryRow({
   return (
     <tr className="group">
       <td className="px-3 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <RowIcon kind="category" />
+        <div className="flex min-w-0 items-center">
           {editing
             ? <input autoFocus aria-label={`Edit ${category.name}`} value={editName}
                 onChange={event => onEditName?.(event.target.value)} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-purple-400" />
@@ -747,7 +731,6 @@ function CategoryRow({
           {category.is_enabled === false && <span className="text-[11px] text-slate-400">Removed</span>}
         </div>
       </td>
-      <td className="px-3 py-3 text-xs text-slate-500">{formatUpdated(category.updated_at ?? category.created_at)}</td>
       <td className="px-3 py-3">
         <div className="flex justify-end gap-1">
           {editing ? (
@@ -800,8 +783,7 @@ function VendorRow({
   return (
     <tr className="group">
       <td className="px-3 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <RowIcon kind="vendor" />
+        <div className="flex min-w-0 items-center">
           {editing
             ? <input autoFocus aria-label={`Edit ${vendor.name}`} value={editName}
                 onChange={event => onEditName?.(event.target.value)} maxLength={120}
@@ -815,7 +797,6 @@ function VendorRow({
           {!vendor.is_enabled && <span className="text-[11px] text-slate-400">Removed</span>}
         </div>
       </td>
-      <td className="px-3 py-3 text-xs text-slate-500">{formatUpdated(vendor.updated_at ?? vendor.created_at)}</td>
       <td className="px-3 py-3">
         <div className="flex justify-end gap-1">
           {editing ? (
