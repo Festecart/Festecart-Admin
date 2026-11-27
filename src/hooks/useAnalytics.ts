@@ -2,7 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import {
   db, collection, getDocs, query, where, orderBy, Timestamp,
 } from '@/lib/firebase'
-import { fetchReportExpenses } from '@/lib/accounts'
+import {
+  expenseSpendingPaise,
+  fetchReportExpenses,
+  fetchReportTransactions,
+  fetchUnpostedFinancialIncomes,
+} from '@/lib/accounts'
 import { fetchFestivalProductsByIds, festivalTagId } from '@/lib/festivalProducts'
 import type {
   DateRange, AnalyticsData,
@@ -264,8 +269,10 @@ export interface FestivalTagAnalyticsData {
   totalOrders: number
   deliveredOrders: number
   matchingExpenseCount: number
+  matchingIncomeCount: number
   deliveredSales: number
   expenses: number
+  income: number
   unitsSold: number
   productsSold: number
   productSales: FestivalTagProductSales[]
@@ -278,28 +285,53 @@ function localDateKey(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-export function useFestivalTagAnalytics(range: DateRange, tagId: string, productIds: readonly string[]) {
+function normalizedTagName(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function recordMatchesTag(
+  record: { festival_tag_id: string | null; festival_tag: string | null },
+  tagId: string,
+  tagName: string,
+): boolean {
+  const recordTagId = record.festival_tag_id ??
+    (record.festival_tag ? festivalTagId(record.festival_tag) : null)
+  return recordTagId === tagId || normalizedTagName(record.festival_tag) === normalizedTagName(tagName)
+}
+
+export function useFestivalTagAnalytics(
+  range: DateRange,
+  tagId: string,
+  tagName: string,
+  productIds: readonly string[],
+) {
   return useQuery({
     queryKey: [
       'analytics',
       'festival-tag',
       tagId,
+      tagName,
       range.from.toISOString(),
       range.to.toISOString(),
       [...productIds].sort(),
     ],
     enabled: Boolean(tagId && tagId !== 'all'),
     staleTime: 1000 * 60 * 5,
+    refetchOnMount: 'always',
     queryFn: async (): Promise<FestivalTagAnalyticsData> => {
       const productIdSet = new Set(productIds)
-      const [ordersSnapshot, expenses, linkedProducts] = await Promise.all([
+      const fromDate = localDateKey(range.from)
+      const toDate = localDateKey(range.to)
+      const [ordersSnapshot, expenses, transactions, unpostedIncomes, linkedProducts] = await Promise.all([
         getDocs(query(
           collection(db, 'orders'),
           where('created_at', '>=', Timestamp.fromDate(range.from)),
           where('created_at', '<=', Timestamp.fromDate(range.to)),
           orderBy('created_at', 'desc'),
         )),
-        fetchReportExpenses({ from: localDateKey(range.from), to: localDateKey(range.to) }),
+        fetchReportExpenses({ from: fromDate, to: toDate }),
+        fetchReportTransactions({ from: fromDate, to: toDate }),
+        fetchUnpostedFinancialIncomes(),
         fetchFestivalProductsByIds([...productIdSet]),
       ])
 
@@ -335,13 +367,25 @@ export function useFestivalTagAnalytics(range: DateRange, tagId: string, product
         }
       }
 
-      const matchingExpenses = expenses.filter(expense => {
-        const expenseTagId = expense.festival_tag_id ??
-          (expense.festival_tag ? festivalTagId(expense.festival_tag) : null)
-        return expenseTagId === tagId
-      })
-      const totalExpenses = matchingExpenses.reduce((total, expense) =>
-        total + expense.amount_paise / 100, 0,
+      const matchingExpenses = expenses.filter(expense => recordMatchesTag(expense, tagId, tagName))
+      const matchingTransactions = transactions.filter(transaction =>
+        transaction.type === 'income' && recordMatchesTag(transaction, tagId, tagName),
+      )
+      const matchingUnpostedIncomes = unpostedIncomes.filter(income =>
+        income.transaction_date >= fromDate &&
+        income.transaction_date <= toDate &&
+        recordMatchesTag(income, tagId, tagName),
+      )
+      const totalExpensesPaise = matchingExpenses.reduce(
+        (total, expense) => total + expenseSpendingPaise(expense),
+        0,
+      )
+      const totalIncome = matchingTransactions.reduce(
+        (total, transaction) => total + transaction.amount_paise / 100,
+        0,
+      ) + matchingUnpostedIncomes.reduce(
+        (total, income) => total + income.amount_paise / 100,
+        0,
       )
 
       return {
@@ -351,8 +395,10 @@ export function useFestivalTagAnalytics(range: DateRange, tagId: string, product
         totalOrders: matchingOrders.length,
         deliveredOrders: deliveredOrders.length,
         matchingExpenseCount: matchingExpenses.length,
+        matchingIncomeCount: matchingTransactions.length + matchingUnpostedIncomes.length,
         deliveredSales,
-        expenses: totalExpenses,
+        expenses: totalExpensesPaise / 100,
+        income: totalIncome,
         unitsSold,
         productsSold: productSales.size,
         productSales: [...productSales.values()].sort((left, right) => right.sales - left.sales),

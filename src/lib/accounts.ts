@@ -227,6 +227,12 @@ function readExpense(id: string, data: DocumentData): FinancialExpense {
   }
 }
 
+export function expenseSpendingPaise(
+  expense: Pick<FinancialExpense, 'is_full_amount_spending' | 'amount_paise' | 'paid_paise'>,
+): number {
+  return expense.is_full_amount_spending ? expense.amount_paise : expense.paid_paise
+}
+
 export function rupeesToPaise(value: string): number {
   const normalized = value.trim()
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
@@ -251,6 +257,13 @@ export function dateInputTimestamp(value: string): Timestamp {
   const date = new Date(`${value}T00:00:00`)
   if (!value || Number.isNaN(date.getTime())) throw new Error('Choose a valid transaction date.')
   return Timestamp.fromDate(date)
+}
+
+function localDateInputValue(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 export async function fetchAccounts(): Promise<FinancialAccount[]> {
@@ -1581,7 +1594,7 @@ export async function fetchUnpostedFinancialIncomes(): Promise<UnpostedFinancial
         return {
           id: item.id,
           transaction_id: typeof data.transaction_id === 'string' ? data.transaction_id : item.id,
-          transaction_date: data.transaction_date.toDate().toISOString().slice(0, 10),
+          transaction_date: localDateInputValue(data.transaction_date.toDate()),
           amount_paise: data.amount_paise,
           festival_tag: typeof data.festival_tag === 'string' ? data.festival_tag : null,
           festival_tag_id: typeof data.festival_tag_id === 'string' ? data.festival_tag_id : null,
