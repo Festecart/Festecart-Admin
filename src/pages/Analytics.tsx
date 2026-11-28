@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
   BarChart2, RefreshCw, Download, IndianRupee, ShoppingBag,
@@ -351,6 +351,86 @@ function DonutLegend({ items }: { items: { label: string; value: number; color: 
   )
 }
 
+function CombinedFinancialCircle({
+  sales,
+  expenses,
+  income,
+}: {
+  sales: number
+  expenses: number
+  income: number
+}) {
+  const total = Math.max(0, sales) + Math.max(0, expenses) + Math.max(0, income)
+  const salesPct = total > 0 ? (Math.max(0, sales) / total) * 100 : 0
+  const expensesPct = total > 0 ? (Math.max(0, expenses) / total) * 100 : 0
+  const incomePct = total > 0 ? (Math.max(0, income) / total) * 100 : 0
+  const items = [
+    { label: 'Sales', value: Math.max(0, sales), pct: salesPct, color: C.indigo },
+    { label: 'Expenses', value: Math.max(0, expenses), pct: expensesPct, color: C.red },
+    { label: 'Income', value: Math.max(0, income), pct: incomePct, color: C.green },
+  ]
+
+  return (
+    <div>
+      {total === 0 ? (
+        <Empty msg="No financial data available." />
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={180}>
+            <PieChart>
+              <Pie data={items} dataKey="value" nameKey="label"
+                cx="50%" cy="50%" outerRadius={72} innerRadius={44} paddingAngle={2}>
+                {items.map((item, index) => <Cell key={index} fill={item.color} />)}
+              </Pie>
+              <Tooltip formatter={((value: number, name: string) => [fmtINR(value), name]) as any} />
+            </PieChart>
+          </ResponsiveContainer>
+          <DonutLegend items={items} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function ResultCircle({
+  label,
+  amount,
+  percentage,
+}: {
+  label: 'Profit' | 'Loss'
+  amount: number
+  percentage: number
+}) {
+  const color = label === 'Profit' ? C.green : C.red
+  const clampedPercentage = Math.max(0, Math.min(100, percentage))
+  const items = [
+    { label, value: clampedPercentage, pct: clampedPercentage, color },
+    { label: 'Remaining', value: 100 - clampedPercentage, pct: 100 - clampedPercentage, color: '#e5e7eb' },
+  ]
+
+  return (
+    <div>
+      <ResponsiveContainer width="100%" height={180}>
+        <PieChart>
+          <Pie data={items} dataKey="value" nameKey="label"
+            cx="50%" cy="50%" outerRadius={72} innerRadius={44} startAngle={90} endAngle={-270}>
+            {items.map((item, index) => <Cell key={index} fill={item.color} />)}
+          </Pie>
+          <Tooltip formatter={((value: number) => [`${value.toFixed(1)}%`, label]) as any} />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="space-y-1.5 mt-3">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+          <span className="text-gray-600 flex-1 truncate">{label}</span>
+          <span className="font-semibold text-gray-800">{fmtINR(amount)}</span>
+          <span className="text-gray-400 w-12 text-right">{fmtPct(clampedPercentage)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Status breakdown ──────────────────────────────────────────────
 
 function StatusChart({ data }: { data: AnalyticsData }) {
@@ -684,25 +764,36 @@ function FestivalTagAnalyticsSection({
             <KPI label="Delivered Sales" value={fmtINR(data.deliveredSales)} icon={IndianRupee} color={C.indigo} />
             <KPI label="Expenses" value={fmtINR(data.expenses)} icon={IndianRupee} color={C.red} />
             <KPI label="Income" value={fmtINR(data.income)} icon={IndianRupee} color={C.green} />
-            <KPI label="Sales Less Expenses" value={fmtINR(salesLessExpenses)} icon={TrendingUp} color={salesLessExpenses >= 0 ? C.green : C.red} />
             <KPI label="Units Sold" value={data.unitsSold} icon={Package} color={C.orange} />
             <KPI label="Products Sold" value={data.productsSold} icon={BarChart2} color={C.purple} />
           </div>
 
           <div className="grid grid-cols-1 gap-4">
-            <ChartCard title="Sales, Expenses & Income">
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={[{ name: 'Selected Tag', sales: data.deliveredSales, expenses: data.expenses, income: data.income }]} margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} tickFormatter={fmtCompact} tickLine={false} axisLine={false} width={60} />
-                  <Tooltip content={<AnaTooltip currency />} />
-                  <Legend />
-                  <Bar dataKey="sales" name="Sales" fill={C.blue} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="expenses" name="Expenses" fill={C.red} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="income" name="Income" fill={C.green} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <ChartCard title="Financial Overview">
+              {(() => {
+                const profitOrLossPercentage = data.deliveredSales > 0
+                  ? ((salesLessExpenses / data.deliveredSales) * 100)
+                  : data.expenses > 0
+                    ? -100
+                    : 0
+                const isProfit = salesLessExpenses >= 0
+                const resultLabel = isProfit ? 'Profit' : 'Loss'
+
+                return (
+                  <div className="mx-auto grid max-w-3xl grid-cols-1 gap-8 px-2 sm:grid-cols-2 sm:gap-12 sm:px-6">
+                    <CombinedFinancialCircle
+                      sales={data.deliveredSales}
+                      expenses={data.expenses}
+                      income={data.income}
+                    />
+                    <ResultCircle
+                      label={resultLabel}
+                      amount={salesLessExpenses}
+                      percentage={Math.abs(profitOrLossPercentage)}
+                    />
+                  </div>
+                )
+              })()}
             </ChartCard>
 
             <ChartCard title="Product-wise Sales Summary">
