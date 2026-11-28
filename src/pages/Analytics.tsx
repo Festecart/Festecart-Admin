@@ -10,6 +10,7 @@ import {
   MapPin, AlertCircle, ChevronDown, Check, Package,
 } from 'lucide-react'
 import { useAnalytics, useFestivalTagAnalytics } from '@/hooks/useAnalytics'
+import type { FestivalTagAnalyticsData } from '@/hooks/useAnalytics'
 import { fetchFestivalProductSelections, fetchFestivalTags } from '@/lib/accounts'
 import { fetchAdminCategories, fetchAdminProducts } from '@/lib/products'
 import { mergeFestivalProductSelectionsByCategory } from '@/lib/festivalProducts'
@@ -81,7 +82,11 @@ function buildCSVSection(title: string, headers: string[], rows: (string | numbe
   return lines.join('\n')
 }
 
-function exportCSV(data: AnalyticsData, range: DateRange) {
+function exportCSV(
+  data: AnalyticsData,
+  range: DateRange,
+  selectedTag?: { name: string; data: FestivalTagAnalyticsData },
+) {
   const from = range.from.toISOString().slice(0, 10)
   const to   = range.to.toISOString().slice(0, 10)
 
@@ -177,12 +182,40 @@ function exportCSV(data: AnalyticsData, range: DateRange) {
     ))
   }
 
+  if (selectedTag) {
+    const tagData = selectedTag.data
+    sections.push(buildCSVSection('TAG ANALYTICS', ['Tag', 'Metric', 'Value'], [
+      [selectedTag.name, 'Total Orders', tagData.totalOrders],
+      [selectedTag.name, 'Delivered Orders', tagData.deliveredOrders],
+      [selectedTag.name, 'Delivered Sales (₹)', tagData.deliveredSales],
+      [selectedTag.name, 'Expenses (₹)', tagData.expenses],
+      [selectedTag.name, 'Income (₹)', tagData.income],
+      [selectedTag.name, 'Units Sold', tagData.unitsSold],
+      [selectedTag.name, 'Products Sold', tagData.productsSold],
+      [selectedTag.name, 'Linked Products', tagData.linkedProductCount],
+      [selectedTag.name, 'Matching Expenses', tagData.matchingExpenseCount],
+      [selectedTag.name, 'Matching Income Records', tagData.matchingIncomeCount],
+    ]))
+
+    if (tagData.productSales.length > 0) {
+      sections.push(buildCSVSection('TAG PRODUCT SALES', ['Tag', 'Product', 'Product ID', 'Quantity Sold', 'Sales (₹)'],
+        tagData.productSales.map(product => [
+          selectedTag.name,
+          product.name,
+          product.productId,
+          product.quantity,
+          product.sales,
+        ])
+      ))
+    }
+  }
+
   const csv  = sections.join('\n')
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
   const url  = URL.createObjectURL(blob)
   const a    = document.createElement('a')
   a.href     = url
-  a.download = `festecart-analytics-${from}-to-${to}.csv`
+  a.download = `festecart-analytics${selectedTag ? `-${selectedTag.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}` : ''}-${from}-to-${to}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -884,6 +917,13 @@ export default function Analytics() {
   )
   const tagError = tagsQuery.error ?? selectionsQuery.error ??
     (selectedTagId !== 'all' ? productsQuery.error ?? categoriesQuery.error : null)
+  const selectedTagAnalytics = useFestivalTagAnalytics(
+    range,
+    selectedTag?.id ?? '',
+    selectedTag?.name ?? '',
+    productIds,
+    Boolean(selectedTag) && !tagAssociationsPending && !tagError,
+  )
 
   return (
     <div className="p-4 sm:p-6 space-y-5 bg-gray-50 min-h-screen">
@@ -900,8 +940,17 @@ export default function Analytics() {
           <p className="text-xs text-gray-500 mt-0.5">Revenue, orders, customers &amp; regional performance</p>
         </div>
         <div className="flex items-center gap-2">
-          {selectedTagId === 'all' && data && (
-            <button onClick={() => exportCSV(data, range)}
+          {data && (
+            <button
+              onClick={() => exportCSV(
+                data,
+                range,
+                selectedTag && selectedTagAnalytics.data
+                  ? { name: selectedTag.name, data: selectedTagAnalytics.data }
+                  : undefined,
+              )}
+              disabled={Boolean(selectedTag) && !selectedTagAnalytics.data}
+              title={selectedTag && !selectedTagAnalytics.data ? 'Loading tag analytics for export' : undefined}
               className="flex items-center gap-1.5 text-xs border border-gray-300 text-gray-600 px-3 py-2 rounded-lg hover:bg-white transition-colors">
               <Download size={13} /> Export CSV
             </button>

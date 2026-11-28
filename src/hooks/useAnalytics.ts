@@ -306,6 +306,7 @@ export function useFestivalTagAnalytics(
   tagId: string,
   tagName: string,
   productIds: readonly string[],
+  enabled = true,
 ) {
   return useQuery({
     queryKey: [
@@ -318,7 +319,7 @@ export function useFestivalTagAnalytics(
       range.allTime === true,
       [...productIds].sort(),
     ],
-    enabled: Boolean(tagId && tagId !== 'all'),
+    enabled: Boolean(tagId && tagId !== 'all') && enabled,
     staleTime: 1000 * 60 * 5,
     refetchOnMount: 'always',
     queryFn: async (): Promise<FestivalTagAnalyticsData> => {
